@@ -1,12 +1,18 @@
 package main
 
 import (
+	"context"
 	"log/slog"
 	"os"
 
-	"github.com/yansir/cc-relayer/internal/account"
+	"github.com/yansir/cc-relayer/internal/auth"
 	"github.com/yansir/cc-relayer/internal/config"
+	"github.com/yansir/cc-relayer/internal/crypto"
 	"github.com/yansir/cc-relayer/internal/events"
+	"github.com/yansir/cc-relayer/internal/identity"
+	"github.com/yansir/cc-relayer/internal/oauth"
+	"github.com/yansir/cc-relayer/internal/pool"
+	"github.com/yansir/cc-relayer/internal/relay"
 	"github.com/yansir/cc-relayer/internal/server"
 	"github.com/yansir/cc-relayer/internal/store"
 	"github.com/yansir/cc-relayer/internal/transport"
@@ -45,24 +51,57 @@ func main() {
 	defer s.Close()
 	slog.Info("database ready", "path", cfg.DBPath)
 
-	// Initialize crypto (derive keys at startup)
-	crypto := account.NewCrypto(cfg.EncryptionKey)
-	if _, err := crypto.DeriveKey("salt"); err != nil {
+	// Initialize crypto
+	c := crypto.New(cfg.EncryptionKey)
+	if _, err := c.DeriveKey("salt"); err != nil {
 		slog.Error("key derivation failed", "error", err)
 		os.Exit(1)
 	}
 	slog.Info("encryption key derived")
 
-	// Initialize transport manager (per-account utls + proxy)
-	tm := transport.NewManager(cfg)
-	defer tm.Close()
-
 	// Initialize event bus
 	bus := events.NewBus(200)
 
+	// Initialize transport manager
+	tm := transport.NewManager(cfg.RequestTimeout)
+	defer tm.Close()
+
+	// Initialize pool (loads all accounts from DB)
+	p, err := pool.New(s, bus, pool.ErrorPauses{
+		Pause401: cfg.ErrorPause401,
+		Pause403: cfg.ErrorPause403,
+		Pause429: cfg.ErrorPause429,
+		Pause529: cfg.ErrorPause529,
+	})
+	if err != nil {
+		slog.Error("pool init failed", "error", err)
+		os.Exit(1)
+	}
+
+	// Initialize token manager
+	tokMgr := oauth.NewTokenManager(p, c, tm, cfg.TokenRefreshAdvance)
+
+	// Initialize auth middleware
+	authMw := auth.NewMiddleware(cfg.StaticToken, s)
+
+	// Initialize identity transformer
+	trans := identity.NewTransformer(p, cfg.MaxCacheControls)
+
+	// Initialize relay
+	r := relay.New(p, tokMgr, trans, s, relay.Config{
+		ClaudeAPIURL:      cfg.ClaudeAPIURL,
+		ClaudeAPIVersion:  cfg.ClaudeAPIVersion,
+		ClaudeBetaHeader:  cfg.ClaudeBetaHeader,
+		CodexAPIURL:       cfg.CodexAPIURL,
+		MaxRequestBodyMB:  cfg.MaxRequestBodyMB,
+		MaxRetryAccounts:  cfg.MaxRetryAccounts,
+		SessionBindingTTL: cfg.SessionBindingTTL,
+	}, tm)
+
 	// Start server
-	srv := server.New(cfg, s, crypto, tm, bus, logHandler, version)
-	if err := srv.Run(); err != nil {
+	ctx := context.Background()
+	srv := server.New(cfg, s, p, tokMgr, r, tm, authMw, bus, version)
+	if err := srv.Run(ctx); err != nil {
 		slog.Error("server error", "error", err)
 		os.Exit(1)
 	}

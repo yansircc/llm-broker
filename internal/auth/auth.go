@@ -63,7 +63,6 @@ func (m *Middleware) ValidateToken(ctx context.Context, token string) (*KeyInfo,
 }
 
 func (m *Middleware) validateToken(ctx context.Context, token string) (*KeyInfo, error) {
-	// Check admin token with constant-time comparison.
 	if subtle.ConstantTimeCompare([]byte(token), []byte(m.adminToken)) == 1 {
 		return &KeyInfo{
 			ID:      "admin",
@@ -72,7 +71,6 @@ func (m *Middleware) validateToken(ctx context.Context, token string) (*KeyInfo,
 		}, nil
 	}
 
-	// Hash token and look up user.
 	hash := sha256.Sum256([]byte(token))
 	hashHex := hex.EncodeToString(hash[:])
 
@@ -94,8 +92,6 @@ func (m *Middleware) validateToken(ctx context.Context, token string) (*KeyInfo,
 		Name: user.Name,
 	}, nil
 }
-
-// --- Helpers ---
 
 func extractToken(r *http.Request) string {
 	if key := r.Header.Get("x-api-key"); key != "" {

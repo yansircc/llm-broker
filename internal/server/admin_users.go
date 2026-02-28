@@ -11,7 +11,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/yansir/cc-relayer/internal/store"
+	"github.com/yansir/cc-relayer/internal/domain"
 )
 
 // ---------------------------------------------------------------------------
@@ -31,7 +31,7 @@ func (s *Server) handleCreateUser(w http.ResponseWriter, r *http.Request) {
 	}
 
 	plaintext, hashStr, prefix := generateUserToken(req.Name)
-	u := &store.User{
+	u := &domain.User{
 		ID:          uuid.New().String(),
 		Name:        req.Name,
 		TokenHash:   hashStr,
@@ -62,7 +62,6 @@ func (s *Server) handleListUsers(w http.ResponseWriter, r *http.Request) {
 		writeAdminError(w, http.StatusInternalServerError, "internal_error", "failed to list users")
 		return
 	}
-
 	writeJSON(w, http.StatusOK, users)
 }
 
@@ -85,7 +84,6 @@ func (s *Server) handleRegenerateUserToken(w http.ResponseWriter, r *http.Reques
 	}
 	id := r.PathValue("id")
 
-	// We need the user's name for the token format
 	users, err := s.store.ListUsers(r.Context())
 	if err != nil {
 		writeAdminError(w, http.StatusInternalServerError, "internal_error", "failed to lookup user")
@@ -148,7 +146,7 @@ func generateUserToken(name string) (plaintext, hashStr, prefix string) {
 }
 
 // ---------------------------------------------------------------------------
-// User detail (admin only)
+// User detail
 // ---------------------------------------------------------------------------
 
 func (s *Server) handleGetUser(w http.ResponseWriter, r *http.Request) {
@@ -163,7 +161,7 @@ func (s *Server) handleGetUser(w http.ResponseWriter, r *http.Request) {
 		writeAdminError(w, http.StatusInternalServerError, "internal_error", "failed to list users")
 		return
 	}
-	var user *store.User
+	var user *domain.User
 	for _, u := range users {
 		if u.ID == id {
 			user = u
@@ -183,7 +181,7 @@ func (s *Server) handleGetUser(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		slog.Warn("user detail: query model usage failed", "error", err, "userId", id)
 	}
-	recentRequests, _, err := s.store.QueryRequestLogs(ctx, store.RequestLogQuery{
+	recentRequests, _, err := s.store.QueryRequestLogs(ctx, domain.RequestLogQuery{
 		UserID: id,
 		Limit:  20,
 	})
@@ -192,13 +190,13 @@ func (s *Server) handleGetUser(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if usage == nil {
-		usage = []store.UsagePeriod{}
+		usage = []domain.UsagePeriod{}
 	}
 	if modelUsage == nil {
-		modelUsage = []store.ModelUsageRow{}
+		modelUsage = []domain.ModelUsageRow{}
 	}
 	if recentRequests == nil {
-		recentRequests = []*store.RequestLog{}
+		recentRequests = []*domain.RequestLog{}
 	}
 
 	writeJSON(w, http.StatusOK, map[string]interface{}{

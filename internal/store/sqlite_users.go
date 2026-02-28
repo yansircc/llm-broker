@@ -4,34 +4,32 @@ import (
 	"context"
 	"database/sql"
 	"time"
+
+	"github.com/yansir/cc-relayer/internal/domain"
 )
 
-// ---------------------------------------------------------------------------
-// User operations
-// ---------------------------------------------------------------------------
-
-func (s *SQLiteStore) CreateUser(ctx context.Context, u *User) error {
+func (s *SQLiteStore) CreateUser(ctx context.Context, u *domain.User) error {
 	_, err := s.db.ExecContext(ctx,
 		`INSERT INTO users (id, name, token_hash, token_prefix, status, created_at) VALUES (?, ?, ?, ?, ?, ?)`,
 		u.ID, u.Name, u.TokenHash, u.TokenPrefix, u.Status, u.CreatedAt.Unix())
 	return err
 }
 
-func (s *SQLiteStore) GetUserByTokenHash(ctx context.Context, tokenHash string) (*User, error) {
+func (s *SQLiteStore) GetUserByTokenHash(ctx context.Context, tokenHash string) (*domain.User, error) {
 	row := s.db.QueryRowContext(ctx,
 		`SELECT id, name, token_hash, token_prefix, status, created_at, last_active_at FROM users WHERE token_hash = ?`,
 		tokenHash)
 	return scanUser(row)
 }
 
-func (s *SQLiteStore) ListUsers(ctx context.Context) ([]*User, error) {
+func (s *SQLiteStore) ListUsers(ctx context.Context) ([]*domain.User, error) {
 	rows, err := s.db.QueryContext(ctx,
 		`SELECT id, name, token_hash, token_prefix, status, created_at, last_active_at FROM users ORDER BY created_at`)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var users []*User
+	var users []*domain.User
 	for rows.Next() {
 		u, err := scanUser(rows)
 		if err != nil {
@@ -64,7 +62,7 @@ func (s *SQLiteStore) UpdateUserLastActive(ctx context.Context, id string) error
 	return err
 }
 
-func scanUser(scanner interface{ Scan(...any) error }) (*User, error) {
+func scanUser(scanner interface{ Scan(...any) error }) (*domain.User, error) {
 	var (
 		id, name, tokenHash, tokenPrefix, status string
 		createdAt                                 int64
@@ -77,7 +75,7 @@ func scanUser(scanner interface{ Scan(...any) error }) (*User, error) {
 	if err != nil {
 		return nil, err
 	}
-	u := &User{
+	u := &domain.User{
 		ID:          id,
 		Name:        name,
 		TokenHash:   tokenHash,

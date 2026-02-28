@@ -4,13 +4,11 @@ import (
 	"context"
 	"fmt"
 	"time"
+
+	"github.com/yansir/cc-relayer/internal/domain"
 )
 
-// ---------------------------------------------------------------------------
-// Request log
-// ---------------------------------------------------------------------------
-
-func (s *SQLiteStore) InsertRequestLog(ctx context.Context, l *RequestLog) error {
+func (s *SQLiteStore) InsertRequestLog(ctx context.Context, l *domain.RequestLog) error {
 	_, err := s.db.ExecContext(ctx,
 		`INSERT INTO request_log (user_id, account_id, model, input_tokens, output_tokens,
 			cache_read_tokens, cache_create_tokens, cost_usd, status, duration_ms, created_at)
@@ -20,7 +18,7 @@ func (s *SQLiteStore) InsertRequestLog(ctx context.Context, l *RequestLog) error
 	return err
 }
 
-func (s *SQLiteStore) QueryRequestLogs(ctx context.Context, opts RequestLogQuery) ([]*RequestLog, int, error) {
+func (s *SQLiteStore) QueryRequestLogs(ctx context.Context, opts domain.RequestLogQuery) ([]*domain.RequestLog, int, error) {
 	where, args := buildLogWhere(opts.UserID, opts.AccountID)
 
 	var total int
@@ -44,9 +42,9 @@ func (s *SQLiteStore) QueryRequestLogs(ctx context.Context, opts RequestLogQuery
 		return nil, 0, err
 	}
 	defer rows.Close()
-	var logs []*RequestLog
+	var logs []*domain.RequestLog
 	for rows.Next() {
-		l := &RequestLog{}
+		l := &domain.RequestLog{}
 		var ts int64
 		if err := rows.Scan(&l.ID, &l.UserID, &l.AccountID, &l.Model,
 			&l.InputTokens, &l.OutputTokens, &l.CacheReadTokens, &l.CacheCreateTokens,
@@ -81,13 +79,7 @@ func buildLogWhere(userID, accountID string) (string, []interface{}) {
 	return where, args
 }
 
-// ---------------------------------------------------------------------------
-// Dashboard & analytics queries
-// ---------------------------------------------------------------------------
-
-// QueryUsagePeriods returns usage for 5 periods: today, yesterday, 3d, 7d, 30d.
-// If userID is non-empty, filters by that user.
-func (s *SQLiteStore) QueryUsagePeriods(ctx context.Context, userID string) ([]UsagePeriod, error) {
+func (s *SQLiteStore) QueryUsagePeriods(ctx context.Context, userID string) ([]domain.UsagePeriod, error) {
 	now := time.Now().UTC()
 	todayStart := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC)
 	yesterdayStart := todayStart.Add(-24 * time.Hour)
@@ -104,7 +96,7 @@ func (s *SQLiteStore) QueryUsagePeriods(ctx context.Context, userID string) ([]U
 		{"30 days", now.Add(-30 * 24 * time.Hour), now},
 	}
 
-	result := make([]UsagePeriod, 0, len(periods))
+	result := make([]domain.UsagePeriod, 0, len(periods))
 	for _, p := range periods {
 		var where string
 		var args []interface{}
@@ -119,14 +111,13 @@ func (s *SQLiteStore) QueryUsagePeriods(ctx context.Context, userID string) ([]U
 			`SELECT COALESCE(COUNT(*),0), COALESCE(SUM(input_tokens),0), COALESCE(SUM(output_tokens),0),
 			COALESCE(SUM(cache_read_tokens),0), COALESCE(SUM(cost_usd),0)
 			FROM request_log WHERE %s`, where), args...)
-		up := UsagePeriod{Label: p.label}
+		up := domain.UsagePeriod{Label: p.label}
 		row.Scan(&up.Requests, &up.InputTokens, &up.OutputTokens, &up.CacheReadTokens, &up.CostUSD)
 		result = append(result, up)
 	}
 	return result, nil
 }
 
-// QueryUserTotalCosts returns total cost per user across all time.
 func (s *SQLiteStore) QueryUserTotalCosts(ctx context.Context) (map[string]float64, error) {
 	rows, err := s.db.QueryContext(ctx,
 		`SELECT user_id, COALESCE(SUM(cost_usd),0) FROM request_log GROUP BY user_id`)
@@ -144,8 +135,7 @@ func (s *SQLiteStore) QueryUserTotalCosts(ctx context.Context) (map[string]float
 	return result, rows.Err()
 }
 
-// QueryModelUsage returns per-model usage breakdown filtered by user.
-func (s *SQLiteStore) QueryModelUsage(ctx context.Context, userID string) ([]ModelUsageRow, error) {
+func (s *SQLiteStore) QueryModelUsage(ctx context.Context, userID string) ([]domain.ModelUsageRow, error) {
 	sevenDaysAgo := time.Now().UTC().Add(-7 * 24 * time.Hour).Unix()
 	var where string
 	var args []interface{}
@@ -164,9 +154,9 @@ func (s *SQLiteStore) QueryModelUsage(ctx context.Context, userID string) ([]Mod
 		return nil, err
 	}
 	defer rows.Close()
-	var result []ModelUsageRow
+	var result []domain.ModelUsageRow
 	for rows.Next() {
-		var m ModelUsageRow
+		var m domain.ModelUsageRow
 		rows.Scan(&m.Model, &m.Requests, &m.InputTokens, &m.OutputTokens, &m.CacheReadTokens, &m.CostUSD)
 		result = append(result, m)
 	}

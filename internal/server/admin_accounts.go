@@ -7,22 +7,17 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
-	"strconv"
 	"strings"
 	"time"
 
-	"github.com/yansir/cc-relayer/internal/account"
+	"github.com/yansir/cc-relayer/internal/domain"
 	"github.com/yansir/cc-relayer/internal/identity"
-	"github.com/yansir/cc-relayer/internal/scheduler"
+	"github.com/yansir/cc-relayer/internal/pool"
 )
 
 // handleListAccounts returns all accounts (without tokens).
 func (s *Server) handleListAccounts(w http.ResponseWriter, r *http.Request) {
-	accounts, err := s.accounts.List(r.Context())
-	if err != nil {
-		writeAdminError(w, http.StatusInternalServerError, "internal_error", "failed to list accounts")
-		return
-	}
+	accounts := s.pool.List()
 
 	type accountView struct {
 		ID                 string                 `json:"id"`
@@ -32,11 +27,11 @@ func (s *Server) handleListAccounts(w http.ResponseWriter, r *http.Request) {
 		Priority           int                    `json:"priority"`
 		PriorityMode       string                 `json:"priority_mode"`
 		Schedulable        bool                   `json:"schedulable"`
-		ExtInfo            map[string]interface{} `json:"extInfo,omitempty"`
-		LastUsedAt         *time.Time             `json:"lastUsedAt,omitempty"`
-		OverloadedUntil    *time.Time             `json:"overloadedUntil,omitempty"`
-		FiveHourStatus     string                 `json:"fiveHourStatus"`
-		OpusRateLimitEndAt *time.Time             `json:"opusRateLimitEndAt,omitempty"`
+		ExtInfo            map[string]interface{} `json:"ext_info,omitempty"`
+		LastUsedAt         *time.Time             `json:"last_used_at,omitempty"`
+		OverloadedUntil    *time.Time             `json:"overloaded_until,omitempty"`
+		FiveHourStatus     string                 `json:"five_hour_status"`
+		OpusRateLimitEndAt *time.Time             `json:"opus_rate_limit_end_at,omitempty"`
 	}
 
 	views := make([]accountView, 0, len(accounts))
@@ -44,8 +39,8 @@ func (s *Server) handleListAccounts(w http.ResponseWriter, r *http.Request) {
 		views = append(views, accountView{
 			ID:                 a.ID,
 			Email:              a.Email,
-			Provider:           a.Provider,
-			Status:             a.Status,
+			Provider:           string(a.Provider),
+			Status:             string(a.Status),
 			Priority:           a.Priority,
 			PriorityMode:       a.PriorityMode,
 			Schedulable:        a.Schedulable,
@@ -62,94 +57,61 @@ func (s *Server) handleListAccounts(w http.ResponseWriter, r *http.Request) {
 // handleDeleteAccount removes an account by ID.
 func (s *Server) handleDeleteAccount(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
-	if id == "" {
-		writeAdminError(w, http.StatusBadRequest, "invalid_request", "account id is required")
-		return
-	}
-
-	acct, err := s.accounts.Get(r.Context(), id)
-	if err != nil {
-		writeAdminError(w, http.StatusInternalServerError, "internal_error", "failed to get account")
-		return
-	}
+	acct := s.pool.Get(id)
 	if acct == nil {
 		writeAdminError(w, http.StatusNotFound, "not_found", "account not found")
 		return
 	}
-
-	if err := s.accounts.Delete(r.Context(), id); err != nil {
+	if err := s.pool.Delete(id); err != nil {
 		writeAdminError(w, http.StatusInternalServerError, "internal_error", "failed to delete account")
 		return
 	}
-
 	slog.Info("account deleted", "id", id, "email", acct.Email)
 	writeJSON(w, http.StatusOK, map[string]string{"deleted": id})
 }
 
-// ---------------------------------------------------------------------------
-// Account detail (authenticated)
-// ---------------------------------------------------------------------------
-
 func (s *Server) handleGetAccount(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
-	if id == "" {
-		writeAdminError(w, http.StatusBadRequest, "invalid_request", "account id is required")
-		return
-	}
-
-	acct, err := s.accounts.Get(r.Context(), id)
-	if err != nil {
-		writeAdminError(w, http.StatusInternalServerError, "internal_error", "failed to get account")
-		return
-	}
+	acct := s.pool.Get(id)
 	if acct == nil {
 		writeAdminError(w, http.StatusNotFound, "not_found", "account not found")
 		return
 	}
 
-	// Parse stainless headers
 	var stainless map[string]interface{}
-	if hdrs, err := s.store.GetStainlessHeaders(r.Context(), id); err == nil && hdrs != "" {
-		if err := json.Unmarshal([]byte(hdrs), &stainless); err != nil {
-			slog.Warn("account detail: corrupt stainless headers", "error", err, "accountId", id)
-		}
+	if hdrs, ok := s.pool.GetStainless(id); ok {
+		json.Unmarshal([]byte(hdrs), &stainless)
 	}
 
-	// Session bindings for this account
-	sessions, _ := s.store.ListSessionBindingsForAccount(r.Context(), id)
+	sessions := s.pool.ListSessionBindingsForAccount(id)
 
-	// Compute auto priority score
 	var autoScore int
 	if acct.PriorityMode == "auto" {
-		autoScore = scheduler.AutoPriority(acct)
+		autoScore = pool.AutoPriority(acct)
 	}
 
 	writeJSON(w, http.StatusOK, map[string]interface{}{
-		"id":                 acct.ID,
-		"email":              acct.Email,
-		"provider":           acct.Provider,
-		"status":             acct.Status,
-		"priority":           acct.Priority,
-		"priority_mode":      acct.PriorityMode,
-		"auto_score":         autoScore,
-		"schedulable":        acct.Schedulable,
-		"errorMessage":       acct.ErrorMessage,
-		"extInfo":            acct.ExtInfo,
-		"createdAt":          acct.CreatedAt,
-		"lastUsedAt":         acct.LastUsedAt,
-		"lastRefreshAt":      acct.LastRefreshAt,
-		"expiresAt":          acct.ExpiresAt,
-		"fiveHourStatus":     acct.FiveHourStatus,
-		"overloadedUntil":    acct.OverloadedUntil,
-		"opusRateLimitEndAt": acct.OpusRateLimitEndAt,
-		"stainless":          stainless,
-		"sessions":           sessions,
+		"id":                    acct.ID,
+		"email":                 acct.Email,
+		"provider":              acct.Provider,
+		"status":                acct.Status,
+		"priority":              acct.Priority,
+		"priority_mode":         acct.PriorityMode,
+		"auto_score":            autoScore,
+		"schedulable":           acct.Schedulable,
+		"error_message":         acct.ErrorMessage,
+		"ext_info":              acct.ExtInfo,
+		"created_at":            acct.CreatedAt,
+		"last_used_at":          acct.LastUsedAt,
+		"last_refresh_at":       acct.LastRefreshAt,
+		"expires_at":            acct.ExpiresAt,
+		"five_hour_status":      acct.FiveHourStatus,
+		"overloaded_until":      acct.OverloadedUntil,
+		"opus_rate_limit_end_at": acct.OpusRateLimitEndAt,
+		"stainless":             stainless,
+		"sessions":              sessions,
 	})
 }
-
-// ---------------------------------------------------------------------------
-// Account actions (authenticated)
-// ---------------------------------------------------------------------------
 
 func (s *Server) handleUpdateAccountEmail(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
@@ -165,19 +127,10 @@ func (s *Server) handleUpdateAccountEmail(w http.ResponseWriter, r *http.Request
 		writeAdminError(w, http.StatusBadRequest, "invalid_request", "email must be 1-100 characters")
 		return
 	}
-
-	acct, err := s.accounts.Get(r.Context(), id)
-	if err != nil {
-		writeAdminError(w, http.StatusInternalServerError, "internal_error", "failed to get account")
-		return
-	}
-	if acct == nil {
+	if err := s.pool.Update(id, func(a *domain.Account) {
+		a.Email = req.Email
+	}); err != nil {
 		writeAdminError(w, http.StatusNotFound, "not_found", "account not found")
-		return
-	}
-
-	if err := s.accounts.Update(r.Context(), id, map[string]string{"email": req.Email}); err != nil {
-		writeAdminError(w, http.StatusInternalServerError, "internal_error", "failed to update account email")
 		return
 	}
 	slog.Info("account email updated", "id", id, "email", req.Email)
@@ -193,26 +146,16 @@ func (s *Server) handleUpdateAccountStatus(w http.ResponseWriter, r *http.Reques
 		writeAdminError(w, http.StatusBadRequest, "invalid_request", "status must be 'active' or 'disabled'")
 		return
 	}
-
-	acct, err := s.accounts.Get(r.Context(), id)
-	if err != nil {
-		writeAdminError(w, http.StatusInternalServerError, "internal_error", "failed to get account")
-		return
-	}
-	if acct == nil {
+	if err := s.pool.Update(id, func(a *domain.Account) {
+		a.Status = domain.Status(req.Status)
+		if req.Status == "disabled" {
+			a.Schedulable = false
+		} else {
+			a.Schedulable = true
+			a.ErrorMessage = ""
+		}
+	}); err != nil {
 		writeAdminError(w, http.StatusNotFound, "not_found", "account not found")
-		return
-	}
-
-	fields := map[string]string{"status": req.Status}
-	if req.Status == "disabled" {
-		fields["schedulable"] = "false"
-	} else {
-		fields["schedulable"] = "true"
-		fields["errorMessage"] = ""
-	}
-	if err := s.accounts.Update(r.Context(), id, fields); err != nil {
-		writeAdminError(w, http.StatusInternalServerError, "internal_error", "failed to update account status")
 		return
 	}
 	slog.Info("account status updated", "id", id, "status", req.Status)
@@ -229,17 +172,6 @@ func (s *Server) handleUpdateAccountPriority(w http.ResponseWriter, r *http.Requ
 		writeAdminError(w, http.StatusBadRequest, "invalid_request", "invalid JSON body")
 		return
 	}
-
-	acct, err := s.accounts.Get(r.Context(), id)
-	if err != nil {
-		writeAdminError(w, http.StatusInternalServerError, "internal_error", "failed to get account")
-		return
-	}
-	if acct == nil {
-		writeAdminError(w, http.StatusNotFound, "not_found", "account not found")
-		return
-	}
-
 	if req.Mode == "" {
 		req.Mode = "manual"
 	}
@@ -247,28 +179,24 @@ func (s *Server) handleUpdateAccountPriority(w http.ResponseWriter, r *http.Requ
 		writeAdminError(w, http.StatusBadRequest, "invalid_request", "mode must be 'auto' or 'manual'")
 		return
 	}
-
-	fields := map[string]string{"priorityMode": req.Mode}
-	if req.Mode == "manual" {
-		fields["priority"] = strconv.Itoa(req.Priority)
-	}
-
-	if err := s.accounts.Update(r.Context(), id, fields); err != nil {
-		writeAdminError(w, http.StatusInternalServerError, "internal_error", "failed to update priority")
+	priority := req.Priority
+	mode := req.Mode
+	if err := s.pool.Update(id, func(a *domain.Account) {
+		a.PriorityMode = mode
+		if mode == "manual" {
+			a.Priority = priority
+		}
+	}); err != nil {
+		writeAdminError(w, http.StatusNotFound, "not_found", "account not found")
 		return
 	}
-	slog.Info("account priority updated", "id", id, "mode", req.Mode, "priority", req.Priority)
-	writeJSON(w, http.StatusOK, map[string]interface{}{"id": id, "mode": req.Mode, "priority": req.Priority})
+	slog.Info("account priority updated", "id", id, "mode", mode, "priority", priority)
+	writeJSON(w, http.StatusOK, map[string]interface{}{"id": id, "mode": mode, "priority": priority})
 }
 
 func (s *Server) handleRefreshAccount(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
-
-	acct, err := s.accounts.Get(r.Context(), id)
-	if err != nil {
-		writeAdminError(w, http.StatusInternalServerError, "internal_error", "failed to get account")
-		return
-	}
+	acct := s.pool.Get(id)
 	if acct == nil {
 		writeAdminError(w, http.StatusNotFound, "not_found", "account not found")
 		return
@@ -282,17 +210,14 @@ func (s *Server) handleRefreshAccount(w http.ResponseWriter, r *http.Request) {
 	slog.Info("account token force refreshed", "id", id)
 
 	// Back-fill org UUID if missing (Claude accounts only)
-	if acct.Provider != "codex" && (acct.ExtInfo == nil || acct.ExtInfo["orgUUID"] == nil || acct.ExtInfo["orgUUID"] == "") {
+	if acct.Provider != domain.ProviderCodex && (acct.ExtInfo == nil || acct.ExtInfo["orgUUID"] == nil || acct.ExtInfo["orgUUID"] == "") {
 		orgUUID := s.fetchOrgUUIDViaAPI(r.Context(), acct, accessToken)
 		if orgUUID != "" {
-			extInfo := map[string]interface{}{
-				"orgUUID": orgUUID,
-				"orgName": acct.ExtInfo["orgName"],
-				"email":   acct.ExtInfo["email"],
-			}
-			extInfoJSON, _ := json.Marshal(extInfo)
-			_ = s.accounts.Update(r.Context(), id, map[string]string{
-				"extInfo": string(extInfoJSON),
+			_ = s.pool.Update(id, func(a *domain.Account) {
+				if a.ExtInfo == nil {
+					a.ExtInfo = make(map[string]interface{})
+				}
+				a.ExtInfo["orgUUID"] = orgUUID
 			})
 			slog.Info("account org UUID back-filled", "id", id, "orgUUID", orgUUID)
 		}
@@ -301,18 +226,9 @@ func (s *Server) handleRefreshAccount(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"id": id, "status": "refreshed"})
 }
 
-// ---------------------------------------------------------------------------
-// Account test endpoint
-// ---------------------------------------------------------------------------
-
 func (s *Server) handleTestAccount(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
-
-	acct, err := s.accounts.Get(r.Context(), id)
-	if err != nil {
-		writeAdminError(w, http.StatusInternalServerError, "internal_error", "failed to get account")
-		return
-	}
+	acct := s.pool.Get(id)
 	if acct == nil {
 		writeAdminError(w, http.StatusNotFound, "not_found", "account not found")
 		return
@@ -327,20 +243,16 @@ func (s *Server) handleTestAccount(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if acct.Provider == "codex" {
+	if acct.Provider == domain.ProviderCodex {
 		s.testCodexAccount(w, r, acct, accessToken)
 		return
 	}
 
 	// Claude test request
 	testBody := `{"model":"claude-haiku-4-5-20251001","max_tokens":1,"messages":[{"role":"user","content":"hi"}]}`
-	testURL := s.cfg.ClaudeAPIURL
-	testReq, err := http.NewRequestWithContext(r.Context(), "POST", testURL, strings.NewReader(testBody))
+	testReq, err := http.NewRequestWithContext(r.Context(), "POST", s.cfg.ClaudeAPIURL, strings.NewReader(testBody))
 	if err != nil {
-		writeJSON(w, http.StatusOK, map[string]interface{}{
-			"ok":    false,
-			"error": "failed to create request",
-		})
+		writeJSON(w, http.StatusOK, map[string]interface{}{"ok": false, "error": "failed to create request"})
 		return
 	}
 	testReq.Header.Set("Content-Type", "application/json")
@@ -352,41 +264,30 @@ func (s *Server) handleTestAccount(w http.ResponseWriter, r *http.Request) {
 	latencyMs := time.Since(start).Milliseconds()
 
 	if err != nil {
-		writeJSON(w, http.StatusOK, map[string]interface{}{
-			"ok":         false,
-			"latency_ms": latencyMs,
-			"error":      err.Error(),
-		})
+		writeJSON(w, http.StatusOK, map[string]interface{}{"ok": false, "latency_ms": latencyMs, "error": err.Error()})
 		return
 	}
 	defer resp.Body.Close()
-	io.ReadAll(resp.Body) // drain
+	io.ReadAll(resp.Body)
 
-	s.rateLimit.CaptureHeaders(r.Context(), acct.ID, resp.Header)
+	s.pool.ObserveSuccess(acct.ID, resp.Header)
 
 	if resp.StatusCode != http.StatusOK {
 		writeJSON(w, http.StatusOK, map[string]interface{}{
-			"ok":         false,
-			"latency_ms": latencyMs,
-			"error":      fmt.Sprintf("upstream returned %d", resp.StatusCode),
+			"ok": false, "latency_ms": latencyMs,
+			"error": fmt.Sprintf("upstream returned %d", resp.StatusCode),
 		})
 		return
 	}
 
-	writeJSON(w, http.StatusOK, map[string]interface{}{
-		"ok":         true,
-		"latency_ms": latencyMs,
-	})
+	writeJSON(w, http.StatusOK, map[string]interface{}{"ok": true, "latency_ms": latencyMs})
 }
 
-func (s *Server) testCodexAccount(w http.ResponseWriter, r *http.Request, acct *account.Account, accessToken string) {
+func (s *Server) testCodexAccount(w http.ResponseWriter, r *http.Request, acct *domain.Account, accessToken string) {
 	testBody := `{"model":"gpt-5-codex","stream":true,"store":false,"instructions":"Reply with only: ok","input":[{"role":"user","content":"test"}]}`
 	testReq, err := http.NewRequestWithContext(r.Context(), "POST", s.cfg.CodexAPIURL, strings.NewReader(testBody))
 	if err != nil {
-		writeJSON(w, http.StatusOK, map[string]interface{}{
-			"ok":    false,
-			"error": "failed to create request",
-		})
+		writeJSON(w, http.StatusOK, map[string]interface{}{"ok": false, "error": "failed to create request"})
 		return
 	}
 	testReq.Header.Set("Content-Type", "application/json")
@@ -405,29 +306,22 @@ func (s *Server) testCodexAccount(w http.ResponseWriter, r *http.Request, acct *
 	latencyMs := time.Since(start).Milliseconds()
 
 	if err != nil {
-		writeJSON(w, http.StatusOK, map[string]interface{}{
-			"ok":         false,
-			"latency_ms": latencyMs,
-			"error":      err.Error(),
-		})
+		writeJSON(w, http.StatusOK, map[string]interface{}{"ok": false, "latency_ms": latencyMs, "error": err.Error()})
 		return
 	}
 	defer resp.Body.Close()
 
-	s.rateLimit.CaptureCodexHeaders(r.Context(), acct.ID, resp.Header)
+	s.pool.ObserveSuccess(acct.ID, resp.Header)
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
 		writeJSON(w, http.StatusOK, map[string]interface{}{
-			"ok":         false,
-			"latency_ms": latencyMs,
-			"error":      fmt.Sprintf("codex upstream returned %d: %s", resp.StatusCode, truncateStr(string(body), 200)),
+			"ok": false, "latency_ms": latencyMs,
+			"error": fmt.Sprintf("codex upstream returned %d: %s", resp.StatusCode, truncateStr(string(body), 200)),
 		})
 		return
 	}
 
-	// Stream started — read until first output delta event, then stop.
-	// This confirms the account works without consuming extra tokens.
 	scanner := bufio.NewScanner(resp.Body)
 	scanner.Buffer(make([]byte, 0, 64*1024), 256*1024)
 	gotOutput := false
@@ -437,12 +331,10 @@ func (s *Server) testCodexAccount(w http.ResponseWriter, r *http.Request, acct *
 			gotOutput = true
 			break
 		}
-		// Detect actual error events (not "error":null in normal events)
 		if strings.HasPrefix(line, "data: ") && strings.Contains(line, `"error":{`) {
 			writeJSON(w, http.StatusOK, map[string]interface{}{
-				"ok":         false,
-				"latency_ms": time.Since(start).Milliseconds(),
-				"error":      "upstream error in stream",
+				"ok": false, "latency_ms": time.Since(start).Milliseconds(),
+				"error": "upstream error in stream",
 			})
 			return
 		}
@@ -450,16 +342,9 @@ func (s *Server) testCodexAccount(w http.ResponseWriter, r *http.Request, acct *
 
 	latencyMs = time.Since(start).Milliseconds()
 	if gotOutput {
-		writeJSON(w, http.StatusOK, map[string]interface{}{
-			"ok":         true,
-			"latency_ms": latencyMs,
-		})
+		writeJSON(w, http.StatusOK, map[string]interface{}{"ok": true, "latency_ms": latencyMs})
 	} else {
-		writeJSON(w, http.StatusOK, map[string]interface{}{
-			"ok":         false,
-			"latency_ms": latencyMs,
-			"error":      "stream ended without output",
-		})
+		writeJSON(w, http.StatusOK, map[string]interface{}{"ok": false, "latency_ms": latencyMs, "error": "stream ended without output"})
 	}
 }
 
@@ -468,4 +353,15 @@ func truncateStr(s string, maxLen int) string {
 		return s
 	}
 	return s[:maxLen] + "..."
+}
+
+func (s *Server) handleUnbindSession(w http.ResponseWriter, r *http.Request) {
+	uuid := r.PathValue("uuid")
+	if uuid == "" {
+		writeAdminError(w, http.StatusBadRequest, "invalid_request", "uuid is required")
+		return
+	}
+	s.pool.UnbindSession(uuid)
+	slog.Info("session unbound", "uuid", uuid)
+	writeJSON(w, http.StatusOK, map[string]string{"unbound": uuid})
 }

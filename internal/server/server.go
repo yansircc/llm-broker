@@ -12,14 +12,12 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/yansir/cc-relayer/internal/account"
 	"github.com/yansir/cc-relayer/internal/auth"
 	"github.com/yansir/cc-relayer/internal/config"
 	"github.com/yansir/cc-relayer/internal/events"
-	"github.com/yansir/cc-relayer/internal/identity"
-	"github.com/yansir/cc-relayer/internal/ratelimit"
+	"github.com/yansir/cc-relayer/internal/oauth"
+	"github.com/yansir/cc-relayer/internal/pool"
 	"github.com/yansir/cc-relayer/internal/relay"
-	"github.com/yansir/cc-relayer/internal/scheduler"
 	"github.com/yansir/cc-relayer/internal/store"
 	"github.com/yansir/cc-relayer/internal/transport"
 	"github.com/yansir/cc-relayer/internal/ui"
@@ -29,14 +27,10 @@ import (
 type Server struct {
 	cfg          *config.Config
 	store        store.Store
-	accounts     *account.AccountStore
-	tokens       *account.TokenManager
+	pool         *pool.Pool
+	tokens       *oauth.TokenManager
 	authMw       *auth.Middleware
-	scheduler    *scheduler.Scheduler
-	transformer  *identity.Transformer
-	rateLimit    *ratelimit.Manager
 	relay        *relay.Relay
-	codexRelay   *relay.CodexRelay
 	transportMgr *transport.Manager
 	bus          *events.Bus
 	httpServer   *http.Server
@@ -44,28 +38,25 @@ type Server struct {
 	startTime    time.Time
 }
 
-func New(cfg *config.Config, s store.Store, crypto *account.Crypto, tm *transport.Manager, bus *events.Bus, lh *events.LogHandler, version string) *Server {
-	as := account.NewAccountStore(s, crypto)
-	tokMgr := account.NewTokenManager(s, as, cfg, tm)
-	authMw := auth.NewMiddleware(cfg.StaticToken, s)
-	sched := scheduler.New(as, cfg)
-	trans := identity.NewTransformer(s, cfg)
-	rl := ratelimit.NewManager(s)
-	r := relay.New(s, as, tokMgr, sched, trans, rl, cfg, tm)
-	cr := relay.NewCodexRelay(s, as, tokMgr, sched, rl, cfg, tm)
-
+func New(
+	cfg *config.Config,
+	s store.Store,
+	p *pool.Pool,
+	tm *oauth.TokenManager,
+	r *relay.Relay,
+	transportMgr *transport.Manager,
+	authMw *auth.Middleware,
+	bus *events.Bus,
+	version string,
+) *Server {
 	srv := &Server{
 		cfg:          cfg,
 		store:        s,
-		accounts:     as,
-		tokens:       tokMgr,
+		pool:         p,
+		tokens:       tm,
 		authMw:       authMw,
-		scheduler:    sched,
-		transformer:  trans,
-		rateLimit:    rl,
 		relay:        r,
-		codexRelay:   cr,
-		transportMgr: tm,
+		transportMgr: transportMgr,
 		bus:          bus,
 		version:      version,
 		startTime:    time.Now(),
@@ -79,7 +70,7 @@ func New(cfg *config.Config, s store.Store, crypto *account.Crypto, tm *transpor
 		Handler:        requestLogger(mux),
 		ReadTimeout:    30 * time.Second,
 		WriteTimeout:   cfg.RequestTimeout + 30*time.Second,
-		MaxHeaderBytes: 1 << 20, // 1MB
+		MaxHeaderBytes: 1 << 20,
 	}
 
 	return srv
@@ -88,19 +79,19 @@ func New(cfg *config.Config, s store.Store, crypto *account.Crypto, tm *transpor
 func (s *Server) registerRoutes(mux *http.ServeMux) {
 	auth := s.authMw.Authenticate
 
-	// Relay endpoints (authenticated)
+	// Relay endpoints
 	mux.Handle("POST /v1/messages", auth(http.HandlerFunc(s.relay.Handle)))
 	mux.Handle("POST /v1/messages/count_tokens", auth(http.HandlerFunc(s.relay.HandleCountTokens)))
-	mux.Handle("POST /openai/responses", auth(http.HandlerFunc(s.codexRelay.Handle)))
+	mux.Handle("POST /openai/responses", auth(http.HandlerFunc(s.relay.HandleCodex)))
 
-	// Telemetry sink — intercept without authentication
+	// Telemetry sink
 	mux.HandleFunc("POST /api/event_logging/batch", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
 		w.Write([]byte(`{"success":true}`))
 	})
 
-	// Admin: accounts (authenticated)
+	// Admin: accounts
 	mux.Handle("POST /admin/accounts/generate-auth-url", auth(http.HandlerFunc(s.handleGenerateAuthURL)))
 	mux.Handle("POST /admin/accounts/exchange-code", auth(http.HandlerFunc(s.handleExchangeCode)))
 	mux.Handle("GET /admin/accounts", auth(http.HandlerFunc(s.handleListAccounts)))
@@ -112,10 +103,10 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 	mux.Handle("POST /admin/accounts/{id}/refresh", auth(http.HandlerFunc(s.handleRefreshAccount)))
 	mux.Handle("POST /admin/accounts/{id}/test", auth(http.HandlerFunc(s.handleTestAccount)))
 
-	// Admin: login (no auth — this IS the auth endpoint)
+	// Admin: login
 	mux.HandleFunc("POST /admin/login", s.handleLogin)
 
-	// Admin: users (authenticated, admin-only checked in handler)
+	// Admin: users
 	mux.Handle("POST /admin/users", auth(http.HandlerFunc(s.handleCreateUser)))
 	mux.Handle("GET /admin/users", auth(http.HandlerFunc(s.handleListUsers)))
 	mux.Handle("GET /admin/users/{id}", auth(http.HandlerFunc(s.handleGetUser)))
@@ -123,11 +114,12 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 	mux.Handle("POST /admin/users/{id}/regenerate", auth(http.HandlerFunc(s.handleRegenerateUserToken)))
 	mux.Handle("POST /admin/users/{id}/status", auth(http.HandlerFunc(s.handleUpdateUserStatus)))
 
-	// Admin: dashboard (authenticated)
+	// Admin: dashboard & health
 	mux.Handle("GET /admin/dashboard", auth(http.HandlerFunc(s.handleDashboard)))
-
-	// Admin: health (authenticated)
 	mux.Handle("GET /admin/health", auth(http.HandlerFunc(s.handleHealth)))
+
+	// Admin: session unbinding
+	mux.Handle("DELETE /admin/sessions/binding/{uuid}", auth(http.HandlerFunc(s.handleUnbindSession)))
 
 	// Health check
 	mux.HandleFunc("GET /health", func(w http.ResponseWriter, r *http.Request) {
@@ -141,7 +133,7 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 		w.Write([]byte(`{"status":"ok"}`))
 	})
 
-	// WebUI — SvelteKit static files at /ui/
+	// WebUI
 	distFS, err := fs.Sub(ui.FS, "dist")
 	if err != nil {
 		slog.Warn("ui dist not found, /ui/ disabled", "error", err)
@@ -157,12 +149,10 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 			w.Write(indexHTML)
 			return
 		}
-		// Immutable assets (hashed filenames) — cache forever
 		if strings.HasPrefix(path, "_app/immutable/") {
 			w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
 		}
 		if _, err := fs.Stat(distFS, path); err != nil {
-			// SPA fallback — serve index.html for client-side routes
 			w.Header().Set("Content-Type", "text/html; charset=utf-8")
 			w.Header().Set("Cache-Control", "no-cache")
 			w.Write(indexHTML)
@@ -173,12 +163,9 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 }
 
 // Run starts the server and blocks until shutdown.
-func (s *Server) Run() error {
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
+func (s *Server) Run(ctx context.Context) error {
 	// Background goroutines
-	go s.rateLimit.RunCleanup(ctx, 5*time.Minute)
+	go s.pool.RunCleanup(ctx, 5*time.Minute)
 	go s.transportMgr.RunCleanup(ctx)
 	go s.runLogPurge(ctx)
 	go s.runRateLimitRefresh(ctx)
@@ -204,7 +191,6 @@ func (s *Server) Run() error {
 	}
 }
 
-// requestLogger logs all incoming HTTP requests for debugging.
 func requestLogger(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		slog.Debug("request", "method", r.Method, "path", r.URL.Path, "remote", r.RemoteAddr)
@@ -212,7 +198,6 @@ func requestLogger(next http.Handler) http.Handler {
 	})
 }
 
-// runLogPurge deletes request_log entries older than 30 days every 6 hours.
 func (s *Server) runLogPurge(ctx context.Context) {
 	ticker := time.NewTicker(6 * time.Hour)
 	defer ticker.Stop()

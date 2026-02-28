@@ -10,63 +10,67 @@ import (
 	"log/slog"
 	"net/http"
 	"net/url"
-	"regexp"
-	"strconv"
 	"strings"
 	"time"
 
-	"github.com/yansir/cc-relayer/internal/account"
 	"github.com/yansir/cc-relayer/internal/auth"
-	"github.com/yansir/cc-relayer/internal/config"
+	"github.com/yansir/cc-relayer/internal/domain"
 	"github.com/yansir/cc-relayer/internal/identity"
-	"github.com/yansir/cc-relayer/internal/ratelimit"
-	"github.com/yansir/cc-relayer/internal/scheduler"
-	"github.com/yansir/cc-relayer/internal/store"
+	"github.com/yansir/cc-relayer/internal/oauth"
+	"github.com/yansir/cc-relayer/internal/pool"
 )
-
-// Ban signal patterns in 403 response bodies.
-var banSignalPattern = regexp.MustCompile(`(?i)(organization has been disabled|account has been disabled|Too many active sessions|only authorized for use with claude code)`)
 
 // TransportProvider supplies per-account HTTP clients.
 type TransportProvider interface {
-	GetClient(acct *account.Account) *http.Client
+	GetClient(acct *domain.Account) *http.Client
+}
+
+// StoreWriter writes request logs.
+type StoreWriter interface {
+	InsertRequestLog(ctx context.Context, log *domain.RequestLog) error
+}
+
+// Config holds relay-relevant configuration.
+type Config struct {
+	ClaudeAPIURL     string
+	ClaudeAPIVersion string
+	ClaudeBetaHeader string
+	CodexAPIURL      string
+
+	MaxRequestBodyMB int
+	MaxRetryAccounts int
+	SessionBindingTTL time.Duration
 }
 
 // Relay orchestrates the request forwarding pipeline.
 type Relay struct {
-	store       store.Store
-	accounts    *account.AccountStore
-	tokens      *account.TokenManager
-	scheduler   *scheduler.Scheduler
+	pool        *pool.Pool
+	tokens      *oauth.TokenManager
 	transformer *identity.Transformer
-	rateLimit   *ratelimit.Manager
-	cfg         *config.Config
+	store       StoreWriter
+	cfg         Config
 	transport   TransportProvider
 }
 
 func New(
-	s store.Store,
-	as *account.AccountStore,
-	tm *account.TokenManager,
-	sched *scheduler.Scheduler,
+	p *pool.Pool,
+	tm *oauth.TokenManager,
 	trans *identity.Transformer,
-	rl *ratelimit.Manager,
-	cfg *config.Config,
+	sw StoreWriter,
+	cfg Config,
 	tp TransportProvider,
 ) *Relay {
 	return &Relay{
-		store:       s,
-		accounts:    as,
+		pool:        p,
 		tokens:      tm,
-		scheduler:   sched,
 		transformer: trans,
-		rateLimit:   rl,
+		store:       sw,
 		cfg:         cfg,
 		transport:   tp,
 	}
 }
 
-// Handle processes a relay request end-to-end.
+// Handle processes a Claude relay request end-to-end.
 func (r *Relay) Handle(w http.ResponseWriter, req *http.Request) {
 	ctx := req.Context()
 	keyInfo := auth.GetKeyInfo(ctx)
@@ -75,10 +79,8 @@ func (r *Relay) Handle(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 
-	// Enforce request body size limit
 	req.Body = http.MaxBytesReader(w, req.Body, int64(r.cfg.MaxRequestBodyMB)<<20)
 
-	// Parse request body
 	body, rawBody, err := parseBody(req)
 	if err != nil {
 		var maxBytesErr *http.MaxBytesError
@@ -94,7 +96,7 @@ func (r *Relay) Handle(w http.ResponseWriter, req *http.Request) {
 	isStream, _ := body["stream"].(bool)
 	isOpus := isOpusModel(model)
 
-	// Warmup interception — stream events with ~20ms delay to simulate network latency
+	// Warmup interception
 	if identity.IsWarmupRequest(body) {
 		slog.Debug("warmup intercepted", "model", model)
 		flusher, _ := w.(http.Flusher)
@@ -111,33 +113,26 @@ func (r *Relay) Handle(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 
-	// Session binding — try to look up a bound account from previous requests
+	// Session binding
 	sessionUUID := extractSessionUUID(body)
 	oldSession := isOldSession(body)
 	var sessionBoundAccountID string
 	if sessionUUID != "" {
-		binding, err := r.store.GetSessionBinding(ctx, sessionUUID)
-		if err == nil && binding != nil {
-			if boundID := binding["accountId"]; boundID != "" {
-				acct, err := r.accounts.Get(ctx, boundID)
-				if err == nil && acct != nil && acct.Status == "active" && acct.Schedulable {
-					sessionBoundAccountID = boundID
-					// Renew the binding TTL on reuse
-					_ = r.store.RenewSessionBinding(ctx, sessionUUID, r.cfg.SessionBindingTTL)
-				} else if oldSession {
-					// Pollution detection: bound account is unhealthy and this is a
-					// continuation of an existing session. Switching accounts mid-conversation
-					// would expose the relay pattern. Force client to start a new session.
-					slog.Warn("session pollution detected", "sessionUUID", sessionUUID, "boundAccountId", boundID)
-					writeError(w, http.StatusBadRequest, "session_binding_error",
-						"bound account unavailable, please start a new session")
-					return
-				}
+		if boundID, ok := r.pool.GetSessionBinding(sessionUUID); ok {
+			acct := r.pool.Get(boundID)
+			if acct != nil && acct.Status == domain.StatusActive && acct.Schedulable {
+				sessionBoundAccountID = boundID
+				r.pool.RenewSessionBinding(sessionUUID, r.cfg.SessionBindingTTL)
+			} else if oldSession {
+				slog.Warn("session pollution detected", "sessionUUID", sessionUUID, "boundAccountId", boundID)
+				writeError(w, http.StatusBadRequest, "session_binding_error",
+					"bound account unavailable, please start a new session")
+				return
 			}
 		}
 	}
 
-	// Retry loop: try up to MaxRetryAccounts+1 different accounts
+	// Retry loop
 	var excludeIDs []string
 	var lastErr error
 	var lastUpstreamStatus int
@@ -145,29 +140,21 @@ func (r *Relay) Handle(w http.ResponseWriter, req *http.Request) {
 	var forbiddenRetries int
 
 	for attempt := 0; attempt <= r.cfg.MaxRetryAccounts; attempt++ {
-		// Check for client disconnect before each attempt
 		if ctx.Err() != nil {
-			slog.Debug("client disconnected before attempt", "attempt", attempt)
 			return
 		}
 
-		selectOpts := scheduler.SelectOptions{
-			BoundAccountID: keyInfo.BoundAccountID,
-			IsOpusRequest:  isOpus,
-			ExcludeIDs:     excludeIDs,
-		}
-		// On first attempt, prefer the session-bound account
-		if attempt == 0 && sessionBoundAccountID != "" && keyInfo.BoundAccountID == "" {
-			selectOpts.BoundAccountID = sessionBoundAccountID
+		boundID := keyInfo.BoundAccountID
+		if attempt == 0 && sessionBoundAccountID != "" && boundID == "" {
+			boundID = sessionBoundAccountID
 		}
 
-		acct, err := r.scheduler.Select(ctx, selectOpts)
+		acct, err := r.pool.Pick(domain.ProviderClaude, excludeIDs, isOpus, boundID)
 		if err != nil {
 			lastErr = err
 			break
 		}
 
-		// Ensure token is valid
 		accessToken, err := r.tokens.EnsureValidToken(ctx, acct.ID)
 		if err != nil {
 			slog.Warn("token invalid, excluding account", "accountId", acct.ID, "error", err)
@@ -176,20 +163,17 @@ func (r *Relay) Handle(w http.ResponseWriter, req *http.Request) {
 			continue
 		}
 
-		// Apply identity transformations (re-parse body each attempt for clean state)
+		// Re-parse body for clean state each attempt
 		var attemptBody map[string]interface{}
 		if err := json.Unmarshal(rawBody, &attemptBody); err != nil {
-			slog.Error("re-parse body failed", "error", err)
 			lastErr = fmt.Errorf("body re-parse: %w", err)
 			break
 		}
 
-		result := r.transformer.Transform(ctx, attemptBody, req.Header, acct)
+		result := r.transformer.Transform(attemptBody, req.Header, acct)
 
-		// Build upstream request
 		upstreamBody, err := json.Marshal(result.Body)
 		if err != nil {
-			slog.Error("marshal upstream body", "error", err, "accountId", acct.ID)
 			lastErr = fmt.Errorf("marshal body: %w", err)
 			break
 		}
@@ -206,7 +190,6 @@ func (r *Relay) Handle(w http.ResponseWriter, req *http.Request) {
 			break
 		}
 
-		// Set headers
 		for k, vals := range result.Headers {
 			for _, v := range vals {
 				upReq.Header.Add(k, v)
@@ -217,7 +200,6 @@ func (r *Relay) Handle(w http.ResponseWriter, req *http.Request) {
 			upReq.Header.Set("Accept", "text/event-stream")
 		}
 
-		// Send upstream request via per-account transport (utls + proxy)
 		client := r.transport.GetClient(acct)
 		resp, err := client.Do(upReq)
 		if err != nil {
@@ -229,40 +211,42 @@ func (r *Relay) Handle(w http.ResponseWriter, req *http.Request) {
 
 		// Handle retriable errors
 		if shouldRetry(resp.StatusCode) && attempt < r.cfg.MaxRetryAccounts {
-			// Read body before closing for error analysis
 			errBody, _ := io.ReadAll(resp.Body)
 			resp.Body.Close()
 
-			r.handleUpstreamError(ctx, acct, resp, errBody, model, isOpus)
-
-			// Preserve last upstream error for client-facing fallback
 			lastUpstreamStatus = resp.StatusCode
 			lastUpstreamBody = errBody
 
-			// 403 may be transient — retry same account up to 2x before switching
-			if resp.StatusCode == 403 {
+			// 403 non-ban: retry same account up to 2 times without Observe/cooldown.
+			// Only on the 3rd 403 do we Observe (which triggers cooldown) and exclude.
+			if resp.StatusCode == 403 && !pool.IsBanSignal(string(errBody)) {
 				forbiddenRetries++
 				if forbiddenRetries <= 2 {
 					lastErr = fmt.Errorf("upstream 403 (retry %d)", forbiddenRetries)
-					continue // retry same account, don't exclude
+					continue
 				}
 			}
+
+			r.pool.Observe(pool.UpstreamResult{
+				AccountID: acct.ID, StatusCode: resp.StatusCode,
+				Headers: resp.Header, ErrBody: errBody,
+				Model: model, IsOpus: isOpus,
+			})
 
 			excludeIDs = append(excludeIDs, acct.ID)
 			lastErr = fmt.Errorf("upstream %d", resp.StatusCode)
 			continue
 		}
 
-		// Non-retriable error — sanitize and forward
+		// Non-retriable error
 		if resp.StatusCode != http.StatusOK {
 			errBody, _ := io.ReadAll(resp.Body)
 			resp.Body.Close()
-			r.rateLimit.CaptureHeaders(ctx, acct.ID, resp.Header)
+			r.pool.ObserveSuccess(acct.ID, resp.Header) // capture rate limit headers even on non-retriable errors
 
 			slog.Warn("upstream non-retriable error",
 				"status", resp.StatusCode, "accountId", acct.ID, "model", model,
-				"body", truncate(string(errBody), 500),
-				"rlHeaders", collectRateLimitHeaders(resp.Header))
+				"body", truncate(string(errBody), 500))
 
 			if isStream {
 				sanitizedStatus, _ := SanitizeError(resp.StatusCode, errBody)
@@ -278,37 +262,31 @@ func (r *Relay) Handle(w http.ResponseWriter, req *http.Request) {
 			return
 		}
 
-		// Success — forward response
+		// Success
 		defer resp.Body.Close()
+		r.pool.ObserveSuccess(acct.ID, resp.Header)
 
-		// Capture rate limit headers
-		r.rateLimit.CaptureHeaders(ctx, acct.ID, resp.Header)
-
-		// Save/renew session binding on success
 		if result.SessionHash != "" && sessionUUID != "" {
-			_ = r.store.SetSessionBinding(ctx, sessionUUID, acct.ID, r.cfg.SessionBindingTTL)
+			r.pool.SetSessionBinding(sessionUUID, acct.ID, r.cfg.SessionBindingTTL)
 		}
 
 		startTime := time.Now()
 		var usage *usageData
 		if isStream {
 			var completed bool
-			completed, usage = r.streamResponse(ctx, w, resp, acct, model)
+			completed, usage = streamResponse(ctx, w, resp)
 			if completed {
-				now := time.Now().UTC().Format(time.RFC3339)
-				_ = r.accounts.Update(context.Background(), acct.ID, map[string]string{"lastUsedAt": now})
+				r.pool.MarkLastUsed(acct.ID)
 			}
 		} else {
-			usage = r.jsonResponse(w, resp)
-			now := time.Now().UTC().Format(time.RFC3339)
-			_ = r.accounts.Update(context.Background(), acct.ID, map[string]string{"lastUsedAt": now})
+			usage = jsonResponse(w, resp)
+			r.pool.MarkLastUsed(acct.ID)
 		}
 
-		// Write request log
 		if usage != nil {
 			cost := calcCost(model, usage.InputTokens, usage.OutputTokens, usage.CacheReadTokens, usage.CacheCreateTokens)
 			go func() {
-				_ = r.store.InsertRequestLog(context.Background(), &store.RequestLog{
+				_ = r.store.InsertRequestLog(context.Background(), &domain.RequestLog{
 					UserID:            keyInfo.ID,
 					AccountID:         acct.ID,
 					Model:             model,
@@ -326,7 +304,7 @@ func (r *Relay) Handle(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 
-	// All attempts failed — return last upstream error if available, otherwise generic 503
+	// All attempts failed
 	if lastErr != nil {
 		slog.Error("all relay attempts failed", "error", lastErr)
 	}
@@ -346,10 +324,248 @@ func (r *Relay) Handle(w http.ResponseWriter, req *http.Request) {
 	writeError(w, http.StatusServiceUnavailable, "overloaded_error", "no available accounts")
 }
 
-// streamResponse streams the upstream SSE response to the client.
-// Returns true if the stream completed normally (false if interrupted),
-// and any usage data captured from the message_delta event.
-func (r *Relay) streamResponse(ctx context.Context, w http.ResponseWriter, resp *http.Response, acct *account.Account, model string) (bool, *usageData) {
+// HandleCodex processes a Codex relay request.
+func (r *Relay) HandleCodex(w http.ResponseWriter, req *http.Request) {
+	ctx := req.Context()
+	keyInfo := auth.GetKeyInfo(ctx)
+	if keyInfo == nil {
+		writeCodexError(w, http.StatusUnauthorized, "not authenticated")
+		return
+	}
+
+	req.Body = http.MaxBytesReader(w, req.Body, int64(r.cfg.MaxRequestBodyMB)<<20)
+
+	rawBody, err := io.ReadAll(req.Body)
+	if err != nil {
+		var maxBytesErr *http.MaxBytesError
+		if errors.As(err, &maxBytesErr) {
+			writeCodexError(w, http.StatusRequestEntityTooLarge, "request body exceeds size limit")
+			return
+		}
+		writeCodexError(w, http.StatusBadRequest, "failed to read request body")
+		return
+	}
+
+	var body map[string]interface{}
+	if err := json.Unmarshal(rawBody, &body); err != nil {
+		writeCodexError(w, http.StatusBadRequest, "invalid JSON body")
+		return
+	}
+	model, _ := body["model"].(string)
+
+	var excludeIDs []string
+	var lastErr error
+	var lastUpstreamStatus int
+	var lastUpstreamBody []byte
+
+	for attempt := 0; attempt <= r.cfg.MaxRetryAccounts; attempt++ {
+		if ctx.Err() != nil {
+			return
+		}
+
+		acct, err := r.pool.Pick(domain.ProviderCodex, excludeIDs, false, keyInfo.BoundAccountID)
+		if err != nil {
+			lastErr = err
+			break
+		}
+
+		accessToken, err := r.tokens.EnsureValidToken(ctx, acct.ID)
+		if err != nil {
+			slog.Warn("codex token invalid, excluding account", "accountId", acct.ID, "error", err)
+			excludeIDs = append(excludeIDs, acct.ID)
+			lastErr = err
+			continue
+		}
+
+		upReq, err := http.NewRequestWithContext(ctx, "POST", r.cfg.CodexAPIURL, strings.NewReader(string(rawBody)))
+		if err != nil {
+			lastErr = err
+			break
+		}
+
+		for _, h := range []string{"Content-Type", "Accept", "Codex-Version"} {
+			if v := req.Header.Get(h); v != "" {
+				upReq.Header.Set(h, v)
+			}
+		}
+		if upReq.Header.Get("Content-Type") == "" {
+			upReq.Header.Set("Content-Type", "application/json")
+		}
+
+		upReq.Header.Set("Authorization", "Bearer "+accessToken)
+		upReq.Header.Set("Host", "chatgpt.com")
+		if acct.ExtInfo != nil {
+			if accountID, ok := acct.ExtInfo["chatgptAccountId"].(string); ok && accountID != "" {
+				upReq.Header.Set("Chatgpt-Account-Id", accountID)
+			}
+		}
+
+		client := r.transport.GetClient(acct)
+		resp, err := client.Do(upReq)
+		if err != nil {
+			slog.Error("codex upstream request failed", "accountId", acct.ID, "error", err)
+			excludeIDs = append(excludeIDs, acct.ID)
+			lastErr = err
+			continue
+		}
+
+		if shouldRetry(resp.StatusCode) && attempt < r.cfg.MaxRetryAccounts {
+			errBody, _ := io.ReadAll(resp.Body)
+			resp.Body.Close()
+
+			r.pool.Observe(pool.UpstreamResult{
+				AccountID: acct.ID, StatusCode: resp.StatusCode,
+				Headers: resp.Header, ErrBody: errBody, Model: model,
+			})
+
+			lastUpstreamStatus = resp.StatusCode
+			lastUpstreamBody = errBody
+			excludeIDs = append(excludeIDs, acct.ID)
+			lastErr = fmt.Errorf("upstream %d", resp.StatusCode)
+			continue
+		}
+
+		if resp.StatusCode != http.StatusOK {
+			errBody, _ := io.ReadAll(resp.Body)
+			resp.Body.Close()
+			r.pool.ObserveSuccess(acct.ID, resp.Header)
+
+			slog.Warn("codex upstream error", "status", resp.StatusCode, "accountId", acct.ID, "model", model,
+				"body", truncate(string(errBody), 500))
+
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(resp.StatusCode)
+			w.Write(errBody)
+			return
+		}
+
+		// Success
+		defer resp.Body.Close()
+		r.pool.ObserveSuccess(acct.ID, resp.Header)
+
+		startTime := time.Now()
+		usage := streamCodexResponse(ctx, w, resp)
+
+		r.pool.MarkLastUsed(acct.ID)
+
+		if usage != nil {
+			cost := calcCodexCost(model, usage.InputTokens, usage.OutputTokens, usage.InputTokensCached)
+			go func() {
+				_ = r.store.InsertRequestLog(context.Background(), &domain.RequestLog{
+					UserID:            keyInfo.ID,
+					AccountID:         acct.ID,
+					Model:             model,
+					InputTokens:       usage.InputTokens,
+					OutputTokens:      usage.OutputTokens,
+					CacheReadTokens:   usage.InputTokensCached,
+					CostUSD:           cost,
+					Status:            "ok",
+					DurationMs:        time.Since(startTime).Milliseconds(),
+					CreatedAt:         time.Now().UTC(),
+				})
+			}()
+		}
+		return
+	}
+
+	if lastErr != nil {
+		slog.Error("all codex relay attempts failed", "error", lastErr)
+	}
+	if lastUpstreamBody != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(lastUpstreamStatus)
+		w.Write(lastUpstreamBody)
+		return
+	}
+	writeCodexError(w, http.StatusServiceUnavailable, "no available codex accounts")
+}
+
+// HandleCountTokens proxies token counting requests.
+func (r *Relay) HandleCountTokens(w http.ResponseWriter, req *http.Request) {
+	ctx := req.Context()
+	keyInfo := auth.GetKeyInfo(ctx)
+	if keyInfo == nil {
+		writeError(w, http.StatusUnauthorized, "authentication_error", "not authenticated")
+		return
+	}
+
+	req.Body = http.MaxBytesReader(w, req.Body, int64(r.cfg.MaxRequestBodyMB)<<20)
+	rawBody, err := io.ReadAll(req.Body)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_request_error", "failed to read body")
+		return
+	}
+
+	var body map[string]interface{}
+	if err := json.Unmarshal(rawBody, &body); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_request_error", "invalid JSON body")
+		return
+	}
+	model, _ := body["model"].(string)
+
+	acct, err := r.pool.Pick(domain.ProviderClaude, nil, isOpusModel(model), keyInfo.BoundAccountID)
+	if err != nil {
+		slog.Warn("count_tokens: account selection failed", "error", err)
+		writeError(w, http.StatusServiceUnavailable, "overloaded_error", "no available accounts")
+		return
+	}
+
+	accessToken, err := r.tokens.EnsureValidToken(ctx, acct.ID)
+	if err != nil {
+		slog.Warn("count_tokens: token unavailable", "error", err, "accountId", acct.ID)
+		writeError(w, http.StatusServiceUnavailable, "api_error", "token unavailable")
+		return
+	}
+
+	result := r.transformer.Transform(body, req.Header, acct)
+	upstreamBody, err := json.Marshal(result.Body)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "api_error", "failed to marshal request body")
+		return
+	}
+
+	upstreamURL, err := appendRawQuery(r.cfg.ClaudeAPIURL+"/count_tokens", req.URL.RawQuery)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "api_error", "failed to build upstream url")
+		return
+	}
+
+	upReq, err := http.NewRequestWithContext(ctx, "POST", upstreamURL, strings.NewReader(string(upstreamBody)))
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "api_error", "failed to create request")
+		return
+	}
+	for k, vals := range result.Headers {
+		for _, v := range vals {
+			upReq.Header.Add(k, v)
+		}
+	}
+	identity.SetRequiredHeaders(upReq.Header, accessToken, r.cfg.ClaudeAPIVersion, r.cfg.ClaudeBetaHeader)
+
+	client := r.transport.GetClient(acct)
+	resp, err := client.Do(upReq)
+	if err != nil {
+		slog.Error("count_tokens upstream failed", "error", err)
+		writeError(w, http.StatusBadGateway, "api_error", "upstream request failed")
+		return
+	}
+	defer resp.Body.Close()
+
+	respBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		writeError(w, http.StatusBadGateway, "api_error", "failed to read upstream response")
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(resp.StatusCode)
+	w.Write(respBody)
+}
+
+// ---------------------------------------------------------------------------
+// Streaming
+// ---------------------------------------------------------------------------
+
+func streamResponse(ctx context.Context, w http.ResponseWriter, resp *http.Response) (bool, *usageData) {
 	flusher, ok := w.(http.Flusher)
 	if !ok {
 		writeError(w, http.StatusInternalServerError, "api_error", "streaming not supported")
@@ -362,27 +578,22 @@ func (r *Relay) streamResponse(ctx context.Context, w http.ResponseWriter, resp 
 	w.WriteHeader(resp.StatusCode)
 
 	scanner := bufio.NewScanner(resp.Body)
-	scanner.Buffer(make([]byte, 0, 256*1024), 1024*1024) // 1MB max line
+	scanner.Buffer(make([]byte, 0, 256*1024), 1024*1024)
 
 	var lastEventType string
 	var capturedUsage *usageData
-
 	completed := true
+
 	for scanner.Scan() {
-		// Check for client disconnect
 		if ctx.Err() != nil {
-			slog.Debug("client disconnected during stream", "accountId", acct.ID)
 			completed = false
 			break
 		}
-
 		line := scanner.Text()
-
 		fmt.Fprintf(w, "%s\n", line)
 		if line == "" {
 			flusher.Flush()
 		}
-
 		if strings.HasPrefix(line, "event: ") {
 			lastEventType = strings.TrimPrefix(line, "event: ")
 		}
@@ -393,116 +604,61 @@ func (r *Relay) streamResponse(ctx context.Context, w http.ResponseWriter, resp 
 		}
 	}
 	flusher.Flush()
-
 	return completed, capturedUsage
 }
 
-func (r *Relay) jsonResponse(w http.ResponseWriter, resp *http.Response) *usageData {
+func jsonResponse(w http.ResponseWriter, resp *http.Response) *usageData {
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
 		writeError(w, http.StatusBadGateway, "api_error", "failed to read upstream response")
 		return nil
 	}
-
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(resp.StatusCode)
 	w.Write(body)
 	return parseUsage(string(body))
 }
 
-func (r *Relay) handleUpstreamError(ctx context.Context, acct *account.Account, resp *http.Response, errBody []byte, model string, isOpus bool) {
-	// Collect rate-limit headers for diagnostics
-	rlHeaders := collectRateLimitHeaders(resp.Header)
-
-	switch resp.StatusCode {
-	case 529:
-		until := time.Now().Add(r.cfg.ErrorPause529).UTC().Format(time.RFC3339)
-		_ = r.accounts.Update(ctx, acct.ID, map[string]string{
-			"overloadedAt":    time.Now().UTC().Format(time.RFC3339),
-			"overloadedUntil": until,
-		})
-		slog.Warn("account overloaded (529)", "accountId", acct.ID, "model", model,
-			"body", truncate(string(errBody), 500), "rlHeaders", rlHeaders)
-
-	case 429:
-		r.rateLimit.CaptureHeaders(ctx, acct.ID, resp.Header)
-
-		// Determine cooldown: Retry-After header > unified-reset header > config default
-		until := time.Now().Add(r.cfg.ErrorPause429)
-		if retryAfter := parseRetryAfter(resp.Header.Get("Retry-After")); retryAfter > 0 {
-			until = time.Now().Add(retryAfter)
-		} else if resetStr := resp.Header.Get("anthropic-ratelimit-unified-reset"); resetStr != "" {
-			if resetTime, err := time.Parse(time.RFC3339, resetStr); err == nil {
-				until = resetTime
-			}
-		}
-
-		_ = r.accounts.Update(ctx, acct.ID, map[string]string{
-			"overloadedAt":    time.Now().UTC().Format(time.RFC3339),
-			"overloadedUntil": until.UTC().Format(time.RFC3339),
-		})
-
-		// Mark Opus-specific rate limit (separate from general cooldown)
-		if isOpus {
-			if resetStr := resp.Header.Get("anthropic-ratelimit-unified-reset"); resetStr != "" {
-				if resetTime, err := time.Parse(time.RFC3339, resetStr); err == nil {
-					r.rateLimit.MarkOpusRateLimited(ctx, acct.ID, resetTime)
-				}
-			}
-		}
-		slog.Warn("account rate limited (429)", "accountId", acct.ID, "model", model,
-			"until", until.UTC(), "retryAfter", resp.Header.Get("Retry-After"),
-			"body", truncate(string(errBody), 500), "rlHeaders", rlHeaders)
-
-	case 403:
-		bodyStr := string(errBody)
-		if banSignalPattern.MatchString(bodyStr) {
-			until := time.Now().Add(r.cfg.ErrorPause401).UTC().Format(time.RFC3339)
-			_ = r.accounts.Update(ctx, acct.ID, map[string]string{
-				"status":          "blocked",
-				"errorMessage":    fmt.Sprintf("ban signal detected: %s", truncate(bodyStr, 200)),
-				"schedulable":     "false",
-				"overloadedUntil": until,
-			})
-			slog.Error("ban signal detected (403)", "accountId", acct.ID, "model", model,
-				"body", truncate(bodyStr, 500), "rlHeaders", rlHeaders)
-		} else {
-			until := time.Now().Add(r.cfg.ErrorPause403).UTC().Format(time.RFC3339)
-			_ = r.accounts.Update(ctx, acct.ID, map[string]string{
-				"overloadedAt":    time.Now().UTC().Format(time.RFC3339),
-				"overloadedUntil": until,
-			})
-			slog.Warn("account forbidden (403)", "accountId", acct.ID, "model", model,
-				"body", truncate(bodyStr, 500), "rlHeaders", rlHeaders)
-		}
-
-	case 401:
-		until := time.Now().Add(r.cfg.ErrorPause401).UTC().Format(time.RFC3339)
-		_ = r.accounts.Update(ctx, acct.ID, map[string]string{
-			"status":          "error",
-			"errorMessage":    "upstream 401: authentication failed",
-			"overloadedUntil": until,
-		})
-		go func() {
-			bgCtx := context.Background()
-			_, _ = r.tokens.ForceRefresh(bgCtx, acct.ID)
-		}()
-		slog.Warn("account auth failed (401)", "accountId", acct.ID, "model", model,
-			"body", truncate(string(errBody), 500), "rlHeaders", rlHeaders)
+func streamCodexResponse(ctx context.Context, w http.ResponseWriter, resp *http.Response) *codexUsageData {
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		writeCodexError(w, http.StatusInternalServerError, "streaming not supported")
+		return nil
 	}
-}
 
-// collectRateLimitHeaders extracts all anthropic-ratelimit-* and retry-after headers for diagnostics.
-func collectRateLimitHeaders(h http.Header) map[string]string {
-	out := make(map[string]string)
-	for key, vals := range h {
-		lower := strings.ToLower(key)
-		if strings.HasPrefix(lower, "anthropic-ratelimit-") || lower == "retry-after" {
-			out[key] = strings.Join(vals, ", ")
+	for k, vals := range resp.Header {
+		for _, v := range vals {
+			w.Header().Add(k, v)
 		}
 	}
-	return out
+	w.WriteHeader(resp.StatusCode)
+
+	scanner := bufio.NewScanner(resp.Body)
+	scanner.Buffer(make([]byte, 0, 256*1024), 1024*1024)
+
+	var capturedUsage *codexUsageData
+	for scanner.Scan() {
+		if ctx.Err() != nil {
+			break
+		}
+		line := scanner.Text()
+		fmt.Fprintf(w, "%s\n", line)
+		if line == "" {
+			flusher.Flush()
+		}
+		if strings.HasPrefix(line, "data: ") {
+			if u := parseCodexUsage(line[6:]); u != nil {
+				capturedUsage = u
+			}
+		}
+	}
+	flusher.Flush()
+	return capturedUsage
 }
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
 
 func shouldRetry(statusCode int) bool {
 	return statusCode == 529 || statusCode == 429 || statusCode == 401 || statusCode == 403
@@ -543,11 +699,9 @@ func parseBody(req *http.Request) (map[string]interface{}, []byte, error) {
 }
 
 func isOpusModel(model string) bool {
-	lower := strings.ToLower(model)
-	return strings.Contains(lower, "opus")
+	return strings.Contains(strings.ToLower(model), "opus")
 }
 
-// extractSessionUUID extracts the session UUID from the request body's metadata.user_id.
 func extractSessionUUID(body map[string]interface{}) string {
 	if metadata, ok := body["metadata"].(map[string]interface{}); ok {
 		if uid, ok := metadata["user_id"].(string); ok {
@@ -557,21 +711,14 @@ func extractSessionUUID(body map[string]interface{}) string {
 	return ""
 }
 
-// isOldSession detects requests that are continuations of existing sessions.
-// If true, the request must not be silently routed to a different account.
 func isOldSession(body map[string]interface{}) bool {
 	messages, _ := body["messages"].([]interface{})
-
-	// Multi-turn conversation
 	if len(messages) > 1 {
 		return true
 	}
-
-	// Single message but multi-part content (indicates prior context)
 	if len(messages) == 1 {
 		if m, ok := messages[0].(map[string]interface{}); ok {
 			if content, ok := m["content"].([]interface{}); ok {
-				// Count user text blocks (exclude system reminders / tool results)
 				userTexts := 0
 				for _, block := range content {
 					if b, ok := block.(map[string]interface{}); ok {
@@ -586,40 +733,11 @@ func isOldSession(body map[string]interface{}) bool {
 			}
 		}
 	}
-
-	// Single message but no tool definitions (new CC sessions always have tools)
 	tools, _ := body["tools"].([]interface{})
 	if len(tools) == 0 {
 		return true
 	}
-
 	return false
-}
-
-// parseRetryAfter parses a Retry-After header value.
-// Supports seconds ("60") and HTTP-date ("Wed, 19 Feb 2026 05:30:00 GMT").
-func parseRetryAfter(value string) time.Duration {
-	if value == "" {
-		return 0
-	}
-	// Try as seconds first
-	if secs, err := strconv.Atoi(strings.TrimSpace(value)); err == nil && secs > 0 {
-		return time.Duration(secs) * time.Second
-	}
-	// Try as HTTP-date
-	if t, err := time.Parse(time.RFC1123, value); err == nil {
-		if d := time.Until(t); d > 0 {
-			return d
-		}
-	}
-	return 0
-}
-
-func truncate(s string, maxLen int) string {
-	if len(s) <= maxLen {
-		return s
-	}
-	return s[:maxLen] + "..."
 }
 
 func parseUsage(data string) *usageData {
@@ -632,8 +750,100 @@ func parseUsage(data string) *usageData {
 	return nil
 }
 
+func parseCodexUsage(data string) *codexUsageData {
+	var wrapper struct {
+		Type     string `json:"type"`
+		Response struct {
+			Usage *struct {
+				InputTokens  int `json:"input_tokens"`
+				OutputTokens int `json:"output_tokens"`
+				Details      *struct {
+					CachedTokens int `json:"cached_tokens"`
+				} `json:"input_tokens_details"`
+			} `json:"usage"`
+		} `json:"response"`
+	}
+	if json.Unmarshal([]byte(data), &wrapper) != nil || wrapper.Response.Usage == nil {
+		return nil
+	}
+	u := &codexUsageData{
+		InputTokens:  wrapper.Response.Usage.InputTokens,
+		OutputTokens: wrapper.Response.Usage.OutputTokens,
+	}
+	if wrapper.Response.Usage.Details != nil {
+		u.InputTokensCached = wrapper.Response.Usage.Details.CachedTokens
+	}
+	return u
+}
+
+func truncate(s string, maxLen int) string {
+	if len(s) <= maxLen {
+		return s
+	}
+	return s[:maxLen] + "..."
+}
+
 func writeError(w http.ResponseWriter, status int, errType, msg string) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	fmt.Fprintf(w, `{"type":"error","error":{"type":"%s","message":"%s"}}`, errType, msg)
+}
+
+func writeCodexError(w http.ResponseWriter, status int, msg string) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	fmt.Fprintf(w, `{"error":{"message":"%s","type":"error","code":%d}}`, msg, status)
+}
+
+type usageData struct {
+	InputTokens       int `json:"input_tokens"`
+	OutputTokens      int `json:"output_tokens"`
+	CacheReadTokens   int `json:"cache_read_input_tokens"`
+	CacheCreateTokens int `json:"cache_creation_input_tokens"`
+}
+
+type codexUsageData struct {
+	InputTokens       int `json:"input_tokens"`
+	OutputTokens      int `json:"output_tokens"`
+	InputTokensCached int `json:"input_tokens_cached"`
+}
+
+// calcCost computes the estimated cost in USD based on model and token counts.
+func calcCost(model string, input, output, cacheRead, cacheCreate int) float64 {
+	lower := strings.ToLower(model)
+	var inPrice, outPrice, cacheReadPrice, cacheCreatePrice float64
+	switch {
+	case strings.Contains(lower, "opus"):
+		inPrice, outPrice, cacheReadPrice, cacheCreatePrice = 15, 75, 1.50, 18.75
+	case strings.Contains(lower, "haiku"):
+		inPrice, outPrice, cacheReadPrice, cacheCreatePrice = 0.80, 4, 0.08, 1
+	default: // sonnet and unknown
+		inPrice, outPrice, cacheReadPrice, cacheCreatePrice = 3, 15, 0.30, 3.75
+	}
+	return (float64(input)*inPrice + float64(output)*outPrice +
+		float64(cacheRead)*cacheReadPrice + float64(cacheCreate)*cacheCreatePrice) / 1_000_000
+}
+
+// calcCodexCost computes the estimated cost in USD for Codex models.
+func calcCodexCost(model string, input, output, cacheRead int) float64 {
+	lower := strings.ToLower(model)
+	var inPrice, outPrice, cacheReadPrice float64
+	switch {
+	case strings.Contains(lower, "o3"):
+		inPrice, outPrice, cacheReadPrice = 2, 8, 0.50
+	case strings.Contains(lower, "o4-mini"):
+		inPrice, outPrice, cacheReadPrice = 1.10, 4.40, 0.275
+	case strings.Contains(lower, "codex-mini"):
+		inPrice, outPrice, cacheReadPrice = 1.50, 6, 0.375
+	case strings.Contains(lower, "4.1-nano"):
+		inPrice, outPrice, cacheReadPrice = 0.10, 0.40, 0.025
+	case strings.Contains(lower, "4.1-mini"):
+		inPrice, outPrice, cacheReadPrice = 0.40, 1.60, 0.10
+	case strings.Contains(lower, "4.1"):
+		inPrice, outPrice, cacheReadPrice = 2, 8, 0.50
+	default:
+		inPrice, outPrice, cacheReadPrice = 2, 8, 0.50
+	}
+	return (float64(input)*inPrice + float64(output)*outPrice +
+		float64(cacheRead)*cacheReadPrice) / 1_000_000
 }

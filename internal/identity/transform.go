@@ -1,28 +1,30 @@
 package identity
 
 import (
-	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"net/http"
 	"regexp"
 	"strings"
 
-	"github.com/yansir/cc-relayer/internal/account"
-	"github.com/yansir/cc-relayer/internal/config"
-	"github.com/yansir/cc-relayer/internal/store"
+	"github.com/yansir/cc-relayer/internal/domain"
 )
 
 var billingHeaderPattern = regexp.MustCompile(`(?i)x-anthropic-billing-header`)
 
-// Transformer applies all identity transformations to a request.
-type Transformer struct {
-	store store.Store
-	cfg   *config.Config
+// StainlessBinder captures and replays stainless headers per account.
+type StainlessBinder interface {
+	BindStainlessFromRequest(accountID string, reqHeaders http.Header, outHeaders http.Header)
 }
 
-func NewTransformer(s store.Store, cfg *config.Config) *Transformer {
-	return &Transformer{store: s, cfg: cfg}
+// Transformer applies all identity transformations to a request.
+type Transformer struct {
+	stainless        StainlessBinder
+	maxCacheControls int
+}
+
+func NewTransformer(sb StainlessBinder, maxCacheControls int) *Transformer {
+	return &Transformer{stainless: sb, maxCacheControls: maxCacheControls}
 }
 
 // TransformResult holds the results of a transformation.
@@ -34,10 +36,9 @@ type TransformResult struct {
 
 // Transform applies all identity transformations to a request.
 func (t *Transformer) Transform(
-	ctx context.Context,
 	body map[string]interface{},
 	reqHeaders http.Header,
-	acct *account.Account,
+	acct *domain.Account,
 ) *TransformResult {
 	result := &TransformResult{
 		Body:    body,
@@ -51,7 +52,7 @@ func (t *Transformer) Transform(
 	t.enforceCacheControl(body)
 
 	// 3. Rewrite metadata.user_id
-	accountUUID := GetAccountUUID(acct.ExtInfo)
+	accountUUID := acct.GetAccountUUID()
 	if metadata, ok := body["metadata"].(map[string]interface{}); ok {
 		if origUserID, ok := metadata["user_id"].(string); ok {
 			metadata["user_id"] = RewriteUserID(origUserID, acct.ID, accountUUID)
@@ -63,7 +64,7 @@ func (t *Transformer) Transform(
 
 	// 5. Bind/restore stainless headers
 	RemoveAllStainless(result.Headers)
-	BindStainlessHeaders(ctx, t.store, acct.ID, reqHeaders, result.Headers)
+	t.stainless.BindStainlessFromRequest(acct.ID, reqHeaders, result.Headers)
 
 	return result
 }
@@ -92,7 +93,7 @@ func (t *Transformer) stripBillingHeaders(body map[string]interface{}) {
 }
 
 func (t *Transformer) enforceCacheControl(body map[string]interface{}) {
-	maxBlocks := t.cfg.MaxCacheControls
+	maxBlocks := t.maxCacheControls
 
 	total := 0
 	total += stripAndCountCacheControl(body, "system")
