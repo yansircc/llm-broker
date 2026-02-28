@@ -3,49 +3,39 @@ package store
 import (
 	"context"
 	"database/sql"
-	"fmt"
-	"strconv"
-	"strings"
 	"time"
+
+	"github.com/yansir/cc-relayer/internal/domain"
 )
 
-// ---------------------------------------------------------------------------
-// Account operations
-// ---------------------------------------------------------------------------
-
-const accountCols = `id, email, status, schedulable, priority, priority_mode, error_message,
+const accountCols = `id, email, provider, status, schedulable, priority, priority_mode, error_message,
 	refresh_token_enc, access_token_enc, expires_at, created_at,
 	last_used_at, last_refresh_at, proxy_json, ext_info_json,
-	five_hour_status,
+	five_hour_status, five_hour_util, five_hour_reset, seven_day_util, seven_day_reset,
 	opus_rate_limit_end_at, overloaded_at, overloaded_until, rate_limited_at,
-	five_hour_util, five_hour_reset, seven_day_util, seven_day_reset,
-	provider, codex_primary_util, codex_primary_reset, codex_secondary_util, codex_secondary_reset`
+	codex_primary_util, codex_primary_reset, codex_secondary_util, codex_secondary_reset`
 
-func scanAccountRow(scanner interface{ Scan(...any) error }) (map[string]string, error) {
+func scanAccount(scanner interface{ Scan(...any) error }) (*domain.Account, error) {
 	var (
-		id, email, status, priMode, errMsg  string
-		refreshEnc, accessEnc               string
-		proxyJSON, extInfoJSON, fhStatus    string
-		sched, prio                         int
-		expiresAt, createdAt                int64
-		lastUsedAt, lastRefreshAt           sql.NullInt64
-		opusEnd                             sql.NullInt64
-		olAt, olUntil                       sql.NullInt64
-		rlAt                                sql.NullInt64
-		fhUtil, sdUtil                      float64
-		fhReset, sdReset                    int64
-		provider                            string
-		cpUtil, csUtil                      float64
-		cpReset, csReset                    int64
+		id, email, provider, status, priMode, errMsg string
+		refreshEnc, accessEnc                        string
+		proxyJSON, extInfoJSON, fhStatus             string
+		sched, prio                                  int
+		expiresAt, createdAt                         int64
+		lastUsedAt, lastRefreshAt                    sql.NullInt64
+		fhUtil, sdUtil                               float64
+		fhReset, sdReset                             int64
+		opusEnd, olAt, olUntil, rlAt                 sql.NullInt64
+		cpUtil, csUtil                               float64
+		cpReset, csReset                             int64
 	)
 	err := scanner.Scan(
-		&id, &email, &status, &sched, &prio, &priMode, &errMsg,
+		&id, &email, &provider, &status, &sched, &prio, &priMode, &errMsg,
 		&refreshEnc, &accessEnc, &expiresAt, &createdAt,
 		&lastUsedAt, &lastRefreshAt, &proxyJSON, &extInfoJSON,
-		&fhStatus,
+		&fhStatus, &fhUtil, &fhReset, &sdUtil, &sdReset,
 		&opusEnd, &olAt, &olUntil, &rlAt,
-		&fhUtil, &fhReset, &sdUtil, &sdReset,
-		&provider, &cpUtil, &cpReset, &csUtil, &csReset,
+		&cpUtil, &cpReset, &csUtil, &csReset,
 	)
 	if err != nil {
 		return nil, err
@@ -58,150 +48,111 @@ func scanAccountRow(scanner interface{ Scan(...any) error }) (map[string]string,
 		provider = "claude"
 	}
 
-	m := map[string]string{
-		"id":                  id,
-		"email":               email,
-		"provider":            provider,
-		"status":              status,
-		"schedulable":         boolStr(sched),
-		"priority":            strconv.Itoa(prio),
-		"priorityMode":        priMode,
-		"errorMessage":        errMsg,
-		"refreshToken":        refreshEnc,
-		"accessToken":         accessEnc,
-		"expiresAt":           strconv.FormatInt(expiresAt, 10),
-		"createdAt":           time.Unix(createdAt, 0).UTC().Format(time.RFC3339),
-		"proxy":               proxyJSON,
-		"extInfo":             extInfoJSON,
-		"fiveHourStatus":      fhStatus,
-		"fiveHourUtil":        strconv.FormatFloat(fhUtil, 'f', -1, 64),
-		"fiveHourReset":       strconv.FormatInt(fhReset, 10),
-		"sevenDayUtil":        strconv.FormatFloat(sdUtil, 'f', -1, 64),
-		"sevenDayReset":       strconv.FormatInt(sdReset, 10),
-		"codexPrimaryUtil":    strconv.FormatFloat(cpUtil, 'f', -1, 64),
-		"codexPrimaryReset":   strconv.FormatInt(cpReset, 10),
-		"codexSecondaryUtil":  strconv.FormatFloat(csUtil, 'f', -1, 64),
-		"codexSecondaryReset": strconv.FormatInt(csReset, 10),
+	a := &domain.Account{
+		ID:              id,
+		Email:           email,
+		Provider:        domain.Provider(provider),
+		Status:          domain.Status(status),
+		Schedulable:     sched != 0,
+		Priority:        prio,
+		PriorityMode:    priMode,
+		ErrorMessage:    errMsg,
+		RefreshTokenEnc: refreshEnc,
+		AccessTokenEnc:  accessEnc,
+		ExpiresAt:       expiresAt,
+		CreatedAt:       time.Unix(createdAt, 0).UTC(),
+		LastUsedAt:      scanNullableTime(lastUsedAt),
+		LastRefreshAt:   scanNullableTime(lastRefreshAt),
+		ProxyJSON:       proxyJSON,
+		ExtInfoJSON:     extInfoJSON,
+		FiveHourStatus:  fhStatus,
+		FiveHourUtil:    fhUtil,
+		FiveHourReset:   fhReset,
+		SevenDayUtil:    sdUtil,
+		SevenDayReset:   sdReset,
+		OpusRateLimitEndAt: scanNullableTime(opusEnd),
+		OverloadedAt:       scanNullableTime(olAt),
+		OverloadedUntil:    scanNullableTime(olUntil),
+		RateLimitedAt:      scanNullableTime(rlAt),
+		CodexPrimaryUtil:    cpUtil,
+		CodexPrimaryReset:   cpReset,
+		CodexSecondaryUtil:  csUtil,
+		CodexSecondaryReset: csReset,
 	}
-	setTimeField(m, "lastUsedAt", lastUsedAt)
-	setTimeField(m, "lastRefreshAt", lastRefreshAt)
-	setTimeField(m, "opusRateLimitEndAt", opusEnd)
-	setTimeField(m, "overloadedAt", olAt)
-	setTimeField(m, "overloadedUntil", olUntil)
-	setTimeField(m, "rateLimitedAt", rlAt)
-	return m, nil
+	a.HydrateRuntime()
+	return a, nil
 }
 
-func setTimeField(m map[string]string, key string, v sql.NullInt64) {
-	if v.Valid && v.Int64 > 0 {
-		m[key] = time.Unix(v.Int64, 0).UTC().Format(time.RFC3339)
-	}
-}
-
-func (s *SQLiteStore) GetAccount(ctx context.Context, id string) (map[string]string, error) {
+func (s *SQLiteStore) GetAccount(ctx context.Context, id string) (*domain.Account, error) {
 	row := s.db.QueryRowContext(ctx, "SELECT "+accountCols+" FROM accounts WHERE id = ?", id)
-	m, err := scanAccountRow(row)
+	a, err := scanAccount(row)
 	if err == sql.ErrNoRows {
-		return map[string]string{}, nil
+		return nil, nil
 	}
-	return m, err
+	return a, err
 }
 
-func (s *SQLiteStore) SetAccount(ctx context.Context, id string, fields map[string]string) error {
-	// Check existence to decide INSERT vs UPDATE.
-	var exists int
-	err := s.db.QueryRowContext(ctx, "SELECT 1 FROM accounts WHERE id = ?", id).Scan(&exists)
-	if err == sql.ErrNoRows {
-		return s.insertAccount(ctx, id, fields)
-	}
+func (s *SQLiteStore) ListAccounts(ctx context.Context) ([]*domain.Account, error) {
+	rows, err := s.db.QueryContext(ctx, "SELECT "+accountCols+" FROM accounts ORDER BY created_at")
 	if err != nil {
-		return err
+		return nil, err
 	}
-	return s.SetAccountFields(ctx, id, fields)
+	defer rows.Close()
+	var accounts []*domain.Account
+	for rows.Next() {
+		a, err := scanAccount(rows)
+		if err != nil {
+			return nil, err
+		}
+		accounts = append(accounts, a)
+	}
+	return accounts, rows.Err()
 }
 
-func (s *SQLiteStore) insertAccount(ctx context.Context, id string, fields map[string]string) error {
-	cols := []string{"id"}
-	vals := []interface{}{id}
-
-	for redisKey, val := range fields {
-		if redisKey == "id" {
-			continue
-		}
-		info, ok := fieldMap[redisKey]
-		if !ok {
-			continue
-		}
-		cols = append(cols, info.col)
-		vals = append(vals, info.conv(val))
-	}
-
-	// Ensure created_at is present.
-	hasCreatedAt := false
-	for _, c := range cols {
-		if c == "created_at" {
-			hasCreatedAt = true
-			break
-		}
-	}
-	if !hasCreatedAt {
-		cols = append(cols, "created_at")
-		vals = append(vals, time.Now().Unix())
-	}
-
-	placeholders := strings.Repeat("?,", len(cols))
-	placeholders = placeholders[:len(placeholders)-1]
-
-	query := fmt.Sprintf("INSERT INTO accounts (%s) VALUES (%s)", strings.Join(cols, ", "), placeholders)
-	_, err := s.db.ExecContext(ctx, query, vals...)
-	return err
-}
-
-func (s *SQLiteStore) SetAccountField(ctx context.Context, id, field, value string) error {
-	return s.SetAccountFields(ctx, id, map[string]string{field: value})
-}
-
-func (s *SQLiteStore) SetAccountFields(ctx context.Context, id string, fields map[string]string) error {
-	if len(fields) == 0 {
-		return nil
-	}
-	var sets []string
-	var vals []interface{}
-	for redisKey, val := range fields {
-		info, ok := fieldMap[redisKey]
-		if !ok {
-			continue
-		}
-		sets = append(sets, info.col+" = ?")
-		vals = append(vals, info.conv(val))
-	}
-	if len(sets) == 0 {
-		return nil
-	}
-	vals = append(vals, id)
-	query := fmt.Sprintf("UPDATE accounts SET %s WHERE id = ?", strings.Join(sets, ", "))
-	_, err := s.db.ExecContext(ctx, query, vals...)
+// SaveAccount performs an UPSERT of the entire Account struct.
+func (s *SQLiteStore) SaveAccount(ctx context.Context, acct *domain.Account) error {
+	acct.PersistRuntime()
+	_, err := s.db.ExecContext(ctx, `
+		INSERT INTO accounts (
+			id, email, provider, status, schedulable, priority, priority_mode, error_message,
+			refresh_token_enc, access_token_enc, expires_at, created_at,
+			last_used_at, last_refresh_at, proxy_json, ext_info_json,
+			five_hour_status, five_hour_util, five_hour_reset, seven_day_util, seven_day_reset,
+			opus_rate_limit_end_at, overloaded_at, overloaded_until, rate_limited_at,
+			codex_primary_util, codex_primary_reset, codex_secondary_util, codex_secondary_reset
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		ON CONFLICT(id) DO UPDATE SET
+			email=excluded.email, provider=excluded.provider, status=excluded.status,
+			schedulable=excluded.schedulable, priority=excluded.priority, priority_mode=excluded.priority_mode,
+			error_message=excluded.error_message,
+			refresh_token_enc=excluded.refresh_token_enc, access_token_enc=excluded.access_token_enc,
+			expires_at=excluded.expires_at,
+			last_used_at=excluded.last_used_at, last_refresh_at=excluded.last_refresh_at,
+			proxy_json=excluded.proxy_json, ext_info_json=excluded.ext_info_json,
+			five_hour_status=excluded.five_hour_status,
+			five_hour_util=excluded.five_hour_util, five_hour_reset=excluded.five_hour_reset,
+			seven_day_util=excluded.seven_day_util, seven_day_reset=excluded.seven_day_reset,
+			opus_rate_limit_end_at=excluded.opus_rate_limit_end_at,
+			overloaded_at=excluded.overloaded_at, overloaded_until=excluded.overloaded_until,
+			rate_limited_at=excluded.rate_limited_at,
+			codex_primary_util=excluded.codex_primary_util, codex_primary_reset=excluded.codex_primary_reset,
+			codex_secondary_util=excluded.codex_secondary_util, codex_secondary_reset=excluded.codex_secondary_reset`,
+		acct.ID, acct.Email, string(acct.Provider), string(acct.Status),
+		boolInt(acct.Schedulable), acct.Priority, acct.PriorityMode, acct.ErrorMessage,
+		acct.RefreshTokenEnc, acct.AccessTokenEnc, acct.ExpiresAt, acct.CreatedAt.Unix(),
+		nullableUnix(acct.LastUsedAt), nullableUnix(acct.LastRefreshAt),
+		acct.ProxyJSON, acct.ExtInfoJSON,
+		acct.FiveHourStatus, acct.FiveHourUtil, acct.FiveHourReset,
+		acct.SevenDayUtil, acct.SevenDayReset,
+		nullableUnix(acct.OpusRateLimitEndAt), nullableUnix(acct.OverloadedAt),
+		nullableUnix(acct.OverloadedUntil), nullableUnix(acct.RateLimitedAt),
+		acct.CodexPrimaryUtil, acct.CodexPrimaryReset,
+		acct.CodexSecondaryUtil, acct.CodexSecondaryReset,
+	)
 	return err
 }
 
 func (s *SQLiteStore) DeleteAccount(ctx context.Context, id string) error {
 	_, err := s.db.ExecContext(ctx, "DELETE FROM accounts WHERE id = ?", id)
 	return err
-}
-
-func (s *SQLiteStore) ListAccountIDs(ctx context.Context) ([]string, error) {
-	rows, err := s.db.QueryContext(ctx, "SELECT id FROM accounts")
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	ids := make([]string, 0)
-	for rows.Next() {
-		var id string
-		if err := rows.Scan(&id); err != nil {
-			return nil, err
-		}
-		ids = append(ids, id)
-	}
-	return ids, rows.Err()
 }

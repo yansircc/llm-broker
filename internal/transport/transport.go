@@ -12,13 +12,10 @@ import (
 	"time"
 
 	utls "github.com/refraction-networking/utls"
-	"github.com/yansir/cc-relayer/internal/account"
-	"github.com/yansir/cc-relayer/internal/config"
+	"github.com/yansir/cc-relayer/internal/domain"
 	"golang.org/x/net/http2"
 	"golang.org/x/net/proxy"
 )
-
-// --- Manager (public API) ---
 
 // Manager provides per-account HTTP clients and transports with utls fingerprinting.
 type Manager struct {
@@ -32,16 +29,15 @@ type poolEntry struct {
 	lastUsed     time.Time
 }
 
-// NewManager creates a new transport Manager.
-func NewManager(cfg *config.Config) *Manager {
+func NewManager(requestTimeout time.Duration) *Manager {
 	return &Manager{
 		entries:        make(map[string]*poolEntry),
-		requestTimeout: cfg.RequestTimeout,
+		requestTimeout: requestTimeout,
 	}
 }
 
 // GetClient returns an http.Client with a per-account transport (utls + optional proxy).
-func (m *Manager) GetClient(acct *account.Account) *http.Client {
+func (m *Manager) GetClient(acct *domain.Account) *http.Client {
 	return &http.Client{
 		Transport: m.getRoundTripper(acct),
 		Timeout:   m.requestTimeout,
@@ -49,12 +45,12 @@ func (m *Manager) GetClient(acct *account.Account) *http.Client {
 }
 
 // GetHTTPTransport returns an http.Transport for proxy scenarios (used by token refresh).
-func (m *Manager) GetHTTPTransport(acct *account.Account) *http.Transport {
-	if acct.Proxy == nil {
+func (m *Manager) GetHTTPTransport(pcfg *domain.ProxyConfig) *http.Transport {
+	if pcfg == nil {
 		return nil
 	}
 	return &http.Transport{
-		DialTLSContext: proxyDialer(acct.Proxy),
+		DialTLSContext: proxyDialer(pcfg),
 	}
 }
 
@@ -86,9 +82,7 @@ func (m *Manager) Close() {
 	}
 }
 
-// --- Pool (internal) ---
-
-func (m *Manager) getRoundTripper(acct *account.Account) http.RoundTripper {
+func (m *Manager) getRoundTripper(acct *domain.Account) http.RoundTripper {
 	key := transportKey(acct)
 
 	m.mu.Lock()
@@ -119,16 +113,14 @@ func (m *Manager) cleanup(idleTimeout time.Duration) {
 	}
 }
 
-func transportKey(acct *account.Account) string {
+func transportKey(acct *domain.Account) string {
 	if acct.Proxy == nil {
 		return "direct"
 	}
 	return fmt.Sprintf("%s://%s:%d", acct.Proxy.Type, acct.Proxy.Host, acct.Proxy.Port)
 }
 
-// --- Transport building ---
-
-func buildRoundTripper(acct *account.Account) http.RoundTripper {
+func buildRoundTripper(acct *domain.Account) http.RoundTripper {
 	if acct.Proxy != nil {
 		return &http.Transport{
 			MaxIdleConnsPerHost: 2,
@@ -136,15 +128,12 @@ func buildRoundTripper(acct *account.Account) http.RoundTripper {
 			DialTLSContext:      proxyDialer(acct.Proxy),
 		}
 	}
-	// 直连：用 http2.Transport，绕开 utls UConn 的 *tls.Conn 类型断言问题
 	return &http2.Transport{
 		DialTLSContext: func(ctx context.Context, network, addr string, _ *tls.Config) (net.Conn, error) {
 			return dialUTLS(ctx, network, addr)
 		},
 	}
 }
-
-// --- TLS (utls Chrome fingerprint) ---
 
 func dialUTLS(ctx context.Context, network, addr string) (net.Conn, error) {
 	host, _, err := net.SplitHostPort(addr)
@@ -165,14 +154,14 @@ func dialUTLSViaConn(ctx context.Context, rawConn net.Conn, serverName string) (
 	return uTLSHandshake(ctx, rawConn, serverName)
 }
 
-func uTLSHandshake(ctx context.Context, rawConn net.Conn, serverName string) (net.Conn, error) {
+func uTLSHandshake(_ context.Context, rawConn net.Conn, serverName string) (net.Conn, error) {
 	tlsConn := utls.UClient(rawConn, &utls.Config{
 		ServerName:         serverName,
 		InsecureSkipVerify: false,
 		MinVersion:         tls.VersionTLS12,
 	}, utls.HelloChrome_Auto)
 
-	if err := tlsConn.HandshakeContext(ctx); err != nil {
+	if err := tlsConn.HandshakeContext(context.Background()); err != nil {
 		rawConn.Close()
 		return nil, err
 	}
@@ -180,9 +169,7 @@ func uTLSHandshake(ctx context.Context, rawConn net.Conn, serverName string) (ne
 	return tlsConn, nil
 }
 
-// --- Proxy (SOCKS5 + HTTP CONNECT) ---
-
-func proxyDialer(pcfg *account.ProxyConfig) func(ctx context.Context, network, addr string) (net.Conn, error) {
+func proxyDialer(pcfg *domain.ProxyConfig) func(ctx context.Context, network, addr string) (net.Conn, error) {
 	switch pcfg.Type {
 	case "socks5":
 		return socks5Dialer(pcfg)
@@ -191,7 +178,7 @@ func proxyDialer(pcfg *account.ProxyConfig) func(ctx context.Context, network, a
 	}
 }
 
-func socks5Dialer(pcfg *account.ProxyConfig) func(ctx context.Context, network, addr string) (net.Conn, error) {
+func socks5Dialer(pcfg *domain.ProxyConfig) func(ctx context.Context, network, addr string) (net.Conn, error) {
 	return func(ctx context.Context, network, addr string) (net.Conn, error) {
 		proxyAddr := fmt.Sprintf("%s:%d", pcfg.Host, pcfg.Port)
 
@@ -223,7 +210,7 @@ func socks5Dialer(pcfg *account.ProxyConfig) func(ctx context.Context, network, 
 	}
 }
 
-func httpConnectDialer(pcfg *account.ProxyConfig) func(ctx context.Context, network, addr string) (net.Conn, error) {
+func httpConnectDialer(pcfg *domain.ProxyConfig) func(ctx context.Context, network, addr string) (net.Conn, error) {
 	return func(ctx context.Context, network, addr string) (net.Conn, error) {
 		proxyAddr := fmt.Sprintf("%s:%d", pcfg.Host, pcfg.Port)
 

@@ -8,7 +8,7 @@ import (
 	"time"
 
 	"github.com/yansir/cc-relayer/internal/auth"
-	"github.com/yansir/cc-relayer/internal/scheduler"
+	"github.com/yansir/cc-relayer/internal/pool"
 )
 
 // ---------------------------------------------------------------------------
@@ -37,7 +37,6 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Quick validation: try admin first, then user
 	ki, valid := s.authMw.ValidateToken(r.Context(), req.Token)
 	if !valid || ki == nil {
 		writeAdminError(w, http.StatusUnauthorized, "authentication_error", "invalid token")
@@ -61,7 +60,7 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 }
 
 // ---------------------------------------------------------------------------
-// Dashboard (admin only) — single unified endpoint
+// Dashboard
 // ---------------------------------------------------------------------------
 
 func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
@@ -87,11 +86,8 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 		slog.Warn("dashboard: query usage periods failed", "error", err)
 	}
 
-	// Accounts with utilization from response headers
-	acctList, err := s.accounts.List(ctx)
-	if err != nil {
-		slog.Warn("dashboard: list accounts failed", "error", err)
-	}
+	// Accounts
+	acctList := s.pool.List()
 
 	type accountView struct {
 		ID              string     `json:"id"`
@@ -112,20 +108,19 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 	for _, a := range acctList {
 		pri := a.Priority
 		if a.PriorityMode == "auto" {
-			pri = scheduler.AutoPriority(a)
+			pri = pool.AutoPriority(a)
 		}
 		av := accountView{
 			ID:              a.ID,
 			Email:           a.Email,
-			Provider:        a.Provider,
-			Status:          a.Status,
+			Provider:        string(a.Provider),
+			Status:          string(a.Status),
 			PriorityMode:    a.PriorityMode,
 			Priority:        pri,
 			OverloadedUntil: a.OverloadedUntil,
 			LastUsedAt:      a.LastUsedAt,
 		}
 		if a.Provider == "codex" {
-			// Codex accounts use primary/secondary as 5h/7d equivalents
 			if a.CodexPrimaryUtil > 0 || a.CodexPrimaryReset > 0 {
 				pct := int(a.CodexPrimaryUtil * 100)
 				av.FiveHourUtil = &pct
@@ -188,7 +183,7 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 
-	// Events from bus ring buffer
+	// Events
 	recentEvents := s.bus.Recent(20)
 	type eventInfo struct {
 		Type      string `json:"type"`
@@ -221,7 +216,7 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 }
 
 // ---------------------------------------------------------------------------
-// Health (authenticated)
+// Health
 // ---------------------------------------------------------------------------
 
 func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
