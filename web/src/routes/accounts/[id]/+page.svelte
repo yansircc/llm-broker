@@ -17,15 +17,15 @@
 		priority_mode: string;
 		auto_score: number;
 		schedulable: boolean;
-		errorMessage: string;
-		extInfo: Record<string, string> | null;
-		createdAt: string;
-		lastUsedAt: string | null;
-		lastRefreshAt: string | null;
-		expiresAt: number;
-		fiveHourStatus: string;
-		overloadedUntil: string | null;
-		opusRateLimitEndAt: string | null;
+		error_message: string;
+		ext_info: Record<string, string> | null;
+		created_at: string;
+		last_used_at: string | null;
+		last_refresh_at: string | null;
+		expires_at: number;
+		five_hour_status: string;
+		overloaded_until: string | null;
+		opus_rate_limit_end_at: string | null;
 		stainless: Record<string, string> | null;
 		sessions: { session_uuid: string; account_id: string; created_at: string; last_used_at: string; expires_at: string }[];
 	}
@@ -225,11 +225,11 @@
 
 		<dt>org</dt>
 		<dd>
-			{#if acct.extInfo}
+			{#if acct.ext_info}
 				{#if acct.provider === 'codex'}
-					{acct.extInfo.orgTitle || '-'} <span class="muted">(account: {acct.extInfo.chatgptAccountId || '-'})</span>
+					{acct.ext_info.orgTitle || '-'} <span class="muted">(account: {acct.ext_info.chatgptAccountId || '-'})</span>
 				{:else}
-					{acct.extInfo.orgName} <span class="muted">(uuid: {acct.extInfo.orgUUID})</span>
+					{acct.ext_info.orgName} <span class="muted">(uuid: {acct.ext_info.orgUUID})</span>
 				{/if}
 			{:else}
 				<span class="muted">-</span>
@@ -248,16 +248,16 @@
 		</dd>
 
 		<dt>created</dt>
-		<dd>{fmtDate(acct.createdAt)}</dd>
+		<dd>{fmtDate(acct.created_at)}</dd>
 	</dl>
 
 	<h2>token</h2>
 	<dl>
 		<dt>expires in</dt>
-		<dd><TokenCountdown expiresAt={acct.expiresAt} /></dd>
+		<dd><TokenCountdown expiresAt={acct.expires_at} /></dd>
 
 		<dt>last refreshed</dt>
-		<dd>{#if acct.lastRefreshAt}{timeAgo(acct.lastRefreshAt)} <span class="muted">({new Date(acct.lastRefreshAt).toLocaleTimeString('en-GB', { hour12: false })})</span>{:else}<span class="muted">-</span>{/if}</dd>
+		<dd>{#if acct.last_refresh_at}{timeAgo(acct.last_refresh_at)} <span class="muted">({new Date(acct.last_refresh_at).toLocaleTimeString('en-GB', { hour12: false })})</span>{:else}<span class="muted">-</span>{/if}</dd>
 	</dl>
 
 	<h2>scheduling</h2>
@@ -267,8 +267,8 @@
 
 		<dt>cooldown</dt>
 		<dd>
-			{#if acct.overloadedUntil}
-				<span class="o">{countdownText(acct.overloadedUntil)}</span>
+			{#if acct.overloaded_until}
+				<span class="o">{countdownText(acct.overloaded_until)}</span>
 			{:else}
 				<span class="muted">-</span>
 			{/if}
@@ -276,7 +276,7 @@
 
 		{#if acct.provider !== 'codex'}
 			<dt>5h window</dt>
-			<dd><span class={fiveHourColor(acct.fiveHourStatus)}>{acct.fiveHourStatus || '-'}</span></dd>
+			<dd><span class={fiveHourColor(acct.five_hour_status)}>{acct.five_hour_status || '-'}</span></dd>
 
 			<dt>5h remain</dt>
 			<dd><span class="muted">-</span></dd>
@@ -286,8 +286,8 @@
 
 			<dt>opus rate limit</dt>
 			<dd>
-				{#if acct.opusRateLimitEndAt}
-					<span class="o">{countdownText(acct.opusRateLimitEndAt)}</span>
+				{#if acct.opus_rate_limit_end_at}
+					<span class="o">{countdownText(acct.opus_rate_limit_end_at)}</span>
 				{:else}
 					<span class="muted">-</span>
 				{/if}
@@ -301,12 +301,12 @@
 		{/if}
 
 		<dt>last used</dt>
-		<dd>{#if acct.lastUsedAt}{timeAgo(acct.lastUsedAt)} <span class="muted">({new Date(acct.lastUsedAt).toLocaleTimeString('en-GB', { hour12: false })})</span>{:else}<span class="muted">-</span>{/if}</dd>
+		<dd>{#if acct.last_used_at}{timeAgo(acct.last_used_at)} <span class="muted">({new Date(acct.last_used_at).toLocaleTimeString('en-GB', { hour12: false })})</span>{:else}<span class="muted">-</span>{/if}</dd>
 
 		<dt>error</dt>
 		<dd>
-			{#if acct.errorMessage}
-				<span class="r">{acct.errorMessage}</span>
+			{#if acct.error_message}
+				<span class="r">{acct.error_message}</span>
 			{:else}
 				<span class="muted">-</span>
 			{/if}
