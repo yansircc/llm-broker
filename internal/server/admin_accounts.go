@@ -19,24 +19,9 @@ import (
 func (s *Server) handleListAccounts(w http.ResponseWriter, r *http.Request) {
 	accounts := s.pool.List()
 
-	type accountView struct {
-		ID                 string                 `json:"id"`
-		Email              string                 `json:"email"`
-		Provider           string                 `json:"provider"`
-		Status             string                 `json:"status"`
-		Priority           int                    `json:"priority"`
-		PriorityMode       string                 `json:"priority_mode"`
-		Schedulable        bool                   `json:"schedulable"`
-		ExtInfo            map[string]interface{} `json:"ext_info,omitempty"`
-		LastUsedAt         *time.Time             `json:"last_used_at,omitempty"`
-		OverloadedUntil    *time.Time             `json:"overloaded_until,omitempty"`
-		FiveHourStatus     string                 `json:"five_hour_status"`
-		OpusRateLimitEndAt *time.Time             `json:"opus_rate_limit_end_at,omitempty"`
-	}
-
-	views := make([]accountView, 0, len(accounts))
+	views := make([]AccountListItem, 0, len(accounts))
 	for _, a := range accounts {
-		views = append(views, accountView{
+		views = append(views, AccountListItem{
 			ID:                 a.ID,
 			Email:              a.Email,
 			Provider:           string(a.Provider),
@@ -84,32 +69,35 @@ func (s *Server) handleGetAccount(w http.ResponseWriter, r *http.Request) {
 	}
 
 	sessions := s.pool.ListSessionBindingsForAccount(id)
+	if sessions == nil {
+		sessions = []domain.SessionBindingInfo{}
+	}
 
 	var autoScore int
 	if acct.PriorityMode == "auto" {
 		autoScore = pool.AutoPriority(acct)
 	}
 
-	writeJSON(w, http.StatusOK, map[string]interface{}{
-		"id":                    acct.ID,
-		"email":                 acct.Email,
-		"provider":              acct.Provider,
-		"status":                acct.Status,
-		"priority":              acct.Priority,
-		"priority_mode":         acct.PriorityMode,
-		"auto_score":            autoScore,
-		"schedulable":           acct.Schedulable,
-		"error_message":         acct.ErrorMessage,
-		"ext_info":              acct.ExtInfo,
-		"created_at":            acct.CreatedAt,
-		"last_used_at":          acct.LastUsedAt,
-		"last_refresh_at":       acct.LastRefreshAt,
-		"expires_at":            acct.ExpiresAt,
-		"five_hour_status":      acct.FiveHourStatus,
-		"overloaded_until":      acct.OverloadedUntil,
-		"opus_rate_limit_end_at": acct.OpusRateLimitEndAt,
-		"stainless":             stainless,
-		"sessions":              sessions,
+	writeJSON(w, http.StatusOK, AccountDetailResponse{
+		ID:                 acct.ID,
+		Email:              acct.Email,
+		Provider:           acct.Provider,
+		Status:             acct.Status,
+		Priority:           acct.Priority,
+		PriorityMode:       acct.PriorityMode,
+		AutoScore:          autoScore,
+		Schedulable:        acct.Schedulable,
+		ErrorMessage:       acct.ErrorMessage,
+		ExtInfo:            acct.ExtInfo,
+		CreatedAt:          acct.CreatedAt,
+		LastUsedAt:         acct.LastUsedAt,
+		LastRefreshAt:      acct.LastRefreshAt,
+		ExpiresAt:          acct.ExpiresAt,
+		FiveHourStatus:     acct.FiveHourStatus,
+		OverloadedUntil:    acct.OverloadedUntil,
+		OpusRateLimitEndAt: acct.OpusRateLimitEndAt,
+		Stainless:          stainless,
+		Sessions:           sessions,
 	})
 }
 
@@ -191,7 +179,11 @@ func (s *Server) handleUpdateAccountPriority(w http.ResponseWriter, r *http.Requ
 		return
 	}
 	slog.Info("account priority updated", "id", id, "mode", mode, "priority", priority)
-	writeJSON(w, http.StatusOK, map[string]interface{}{"id": id, "mode": mode, "priority": priority})
+	writeJSON(w, http.StatusOK, struct {
+		ID       string `json:"id"`
+		Mode     string `json:"mode"`
+		Priority int    `json:"priority"`
+	}{id, mode, priority})
 }
 
 func (s *Server) handleRefreshAccount(w http.ResponseWriter, r *http.Request) {
@@ -236,10 +228,7 @@ func (s *Server) handleTestAccount(w http.ResponseWriter, r *http.Request) {
 
 	accessToken, err := s.tokens.EnsureValidToken(r.Context(), acct.ID)
 	if err != nil {
-		writeJSON(w, http.StatusOK, map[string]interface{}{
-			"ok":    false,
-			"error": "token unavailable: " + err.Error(),
-		})
+		writeJSON(w, http.StatusOK, TestAccountResult{Error: "token unavailable: " + err.Error()})
 		return
 	}
 
@@ -252,7 +241,7 @@ func (s *Server) handleTestAccount(w http.ResponseWriter, r *http.Request) {
 	testBody := `{"model":"claude-haiku-4-5-20251001","max_tokens":1,"messages":[{"role":"user","content":"hi"}]}`
 	testReq, err := http.NewRequestWithContext(r.Context(), "POST", s.cfg.ClaudeAPIURL, strings.NewReader(testBody))
 	if err != nil {
-		writeJSON(w, http.StatusOK, map[string]interface{}{"ok": false, "error": "failed to create request"})
+		writeJSON(w, http.StatusOK, TestAccountResult{Error: "failed to create request"})
 		return
 	}
 	testReq.Header.Set("Content-Type", "application/json")
@@ -264,7 +253,7 @@ func (s *Server) handleTestAccount(w http.ResponseWriter, r *http.Request) {
 	latencyMs := time.Since(start).Milliseconds()
 
 	if err != nil {
-		writeJSON(w, http.StatusOK, map[string]interface{}{"ok": false, "latency_ms": latencyMs, "error": err.Error()})
+		writeJSON(w, http.StatusOK, TestAccountResult{LatencyMs: latencyMs, Error: err.Error()})
 		return
 	}
 	defer resp.Body.Close()
@@ -273,21 +262,18 @@ func (s *Server) handleTestAccount(w http.ResponseWriter, r *http.Request) {
 	s.pool.ObserveSuccess(acct.ID, resp.Header)
 
 	if resp.StatusCode != http.StatusOK {
-		writeJSON(w, http.StatusOK, map[string]interface{}{
-			"ok": false, "latency_ms": latencyMs,
-			"error": fmt.Sprintf("upstream returned %d", resp.StatusCode),
-		})
+		writeJSON(w, http.StatusOK, TestAccountResult{LatencyMs: latencyMs, Error: fmt.Sprintf("upstream returned %d", resp.StatusCode)})
 		return
 	}
 
-	writeJSON(w, http.StatusOK, map[string]interface{}{"ok": true, "latency_ms": latencyMs})
+	writeJSON(w, http.StatusOK, TestAccountResult{OK: true, LatencyMs: latencyMs})
 }
 
 func (s *Server) testCodexAccount(w http.ResponseWriter, r *http.Request, acct *domain.Account, accessToken string) {
 	testBody := `{"model":"gpt-5-codex","stream":true,"store":false,"instructions":"Reply with only: ok","input":[{"role":"user","content":"test"}]}`
 	testReq, err := http.NewRequestWithContext(r.Context(), "POST", s.cfg.CodexAPIURL, strings.NewReader(testBody))
 	if err != nil {
-		writeJSON(w, http.StatusOK, map[string]interface{}{"ok": false, "error": "failed to create request"})
+		writeJSON(w, http.StatusOK, TestAccountResult{Error: "failed to create request"})
 		return
 	}
 	testReq.Header.Set("Content-Type", "application/json")
@@ -306,7 +292,7 @@ func (s *Server) testCodexAccount(w http.ResponseWriter, r *http.Request, acct *
 	latencyMs := time.Since(start).Milliseconds()
 
 	if err != nil {
-		writeJSON(w, http.StatusOK, map[string]interface{}{"ok": false, "latency_ms": latencyMs, "error": err.Error()})
+		writeJSON(w, http.StatusOK, TestAccountResult{LatencyMs: latencyMs, Error: err.Error()})
 		return
 	}
 	defer resp.Body.Close()
@@ -315,9 +301,9 @@ func (s *Server) testCodexAccount(w http.ResponseWriter, r *http.Request, acct *
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
-		writeJSON(w, http.StatusOK, map[string]interface{}{
-			"ok": false, "latency_ms": latencyMs,
-			"error": fmt.Sprintf("codex upstream returned %d: %s", resp.StatusCode, truncateStr(string(body), 200)),
+		writeJSON(w, http.StatusOK, TestAccountResult{
+			LatencyMs: latencyMs,
+			Error:     fmt.Sprintf("codex upstream returned %d: %s", resp.StatusCode, truncateStr(string(body), 200)),
 		})
 		return
 	}
@@ -332,9 +318,9 @@ func (s *Server) testCodexAccount(w http.ResponseWriter, r *http.Request, acct *
 			break
 		}
 		if strings.HasPrefix(line, "data: ") && strings.Contains(line, `"error":{`) {
-			writeJSON(w, http.StatusOK, map[string]interface{}{
-				"ok": false, "latency_ms": time.Since(start).Milliseconds(),
-				"error": "upstream error in stream",
+			writeJSON(w, http.StatusOK, TestAccountResult{
+				LatencyMs: time.Since(start).Milliseconds(),
+				Error:     "upstream error in stream",
 			})
 			return
 		}
@@ -342,9 +328,9 @@ func (s *Server) testCodexAccount(w http.ResponseWriter, r *http.Request, acct *
 
 	latencyMs = time.Since(start).Milliseconds()
 	if gotOutput {
-		writeJSON(w, http.StatusOK, map[string]interface{}{"ok": true, "latency_ms": latencyMs})
+		writeJSON(w, http.StatusOK, TestAccountResult{OK: true, LatencyMs: latencyMs})
 	} else {
-		writeJSON(w, http.StatusOK, map[string]interface{}{"ok": false, "latency_ms": latencyMs, "error": "stream ended without output"})
+		writeJSON(w, http.StatusOK, TestAccountResult{LatencyMs: latencyMs, Error: "stream ended without output"})
 	}
 }
 

@@ -14,6 +14,9 @@ Thumbs.db
 # SvelteKit build cache
 web/.svelte-kit/
 
+# Embedded frontend dist (built by CI/deploy)
+internal/ui/dist/
+
 # Claude Code
 .claude/HANDOFF.md
 .claude/worktrees/

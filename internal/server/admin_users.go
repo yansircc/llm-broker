@@ -62,6 +62,9 @@ func (s *Server) handleListUsers(w http.ResponseWriter, r *http.Request) {
 		writeAdminError(w, http.StatusInternalServerError, "internal_error", "failed to list users")
 		return
 	}
+	if users == nil {
+		users = []*domain.User{}
+	}
 	writeJSON(w, http.StatusOK, users)
 }
 
@@ -199,15 +202,15 @@ func (s *Server) handleGetUser(w http.ResponseWriter, r *http.Request) {
 		recentRequests = []*domain.RequestLog{}
 	}
 
-	writeJSON(w, http.StatusOK, map[string]interface{}{
-		"id":              user.ID,
-		"name":            user.Name,
-		"token_prefix":    user.TokenPrefix,
-		"status":          user.Status,
-		"created_at":      user.CreatedAt,
-		"last_active_at":  user.LastActiveAt,
-		"usage":           usage,
-		"model_usage":     modelUsage,
-		"recent_requests": recentRequests,
+	writeJSON(w, http.StatusOK, UserDetailResponse{
+		ID:             user.ID,
+		Name:           user.Name,
+		TokenPrefix:    user.TokenPrefix,
+		Status:         user.Status,
+		CreatedAt:      user.CreatedAt,
+		LastActiveAt:   user.LastActiveAt,
+		Usage:          usage,
+		ModelUsage:     modelUsage,
+		RecentRequests: recentRequests,
 	})
 }

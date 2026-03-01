@@ -4,7 +4,6 @@ import (
 	"crypto/aes"
 	"crypto/cipher"
 	"crypto/rand"
-	"crypto/sha256"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -117,12 +116,6 @@ func (c *Crypto) Decrypt(encrypted string, salt string) (string, error) {
 	}
 
 	return string(unpadded), nil
-}
-
-// HashAPIKey computes SHA-256(apiKey + encryptionKey).
-func (c *Crypto) HashAPIKey(apiKey string) string {
-	h := sha256.Sum256([]byte(apiKey + c.encryptionKey))
-	return hex.EncodeToString(h[:])
 }
 
 func pkcs7Pad(data []byte, blockSize int) []byte {

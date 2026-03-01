@@ -79,20 +79,3 @@ func TestDecrypt_InvalidFormat(t *testing.T) {
 		t.Error("short IV should fail with iv length error")
 	}
 }
-
-func TestHashAPIKey(t *testing.T) {
-	c := New("secret")
-	h1 := c.HashAPIKey("tk_user_abc123")
-	h2 := c.HashAPIKey("tk_user_abc123")
-	if h1 != h2 {
-		t.Error("same input should produce same hash")
-	}
-	if len(h1) != 64 {
-		t.Errorf("hash should be 64 hex chars, got %d", len(h1))
-	}
-
-	h3 := c.HashAPIKey("tk_user_different")
-	if h1 == h3 {
-		t.Error("different input should produce different hash")
-	}
-}
