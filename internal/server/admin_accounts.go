@@ -257,15 +257,20 @@ func (s *Server) handleTestAccount(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer resp.Body.Close()
-	io.ReadAll(resp.Body)
+	body, _ := io.ReadAll(resp.Body)
 
-	s.pool.ObserveSuccess(acct.ID, resp.Header)
-
-	if resp.StatusCode != http.StatusOK {
+	if resp.StatusCode >= 400 {
+		s.pool.Observe(pool.UpstreamResult{
+			AccountID:  acct.ID,
+			StatusCode: resp.StatusCode,
+			Headers:    resp.Header,
+			ErrBody:    body,
+		})
 		writeJSON(w, http.StatusOK, TestAccountResult{LatencyMs: latencyMs, Error: fmt.Sprintf("upstream returned %d", resp.StatusCode)})
 		return
 	}
 
+	s.pool.ObserveSuccess(acct.ID, resp.Header)
 	writeJSON(w, http.StatusOK, TestAccountResult{OK: true, LatencyMs: latencyMs})
 }
 
@@ -297,16 +302,22 @@ func (s *Server) testCodexAccount(w http.ResponseWriter, r *http.Request, acct *
 	}
 	defer resp.Body.Close()
 
-	s.pool.ObserveSuccess(acct.ID, resp.Header)
-
-	if resp.StatusCode != http.StatusOK {
+	if resp.StatusCode >= 400 {
 		body, _ := io.ReadAll(resp.Body)
+		s.pool.Observe(pool.UpstreamResult{
+			AccountID:  acct.ID,
+			StatusCode: resp.StatusCode,
+			Headers:    resp.Header,
+			ErrBody:    body,
+		})
 		writeJSON(w, http.StatusOK, TestAccountResult{
 			LatencyMs: latencyMs,
 			Error:     fmt.Sprintf("codex upstream returned %d: %s", resp.StatusCode, truncateStr(string(body), 200)),
 		})
 		return
 	}
+
+	s.pool.ObserveSuccess(acct.ID, resp.Header)
 
 	scanner := bufio.NewScanner(resp.Body)
 	scanner.Buffer(make([]byte, 0, 64*1024), 256*1024)

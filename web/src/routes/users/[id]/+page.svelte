@@ -25,18 +25,18 @@
 	}
 
 	interface RecentRequest {
-		ID: number;
-		UserID: string;
-		AccountID: string;
-		Model: string;
-		InputTokens: number;
-		OutputTokens: number;
-		CacheReadTokens: number;
-		CacheCreateTokens: number;
-		CostUSD: number;
-		Status: string;
-		DurationMs: number;
-		CreatedAt: string;
+		id: number;
+		user_id: string;
+		account_id: string;
+		model: string;
+		input_tokens: number;
+		output_tokens: number;
+		cache_read_tokens: number;
+		cache_create_tokens: number;
+		cost_usd: number;
+		status: string;
+		duration_ms: number;
+		created_at: string;
 	}
 
 	interface UserDetail {
@@ -224,16 +224,16 @@
 				<th>status</th>
 				<th class="num">duration</th>
 			</tr></thead><tbody>
-			{#each requests as r (r.ID)}
+			{#each requests as r (r.id)}
 				<tr>
-					<td class="muted">{new Date(r.CreatedAt).toLocaleTimeString('en-GB', { hour12: false })}</td>
-					<td>{shortModel(r.Model)}</td>
-					<td class="num">{fmtNum(r.InputTokens)}</td>
-					<td class="num">{fmtNum(r.OutputTokens)}</td>
-					<td class="num">{fmtNum(r.CacheReadTokens)} / {fmtNum(r.CacheCreateTokens)}</td>
-					<td>{r.AccountID}</td>
-					<td class={statusColor(r.Status)}>{r.Status}</td>
-					<td class="num">{r.DurationMs > 0 ? (r.DurationMs / 1000).toFixed(1) + 's' : '-'}</td>
+					<td class="muted">{new Date(r.created_at).toLocaleTimeString('en-GB', { hour12: false })}</td>
+					<td>{shortModel(r.model)}</td>
+					<td class="num">{fmtNum(r.input_tokens)}</td>
+					<td class="num">{fmtNum(r.output_tokens)}</td>
+					<td class="num">{fmtNum(r.cache_read_tokens)} / {fmtNum(r.cache_create_tokens)}</td>
+					<td>{r.account_id}</td>
+					<td class={statusColor(r.status)}>{r.status}</td>
+					<td class="num">{r.duration_ms > 0 ? (r.duration_ms / 1000).toFixed(1) + 's' : '-'}</td>
 				</tr>
 			{/each}
 		</tbody></table>

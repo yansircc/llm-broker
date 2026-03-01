@@ -1,6 +1,7 @@
 ---
-match: cd.*/code/52/cc-relayer\s*(&&|\s).*deploy
+match: cd.*/code/52/cc-relayer[[:space:]]*(&&|[[:space:]]).*deploy
 action: inject
+tools: Bash
 ---
 # Deploy script must run from current worktree, not main repo
 

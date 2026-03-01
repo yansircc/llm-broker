@@ -16,6 +16,7 @@ Run `scripts/deploy.sh` from the repo root (or any worktree). The script handles
 4. **Backup current binary** to `cc-relayer.bak`
 5. Atomic replace (`mv`) + `systemctl restart`
 6. Verify service health — **if service fails, auto-rollback to backup**
+7. **Smoke test HTTP endpoints** — `/health`, admin API, frontend pages
 
 ```bash
 bash .claude/skills/deploy/scripts/deploy.sh

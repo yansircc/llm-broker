@@ -79,6 +79,11 @@ func New(
 func (s *Server) registerRoutes(mux *http.ServeMux) {
 	auth := s.authMw.Authenticate
 
+	// Root redirect
+	mux.HandleFunc("GET /{$}", func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, "/ui/dashboard", http.StatusFound)
+	})
+
 	// Relay endpoints
 	mux.Handle("POST /v1/messages", auth(http.HandlerFunc(s.relay.Handle)))
 	mux.Handle("POST /v1/messages/count_tokens", auth(http.HandlerFunc(s.relay.HandleCountTokens)))
