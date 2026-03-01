@@ -4,7 +4,7 @@
 	import { base } from '$app/paths';
 	import { api } from '$lib/api';
 	import { timeAgo, fmtDate, dotClass } from '$lib/format';
-	import TokenCountdown from '$lib/components/TokenCountdown.svelte';
+	import Countdown from '$lib/components/Countdown.svelte';
 	import PriorityEditor from '$lib/components/PriorityEditor.svelte';
 	import ConfirmAction from '$lib/components/ConfirmAction.svelte';
 
@@ -254,7 +254,7 @@
 	<h2>token</h2>
 	<dl>
 		<dt>expires in</dt>
-		<dd><TokenCountdown expiresAt={acct.expires_at} /></dd>
+		<dd><Countdown until={acct.expires_at} /></dd>
 
 		<dt>last refreshed</dt>
 		<dd>{#if acct.last_refresh_at}{timeAgo(acct.last_refresh_at)} <span class="muted">({new Date(acct.last_refresh_at).toLocaleTimeString('en-GB', { hour12: false })})</span>{:else}<span class="muted">-</span>{/if}</dd>
