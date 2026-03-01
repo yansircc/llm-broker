@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"io"
 	"log/slog"
 	"net/http"
 	"strings"
@@ -10,6 +11,7 @@ import (
 
 	"github.com/yansir/cc-relayer/internal/domain"
 	"github.com/yansir/cc-relayer/internal/identity"
+	"github.com/yansir/cc-relayer/internal/pool"
 )
 
 // doClaudeProbe sends a minimal haiku request to refresh rate limit headers.
@@ -105,8 +107,24 @@ func (s *Server) refreshStaleAccounts(ctx context.Context) {
 				return
 			}
 
-			s.pool.ObserveSuccess(a.ID, resp.Header)
-			resp.Body.Close()
+			if resp.StatusCode == 403 {
+				body, _ := io.ReadAll(resp.Body)
+				resp.Body.Close()
+				if pool.IsBanSignal(string(body)) {
+					s.pool.Observe(pool.UpstreamResult{
+						AccountID:  a.ID,
+						StatusCode: 403,
+						Headers:    resp.Header,
+						ErrBody:    body,
+					})
+					slog.Warn("probe detected ban signal", "account", a.Email)
+				} else {
+					slog.Debug("probe got non-ban 403, ignoring", "account", a.Email)
+				}
+			} else {
+				s.pool.ObserveSuccess(a.ID, resp.Header)
+				resp.Body.Close()
+			}
 			slog.Debug("probe refreshed", "account", a.Email, "status", resp.StatusCode)
 		}(acct)
 	}
