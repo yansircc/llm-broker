@@ -297,8 +297,8 @@
 	{/if}
 	{/if}
 
-	<h2>bound sessions <span class="muted">({acct.sessions.length})</span></h2>
-	{#if acct.sessions.length === 0}
+	<h2>bound sessions <span class="muted">({acct.sessions?.length ?? 0})</span></h2>
+	{#if !acct.sessions?.length}
 		<p class="muted">no active session bindings</p>
 	{:else}
 		<table><thead>
