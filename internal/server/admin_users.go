@@ -176,7 +176,8 @@ func (s *Server) handleGetUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	usage, err := s.store.QueryUsagePeriods(ctx, id)
+	loc := parseTZParam(r)
+	usage, err := s.store.QueryUsagePeriods(ctx, id, loc)
 	if err != nil {
 		slog.Warn("user detail: query usage periods failed", "error", err, "userId", id)
 	}

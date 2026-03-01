@@ -82,7 +82,8 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 	uptime := fmt.Sprintf("%dd %dh %dm", days, hours, mins)
 
 	// Usage periods
-	usage, err := s.store.QueryUsagePeriods(ctx, "")
+	loc := parseTZParam(r)
+	usage, err := s.store.QueryUsagePeriods(ctx, "", loc)
 	if err != nil {
 		slog.Warn("dashboard: query usage periods failed", "error", err)
 	}
@@ -209,6 +210,20 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 		Uptime:  uptime,
 		Version: s.version,
 	})
+}
+
+// parseTZParam extracts the "tz" query parameter (IANA timezone name)
+// and returns the corresponding *time.Location. Falls back to UTC.
+func parseTZParam(r *http.Request) *time.Location {
+	tz := r.URL.Query().Get("tz")
+	if tz == "" {
+		return time.UTC
+	}
+	loc, err := time.LoadLocation(tz)
+	if err != nil {
+		return time.UTC
+	}
+	return loc
 }
 
 // ---------------------------------------------------------------------------

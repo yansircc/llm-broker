@@ -35,7 +35,7 @@ type Store interface {
 	PurgeOldLogs(ctx context.Context, before time.Time) (int64, error)
 
 	// Dashboard & analytics
-	QueryUsagePeriods(ctx context.Context, userID string) ([]domain.UsagePeriod, error)
+	QueryUsagePeriods(ctx context.Context, userID string, loc *time.Location) ([]domain.UsagePeriod, error)
 	QueryUserTotalCosts(ctx context.Context) (map[string]float64, error)
 	QueryModelUsage(ctx context.Context, userID string) ([]domain.ModelUsageRow, error)
 }

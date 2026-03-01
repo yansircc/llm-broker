@@ -79,9 +79,12 @@ func buildLogWhere(userID, accountID string) (string, []interface{}) {
 	return where, args
 }
 
-func (s *SQLiteStore) QueryUsagePeriods(ctx context.Context, userID string) ([]domain.UsagePeriod, error) {
-	now := time.Now().UTC()
-	todayStart := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC)
+func (s *SQLiteStore) QueryUsagePeriods(ctx context.Context, userID string, loc *time.Location) ([]domain.UsagePeriod, error) {
+	if loc == nil {
+		loc = time.UTC
+	}
+	now := time.Now().In(loc)
+	todayStart := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, loc)
 	yesterdayStart := todayStart.Add(-24 * time.Hour)
 
 	periods := []struct {
