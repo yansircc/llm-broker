@@ -214,6 +214,9 @@ func (r *Relay) Handle(w http.ResponseWriter, req *http.Request) {
 			errBody, _ := io.ReadAll(resp.Body)
 			resp.Body.Close()
 
+			slog.Warn("retriable upstream error", "status", resp.StatusCode, "accountId", acct.ID, "model", model,
+				"body", truncate(string(errBody), 500))
+
 			lastUpstreamStatus = resp.StatusCode
 			lastUpstreamBody = errBody
 
@@ -412,6 +415,9 @@ func (r *Relay) HandleCodex(w http.ResponseWriter, req *http.Request) {
 		if shouldRetry(resp.StatusCode) && attempt < r.cfg.MaxRetryAccounts {
 			errBody, _ := io.ReadAll(resp.Body)
 			resp.Body.Close()
+
+			slog.Warn("codex retriable upstream error", "status", resp.StatusCode, "accountId", acct.ID, "model", model,
+				"body", truncate(string(errBody), 500))
 
 			r.pool.Observe(pool.UpstreamResult{
 				AccountID: acct.ID, StatusCode: resp.StatusCode,
