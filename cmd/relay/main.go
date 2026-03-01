@@ -4,6 +4,7 @@ import (
 	"context"
 	"log/slog"
 	"os"
+	"time"
 
 	"github.com/yansir/cc-relayer/internal/auth"
 	"github.com/yansir/cc-relayer/internal/config"
@@ -68,10 +69,11 @@ func main() {
 
 	// Initialize pool (loads all accounts from DB)
 	p, err := pool.New(s, bus, pool.ErrorPauses{
-		Pause401: cfg.ErrorPause401,
-		Pause403: cfg.ErrorPause403,
-		Pause429: cfg.ErrorPause429,
-		Pause529: cfg.ErrorPause529,
+		Pause401:        cfg.ErrorPause401,
+		Pause401Refresh: cfg.ErrorPause401Refresh,
+		Pause403:        cfg.ErrorPause403,
+		Pause429:        cfg.ErrorPause429,
+		Pause529:        cfg.ErrorPause529,
 	})
 	if err != nil {
 		slog.Error("pool init failed", "error", err)
@@ -80,6 +82,15 @@ func main() {
 
 	// Initialize token manager
 	tokMgr := oauth.NewTokenManager(p, c, tm, cfg.TokenRefreshAdvance)
+
+	// Wire 401 → background token refresh
+	p.SetOnAuthFailure(func(accountID string) {
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		if _, err := tokMgr.ForceRefresh(ctx, accountID); err != nil {
+			slog.Error("401 background refresh failed", "accountId", accountID, "error", err)
+		}
+	})
 
 	// Initialize auth middleware
 	authMw := auth.NewMiddleware(cfg.StaticToken, s)
