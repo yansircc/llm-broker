@@ -63,9 +63,7 @@ export function remainClass(remain: number | null): string {
 	return 'r';
 }
 
-export function remainTime(resetTs: number | null): string {
-	if (!resetTs) return '';
-	const ms = resetTs * 1000 - Date.now();
+export function fmtDuration(ms: number): string {
 	if (ms <= 0) return '0s';
 	const sec = ms / 1000;
 	if (sec < 60) return Math.floor(sec) + 's';
@@ -75,6 +73,11 @@ export function remainTime(resetTs: number | null): string {
 	if (hr < 24) return hr.toFixed(1).replace(/\.0$/, '') + 'h';
 	const day = hr / 24;
 	return day.toFixed(1).replace(/\.0$/, '') + 'd';
+}
+
+export function remainTime(resetTs: number | null): string {
+	if (!resetTs) return '';
+	return fmtDuration(resetTs * 1000 - Date.now());
 }
 
 export function eventTypeColor(type: string): string {

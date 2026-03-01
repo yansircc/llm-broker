@@ -51,28 +51,6 @@
 		}
 	}
 
-	function countdownText(dateStr: string | null): string {
-		if (!dateStr) return '-';
-		const diff = new Date(dateStr).getTime() - Date.now();
-		if (diff <= 0) return 'passed';
-		const totalSecs = Math.floor(diff / 1000);
-		const mins = Math.floor(totalSecs / 60);
-		const secs = totalSecs % 60;
-		if (mins < 60) return `${mins}m ${String(secs).padStart(2, '0')}s`;
-		const hours = Math.floor(mins / 60);
-		return `${hours}h ${mins % 60}m ${String(secs).padStart(2, '0')}s`;
-	}
-
-	function ttlFromExpires(expiresAt: string): string {
-		if (!expiresAt) return '-';
-		const diff = new Date(expiresAt).getTime() - Date.now();
-		if (diff <= 0) return 'expired';
-		const mins = Math.floor(diff / 60000);
-		if (mins < 60) return `${mins}m`;
-		const hours = Math.floor(mins / 60);
-		return `${hours}h ${mins % 60}m`;
-	}
-
 	function fiveHourColor(status: string): string {
 		if (status === 'allowed') return 'g';
 		if (status === 'stopped' || status === 'warning') return 'o';
@@ -267,11 +245,7 @@
 
 		<dt>cooldown</dt>
 		<dd>
-			{#if acct.overloaded_until}
-				<span class="o">{countdownText(acct.overloaded_until)}</span>
-			{:else}
-				<span class="muted">-</span>
-			{/if}
+			<Countdown until={acct.overloaded_until} variant="cooldown" />
 		</dd>
 
 		{#if acct.provider !== 'codex'}
@@ -286,11 +260,7 @@
 
 			<dt>opus rate limit</dt>
 			<dd>
-				{#if acct.opus_rate_limit_end_at}
-					<span class="o">{countdownText(acct.opus_rate_limit_end_at)}</span>
-				{:else}
-					<span class="muted">-</span>
-				{/if}
+				<Countdown until={acct.opus_rate_limit_end_at} variant="cooldown" />
 			</dd>
 		{:else}
 			<dt>primary remain</dt>
@@ -342,7 +312,7 @@
 				<tr>
 					<td class="muted">{s.session_uuid}</td>
 					<td>{timeAgo(s.last_used_at)}</td>
-					<td>{ttlFromExpires(s.expires_at)}</td>
+					<td><Countdown until={s.expires_at} /></td>
 					<td><ConfirmAction label="unbind" onclick={() => unbindSession(s.session_uuid)} /></td>
 				</tr>
 			{/each}
