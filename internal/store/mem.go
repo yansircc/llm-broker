@@ -93,6 +93,32 @@ func (m *TTLMap[V]) Entries() []TTLEntry[V] {
 	return result
 }
 
+// SetNX sets key only if it doesn't exist or is expired. Returns true if set.
+func (m *TTLMap[V]) SetNX(key string, value V, ttl time.Duration) bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if e, ok := m.items[key]; ok && time.Now().Before(e.expiresAt) {
+		return false
+	}
+	m.items[key] = ttlEntry[V]{value: value, expiresAt: time.Now().Add(ttl)}
+	return true
+}
+
+// DeleteIf atomically deletes a key only if its current value matches.
+func (m *TTLMap[V]) DeleteIf(key string, match func(V) bool) bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	e, ok := m.items[key]
+	if !ok || time.Now().After(e.expiresAt) {
+		return false
+	}
+	if match(e.value) {
+		delete(m.items, key)
+		return true
+	}
+	return false
+}
+
 // Cleanup removes all expired entries.
 func (m *TTLMap[V]) Cleanup() {
 	m.mu.Lock()
