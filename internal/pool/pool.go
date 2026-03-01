@@ -40,10 +40,11 @@ type UpstreamResult struct {
 
 // ErrorPauses holds configurable error pause durations.
 type ErrorPauses struct {
-	Pause401 time.Duration
-	Pause403 time.Duration
-	Pause429 time.Duration
-	Pause529 time.Duration
+	Pause401        time.Duration
+	Pause401Refresh time.Duration // short cooldown for background token refresh on 401
+	Pause403        time.Duration
+	Pause429        time.Duration
+	Pause529        time.Duration
 }
 
 // Pool is the central authority for account state.
@@ -61,6 +62,13 @@ type Pool struct {
 	stainless     *store.TTLMap[string] // accountID -> JSON-encoded stainless headers
 	oauthSessions *store.TTLMap[string] // state -> redirect URL or other data
 	refreshLocks  *store.TTLMap[string] // accountID -> lockID
+
+	onAuthFailure func(accountID string) // called on 401 to trigger background token refresh
+}
+
+// SetOnAuthFailure registers a callback invoked when a 401 is observed.
+func (p *Pool) SetOnAuthFailure(fn func(accountID string)) {
+	p.onAuthFailure = fn
 }
 
 // New creates a Pool, loading all accounts from the store.
@@ -352,15 +360,17 @@ func (p *Pool) Observe(r UpstreamResult) {
 		}
 
 	case 401:
-		until := time.Now().Add(p.pauses.Pause401)
-		acct.Status = domain.StatusError
-		acct.ErrorMessage = "upstream 401: authentication failed"
+		until := time.Now().Add(p.pauses.Pause401Refresh)
 		p.applyCooldown(acct, until)
 		p.bus.Publish(events.Event{
 			Type: events.EventRefresh, AccountID: acct.ID,
-			Message: "401 auth failed, triggering refresh",
+			Message: "401 auth failed, background refresh triggered",
 		})
-		slog.Warn("account auth failed (401)", "accountId", acct.ID, "model", r.Model)
+		slog.Warn("account auth failed (401), triggering refresh",
+			"accountId", acct.ID, "model", r.Model)
+		if p.onAuthFailure != nil {
+			go p.onAuthFailure(acct.ID)
+		}
 	}
 
 	p.persistLocked(acct)
@@ -823,19 +833,14 @@ func (p *Pool) GetDelOAuthSession(state string) (string, bool) {
 
 // AcquireRefreshLock attempts to acquire a per-account refresh lock.
 func (p *Pool) AcquireRefreshLock(accountID, lockID string) bool {
-	if _, ok := p.refreshLocks.Get(accountID); ok {
-		return false // already locked
-	}
-	p.refreshLocks.Set(accountID, lockID, 30*time.Second)
-	return true
+	return p.refreshLocks.SetNX(accountID, lockID, 30*time.Second)
 }
 
-// ReleaseRefreshLock releases a per-account refresh lock.
+// ReleaseRefreshLock releases a per-account refresh lock if still held by lockID.
 func (p *Pool) ReleaseRefreshLock(accountID, lockID string) {
-	held, ok := p.refreshLocks.Get(accountID)
-	if ok && held == lockID {
-		p.refreshLocks.Delete(accountID)
-	}
+	p.refreshLocks.DeleteIf(accountID, func(held string) bool {
+		return held == lockID
+	})
 }
 
 // ---------------------------------------------------------------------------
