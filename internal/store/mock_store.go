@@ -173,7 +173,7 @@ func (m *MockStore) PurgeOldLogs(_ context.Context, _ time.Time) (int64, error) 
 	return 0, nil
 }
 
-func (m *MockStore) QueryUsagePeriods(_ context.Context, _ string) ([]domain.UsagePeriod, error) {
+func (m *MockStore) QueryUsagePeriods(_ context.Context, _ string, _ *time.Location) ([]domain.UsagePeriod, error) {
 	return nil, nil
 }
 

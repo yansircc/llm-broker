@@ -10,8 +10,13 @@ export async function api<T = unknown>(path: string, opts: RequestInit = {}): Pr
 	const controller = new AbortController();
 	const timeout = setTimeout(() => controller.abort(), 15000);
 
+	// Append browser timezone for accurate "today"/"yesterday" stats
+	const sep = path.includes('?') ? '&' : '?';
+	const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
+	const url = `/admin${path}${sep}tz=${encodeURIComponent(tz)}`;
+
 	try {
-		const res = await fetch(`/admin${path}`, {
+		const res = await fetch(url, {
 			credentials: 'same-origin',
 			signal: controller.signal,
 			headers: {
