@@ -309,13 +309,17 @@ func (p *Pool) Observe(r UpstreamResult) {
 			p.captureClaudeHeadersLocked(acct, r.Headers)
 		}
 
-		// Determine cooldown: Retry-After > unified-reset > config default
+		// Determine cooldown: Retry-After > unified-reset > codex body resets_in_seconds > config default
 		until := time.Now().Add(p.pauses.Pause429)
 		if retryAfter := parseRetryAfter(r.Headers.Get("Retry-After")); retryAfter > 0 {
 			until = time.Now().Add(retryAfter)
 		} else if resetStr := r.Headers.Get("anthropic-ratelimit-unified-reset"); resetStr != "" {
 			if resetTime, err := time.Parse(time.RFC3339, resetStr); err == nil {
 				until = resetTime
+			}
+		} else if acct.Provider == domain.ProviderCodex && len(r.ErrBody) > 0 {
+			if resetsIn := parseCodexResetsIn(r.ErrBody); resetsIn > 0 {
+				until = time.Now().Add(resetsIn)
 			}
 		}
 		p.applyCooldown(acct, until)
@@ -908,6 +912,20 @@ func parseRetryAfter(value string) time.Duration {
 		if d := time.Until(t); d > 0 {
 			return d
 		}
+	}
+	return 0
+}
+
+// parseCodexResetsIn extracts resets_in_seconds from a Codex 429 JSON body:
+// {"error":{"type":"usage_limit_reached","resets_in_seconds":1125}}
+func parseCodexResetsIn(body []byte) time.Duration {
+	var envelope struct {
+		Error struct {
+			ResetsInSeconds int `json:"resets_in_seconds"`
+		} `json:"error"`
+	}
+	if json.Unmarshal(body, &envelope) == nil && envelope.Error.ResetsInSeconds > 0 {
+		return time.Duration(envelope.Error.ResetsInSeconds) * time.Second
 	}
 	return 0
 }
