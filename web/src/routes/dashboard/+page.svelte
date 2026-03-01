@@ -1,8 +1,8 @@
 <script lang="ts">
 	import { base } from '$app/paths';
 	import { api } from '$lib/api';
-	import { fmtNum, fmtCost, timeAgo, tagClass, remainClass, remainTime, eventTypeColor, dotClass } from '$lib/format';
-	import CooldownCell from '$lib/components/CooldownCell.svelte';
+	import { fmtNum, fmtCost, fmtTime, timeAgo, remainClass, remainTime, eventTypeColor, dotClass } from '$lib/format';
+	import Countdown from '$lib/components/Countdown.svelte';
 
 	interface UsagePeriod {
 		label: string;
@@ -76,14 +76,6 @@
 			lastRefresh = new Date().toLocaleTimeString('en-GB', { hour12: false });
 		} catch (e: any) {
 			error = e.message;
-		}
-	}
-
-	function formatEventTime(ts: string): string {
-		try {
-			return new Date(ts).toLocaleTimeString('en-GB', { hour12: false });
-		} catch {
-			return ts;
 		}
 	}
 
@@ -206,7 +198,7 @@ codex -p "Print 'true' for testing purpose"`;
 					<td><a href="{base}/accounts/{a.id}">{a.email}</a></td>
 					<td><span class={dotClass(a.status)}>{a.status}</span></td>
 					<td>{a.priority}{#if a.priority_mode === 'auto'} <span class="muted">(a)</span>{/if}</td>
-					<CooldownCell until={a.overloaded_until} />
+					<Countdown until={a.overloaded_until} tag="td" variant="cooldown" />
 					<td>{timeAgo(a.last_used_at ?? '')}</td>
 					<td class="num">{#if a.status === 'blocked' || a.status === 'disabled'}<span class="muted">&ndash;</span>{:else if a.five_hour_util != null}{@const remain = 100 - a.five_hour_util}<span class={remainClass(remain)}>{remain}%</span> <span class="muted">{remainTime(a.five_hour_reset)}</span>{:else}<span class="muted">&ndash;</span>{/if}</td>
 					<td class="num">{#if a.status === 'blocked' || a.status === 'disabled'}<span class="muted">&ndash;</span>{:else if a.seven_day_util != null}{@const remain = 100 - a.seven_day_util}<span class={remainClass(remain)}>{remain}%</span> <span class="muted">{remainTime(a.seven_day_reset)}</span>{:else}<span class="muted">&ndash;</span>{/if}</td>
@@ -235,7 +227,7 @@ codex -p "Print 'true' for testing purpose"`;
 					<td><a href="{base}/accounts/{a.id}">{a.email}</a></td>
 					<td><span class={dotClass(a.status)}>{a.status}</span></td>
 					<td>{a.priority}{#if a.priority_mode === 'auto'} <span class="muted">(a)</span>{/if}</td>
-					<CooldownCell until={a.overloaded_until} />
+					<Countdown until={a.overloaded_until} tag="td" variant="cooldown" />
 					<td>{timeAgo(a.last_used_at ?? '')}</td>
 					<td class="num">{#if a.status === 'blocked' || a.status === 'disabled'}<span class="muted">&ndash;</span>{:else if a.five_hour_util != null}{@const remain = 100 - a.five_hour_util}<span class={remainClass(remain)}>{remain}%</span> <span class="muted">{remainTime(a.five_hour_reset)}</span>{:else}<span class="muted">&ndash;</span>{/if}</td>
 					<td class="num">{#if a.status === 'blocked' || a.status === 'disabled'}<span class="muted">&ndash;</span>{:else if a.seven_day_util != null}{@const remain = 100 - a.seven_day_util}<span class={remainClass(remain)}>{remain}%</span> <span class="muted">{remainTime(a.seven_day_reset)}</span>{:else}<span class="muted">&ndash;</span>{/if}</td>
@@ -307,7 +299,7 @@ codex -p "Print 'true' for testing purpose"`;
 		<ul class="event-list">
 			{#each data.events as ev (ev.ts)}
 				<li>
-					<span class="ts">{formatEventTime(ev.ts)}</span>
+					<span class="ts">{fmtTime(ev.ts)}</span>
 					<span class={eventTypeColor(ev.type)}>{ev.type.toUpperCase()}</span>
 					{ev.message}
 				</li>

@@ -16,6 +16,15 @@ export function fmtDate(s: string): string {
 	return d.toLocaleDateString('en-CA') + ' ' + d.toLocaleTimeString('en-GB', { hour12: false });
 }
 
+export function fmtTime(s: string): string {
+	if (!s) return '-';
+	try {
+		return new Date(s).toLocaleTimeString('en-GB', { hour12: false });
+	} catch {
+		return s;
+	}
+}
+
 export function timeAgo(s: string): string {
 	if (!s) return '-';
 	const diff = Date.now() - new Date(s).getTime();
