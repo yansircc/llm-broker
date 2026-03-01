@@ -29,19 +29,6 @@ func ExtractSessionUUID(userID string) string {
 	return matches[1]
 }
 
-// GetAccountUUID extracts account_uuid from the account's extInfo.
-func GetAccountUUID(extInfo map[string]interface{}) string {
-	if extInfo == nil {
-		return ""
-	}
-	if v, ok := extInfo["account_uuid"]; ok {
-		if s, ok := v.(string); ok {
-			return s
-		}
-	}
-	return ""
-}
-
 func buildUserID(accountID, accountUUID, sessionTail string) string {
 	accountHash := deriveAccountHash(accountUUID, accountID)
 	stableSession := deriveSessionUUID(accountID, sessionTail)

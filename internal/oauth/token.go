@@ -178,8 +178,3 @@ func (tm *TokenManager) ForceRefresh(ctx context.Context, accountID string) (str
 func (tm *TokenManager) EncryptToken(token string) (string, error) {
 	return tm.crypto.Encrypt(token, claudeSalt)
 }
-
-// DecryptToken decrypts a stored token (used for admin display).
-func (tm *TokenManager) DecryptToken(encrypted string) (string, error) {
-	return tm.crypto.Decrypt(encrypted, claudeSalt)
-}

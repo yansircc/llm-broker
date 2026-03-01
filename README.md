@@ -1,152 +1,136 @@
+[![CI](https://github.com/yansircc/cc-relayer/actions/workflows/ci.yml/badge.svg)](https://github.com/yansircc/cc-relayer/actions/workflows/ci.yml)
+
 # cc-relayer
 
-High-performance Claude Code API relay written in Go. Provides multi-account scheduling, identity isolation, and deep anti-detection between Claude Code clients and the Anthropic API.
+High-performance Claude Code / Codex CLI API relay written in Go. Multi-account scheduling, identity isolation, and anti-detection for 3-7 OAuth accounts.
 
 ## Installation
 
 ### Download binary
 
-Download the latest binary for your platform from [GitHub Releases](https://github.com/yansircc/cc-relayer/releases), then:
+Download the latest binary from [GitHub Releases](https://github.com/yansircc/cc-relayer/releases):
 
 ```bash
 chmod +x cc-relayer-*
 mv cc-relayer-* /usr/local/bin/cc-relayer
 ```
 
-Available platforms: `linux/amd64`, `linux/arm64`, `darwin/amd64`, `darwin/arm64`.
+Platforms: `linux/amd64`, `linux/arm64`, `darwin/amd64`, `darwin/arm64`.
 
 ### Build from source
 
 ```bash
 git clone https://github.com/yansircc/cc-relayer.git
 cd cc-relayer
-make build
+cd web && npm ci && npm run build && cd ..
+go build -o cc-relayer ./cmd/relay
 ```
 
-Requires Go 1.24+ and a running Redis instance.
+Requires Go 1.24+ and Node 22+.
 
 ## Quick Start
 
 ### 1. Start the server
 
-You need two secrets — pick any strong strings you like:
-
-- **`ENCRYPTION_KEY`** — used to encrypt tokens stored in Redis (any length; longer is better)
-- **`API_TOKEN`** — the password your Claude Code clients will use to authenticate with the relay
-
 ```bash
-# Generate secrets (or just make up your own)
 export ENCRYPTION_KEY=$(openssl rand -hex 16)
 export API_TOKEN=$(openssl rand -hex 16)
-
-# Print them so you can save them
 echo "ENCRYPTION_KEY=$ENCRYPTION_KEY"
 echo "API_TOKEN=$API_TOKEN"
 
 ./cc-relayer
 ```
 
-The server listens on `0.0.0.0:3000` by default. Redis must be available at `127.0.0.1:6379` (configurable).
+Listens on `0.0.0.0:3000` by default. Data stored in SQLite at `./cc-relayer.db`.
 
 ### 2. Add an account
 
 ```bash
-# Step 1: Generate an auth URL
+# Generate OAuth URL
 curl -X POST https://YOUR_SERVER/admin/accounts/generate-auth-url \
   -H "x-api-key: YOUR_API_TOKEN"
-# Returns: { "session_id": "...", "auth_url": "https://claude.ai/oauth/authorize?..." }
 
-# Step 2: Open auth_url in browser, complete login, copy the callback URL
+# Open auth_url in browser, complete login, copy callback URL
 
-# Step 3: Exchange the code (email and org info are auto-fetched)
+# Exchange code
 curl -X POST https://YOUR_SERVER/admin/accounts/exchange-code \
   -H "Content-Type: application/json" -H "x-api-key: YOUR_API_TOKEN" \
-  -d '{"session_id": "...", "callback_url": "https://platform.claude.com/oauth/code/callback?code=..."}'
+  -d '{"session_id": "...", "callback_url": "https://..."}'
 ```
 
-Replace `YOUR_SERVER` and `YOUR_API_TOKEN`. On success you'll see:
-
-```json
-{ "id": "uuid", "name": "user@gmail.com", "email": "user@gmail.com", "status": "active" }
-```
-
-Submitting the same account again updates its tokens instead of creating a duplicate.
+Or use the WebUI at `https://YOUR_SERVER/ui/`.
 
 ### 3. Configure Claude Code
-
-Point your Claude Code client to the relay:
 
 ```bash
 export ANTHROPIC_BASE_URL=http://YOUR_SERVER
 export ANTHROPIC_API_KEY=YOUR_API_TOKEN
-
 claude
 ```
 
-That's it. The relay handles account selection, token refresh, and all identity details automatically.
+### 4. Configure Codex CLI
+
+```bash
+export OPENAI_BASE_URL=http://YOUR_SERVER/openai
+export OPENAI_API_KEY=YOUR_API_TOKEN
+codex
+```
+
+## WebUI
+
+Built-in admin dashboard at `/ui/` — manage accounts, users, view usage and events. Authenticate with your `API_TOKEN`.
 
 ## Admin API
 
-All admin endpoints require the same `API_TOKEN` via `x-api-key` header or `Authorization: Bearer` header.
+All endpoints require `API_TOKEN` via `x-api-key` or `Authorization: Bearer`.
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
-| `POST` | `/admin/accounts/generate-auth-url` | Generate browser OAuth URL (returns session_id + auth_url) |
-| `POST` | `/admin/accounts/exchange-code` | Exchange auth code for tokens (session or direct mode) |
-| `GET` | `/admin/accounts` | List all accounts (without tokens) |
-| `DELETE` | `/admin/accounts/{id}` | Delete an account |
-
-## Security
-
-cc-relayer implements multiple layers of protection to keep your accounts safe:
-
-- **TLS fingerprinting** — Uses [utls](https://github.com/refraction-networking/utls) with `HelloChrome_Auto` to match genuine Chrome TLS handshakes, auto-updating with new versions.
-- **Per-account isolation** — Each account uses its own HTTP transport with optional SOCKS5/HTTP proxy, providing IP-level separation.
-- **SDK fingerprint binding** — Captures and replays Stainless SDK headers per account for consistent client identity.
-- **Billing header stripping** — Automatically removes billing tracking injected by Claude Code.
-- **Session integrity** — Refuses to silently switch accounts mid-conversation; detects stale sessions and returns clear errors.
-- **Warmup interception** — Responds to warmup requests locally without touching the upstream API.
-- **User ID rewriting** — Deterministically rewrites `metadata.user_id` to match the target account.
-- **Header allowlisting** — Only forwards known-safe headers; `x-api-key` and proxy-tracking headers are stripped before reaching upstream.
-- **Error sanitization** — Maps upstream errors to standardized codes, stripping internal details.
+| `GET` | `/admin/dashboard` | Dashboard overview |
+| `GET` | `/admin/health` | Health check |
+| `POST` | `/admin/accounts/generate-auth-url` | Generate OAuth URL |
+| `POST` | `/admin/accounts/exchange-code` | Exchange auth code |
+| `GET` | `/admin/accounts` | List accounts |
+| `GET` | `/admin/accounts/{id}` | Account detail |
+| `DELETE` | `/admin/accounts/{id}` | Delete account |
+| `POST` | `/admin/users` | Create user |
+| `GET` | `/admin/users` | List users |
+| `GET` | `/admin/users/{id}` | User detail |
 
 ## Scheduling & Fault Tolerance
 
 ### Account Selection
 
 ```
-Bound account → Sticky session → Pool selection (priority DESC, lastUsedAt ASC)
+Session binding → Pool selection (priority DESC, lastUsedAt ASC)
 ```
+
+Four-way availability filter: status, schedulable, overloadedUntil, opus rate limit.
 
 ### Error Handling
 
 | Code | Strategy | Default Cooldown |
 |------|----------|-----------------|
-| **429** | Parse `Retry-After` / `anthropic-ratelimit-unified-reset` | 60s (fallback) |
-| **529** | Mark overloaded | 5 min |
-| **403** (ban signal) | Mark blocked | 30 min |
-| **401** | Mark error + async token refresh | 30 min |
+| **200** | Update rate limit headers | — |
+| **401** | Short cooldown + background refresh | 30s |
+| **403** (ban) | Mark blocked, auto-recover | 10 min |
+| **429** | Parse Retry-After | 60s fallback |
+| **529** | Overload cooldown | 5 min |
 
-### 5-Hour Window
+### Session Integrity
 
-Tracks `anthropic-ratelimit-unified-5h-status` headers in real-time. Accounts in `rejected` state are removed from scheduling and automatically recover when the window expires.
-
-### Sticky Sessions
-
-- **Session binding** — Binds multi-turn conversations to the same account via session UUID (TTL 24h)
-- **Sticky session** — Routes similar prompts to the same account for prompt cache affinity (TTL 1h)
+- Binds multi-turn conversations to the same account via session UUID (TTL 24h)
+- Refuses to switch accounts mid-conversation (returns 400)
 
 ## Environment Variables
 
 | Variable | Required | Default | Description |
 |----------|:--------:|---------|-------------|
-| `ENCRYPTION_KEY` | Yes | - | Secret for encrypting tokens in Redis |
-| `API_TOKEN` | Yes | - | Password for client and admin authentication |
+| `ENCRYPTION_KEY` | Yes | — | AES encryption key for stored tokens |
+| `API_TOKEN` | Yes | — | Admin authentication token |
+| `DB_PATH` | No | `./cc-relayer.db` | SQLite database path |
 | `HOST` | No | `0.0.0.0` | Listen address |
 | `PORT` | No | `3000` | Listen port |
-| `REDIS_ADDR` | No | `127.0.0.1:6379` | Redis address |
-| `REDIS_PASSWORD` | No | - | Redis password |
-| `REDIS_DB` | No | `0` | Redis database |
 | `LOG_LEVEL` | No | `info` | Log level (debug/info/warn/error) |
 | `REQUEST_TIMEOUT` | No | `300000` | Request timeout in ms |
 | `MAX_RETRY_ACCOUNTS` | No | `2` | Max account switches per request |
@@ -156,17 +140,28 @@ Tracks `anthropic-ratelimit-unified-5h-status` headers in real-time. Accounts in
 ```
 cmd/relay/              Entry point
 internal/
-  account/              Account model, AES crypto, OAuth token refresh
-  auth/                 API token authentication
-  config/               Environment variable config
-  identity/             Anti-detection: header allowlist, SDK binding,
-                        user ID rewriting, billing stripping, warmup interception
-  ratelimit/            5h window tracking, Opus rate limits, auto-recovery
-  relay/                Request pipeline, error sanitization, SSE streaming
-  scheduler/            Account selection, sticky sessions, session binding
-  server/               HTTP server, admin API
-  store/                Redis operations
-  transport/            utls TLS fingerprinting, proxy dialing, connection pool
+  auth/                 Token authentication middleware
+  config/               Environment config
+  crypto/               AES encryption, key derivation
+  domain/               Pure types (Account, User, RequestLog)
+  events/               Ring buffer event bus
+  identity/             Request masking, stainless binding
+  oauth/                PKCE flows (Claude + Codex), token management
+  pool/                 Account state machine, scheduling
+  relay/                Stateless request forwarding
+  server/               HTTP handlers, admin API, WebUI
+  store/                SQLite persistence
+  transport/            Per-account HTTP clients, proxy support
+  ui/                   Embedded SvelteKit frontend
+web/                    SvelteKit source (adapter-static)
+```
+
+## Development
+
+```bash
+cd web && npm ci && npm run build  # build frontend
+go build ./...                      # compile
+go test ./...                       # run tests
 ```
 
 ## License

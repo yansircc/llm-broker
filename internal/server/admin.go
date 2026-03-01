@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/yansir/cc-relayer/internal/auth"
+	"github.com/yansir/cc-relayer/internal/domain"
 	"github.com/yansir/cc-relayer/internal/pool"
 )
 
@@ -52,11 +53,11 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		SameSite: http.SameSiteLaxMode,
 		MaxAge:   86400 * 30,
 	})
-	writeJSON(w, http.StatusOK, map[string]interface{}{
-		"status":   "ok",
-		"is_admin": ki.IsAdmin,
-		"name":     ki.Name,
-	})
+	writeJSON(w, http.StatusOK, struct {
+		Status  string `json:"status"`
+		IsAdmin bool   `json:"is_admin"`
+		Name    string `json:"name"`
+	}{"ok", ki.IsAdmin, ki.Name})
 }
 
 // ---------------------------------------------------------------------------
@@ -89,28 +90,13 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 	// Accounts
 	acctList := s.pool.List()
 
-	type accountView struct {
-		ID              string     `json:"id"`
-		Email           string     `json:"email"`
-		Provider        string     `json:"provider"`
-		Status          string     `json:"status"`
-		PriorityMode    string     `json:"priority_mode"`
-		Priority        int        `json:"priority"`
-		OverloadedUntil *time.Time `json:"overloaded_until,omitempty"`
-		LastUsedAt      *time.Time `json:"last_used_at,omitempty"`
-		FiveHourUtil    *int       `json:"five_hour_util"`
-		SevenDayUtil    *int       `json:"seven_day_util"`
-		FiveHourReset   *int64     `json:"five_hour_reset"`
-		SevenDayReset   *int64     `json:"seven_day_reset"`
-	}
-
-	acctViews := make([]accountView, 0, len(acctList))
+	acctViews := make([]DashboardAccount, 0, len(acctList))
 	for _, a := range acctList {
 		pri := a.Priority
 		if a.PriorityMode == "auto" {
 			pri = pool.AutoPriority(a)
 		}
-		av := accountView{
+		av := DashboardAccount{
 			ID:              a.ID,
 			Email:           a.Email,
 			Provider:        string(a.Provider),
@@ -164,17 +150,9 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 		slog.Warn("dashboard: query user costs failed", "error", err)
 	}
 
-	type userView struct {
-		ID           string     `json:"id"`
-		Name         string     `json:"name"`
-		Status       string     `json:"status"`
-		LastActiveAt *time.Time `json:"last_active_at,omitempty"`
-		TotalCost    float64    `json:"total_cost"`
-	}
-
-	userViews := make([]userView, 0, len(users))
+	userViews := make([]DashboardUser, 0, len(users))
 	for _, u := range users {
-		userViews = append(userViews, userView{
+		userViews = append(userViews, DashboardUser{
 			ID:           u.ID,
 			Name:         u.Name,
 			Status:       u.Status,
@@ -185,16 +163,10 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 
 	// Events
 	recentEvents := s.bus.Recent(20)
-	type eventInfo struct {
-		Type      string `json:"type"`
-		AccountID string `json:"account_id,omitempty"`
-		Message   string `json:"message"`
-		Timestamp string `json:"ts"`
-	}
-	evViews := make([]eventInfo, 0, len(recentEvents))
+	evViews := make([]DashboardEvent, 0, len(recentEvents))
 	for i := len(recentEvents) - 1; i >= 0; i-- {
 		e := recentEvents[i]
-		evViews = append(evViews, eventInfo{
+		evViews = append(evViews, DashboardEvent{
 			Type:      string(e.Type),
 			AccountID: e.AccountID,
 			Message:   e.Message,
@@ -202,16 +174,19 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 
-	writeJSON(w, http.StatusOK, map[string]interface{}{
-		"health": map[string]string{
-			"sqlite":  sqliteStatus,
-			"uptime":  uptime,
-			"version": s.version,
+	if usage == nil {
+		usage = []domain.UsagePeriod{}
+	}
+	writeJSON(w, http.StatusOK, DashboardResponse{
+		Health: HealthInfo{
+			SQLite:  sqliteStatus,
+			Uptime:  uptime,
+			Version: s.version,
 		},
-		"usage":    usage,
-		"accounts": acctViews,
-		"users":    userViews,
-		"events":   evViews,
+		Usage:    usage,
+		Accounts: acctViews,
+		Users:    userViews,
+		Events:   evViews,
 	})
 }
 
@@ -229,10 +204,10 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 	hours := int(d.Hours()) % 24
 	mins := int(d.Minutes()) % 60
 	uptime := fmt.Sprintf("%dd %dh %dm", days, hours, mins)
-	writeJSON(w, http.StatusOK, map[string]string{
-		"sqlite":  sqliteStatus,
-		"uptime":  uptime,
-		"version": s.version,
+	writeJSON(w, http.StatusOK, HealthInfo{
+		SQLite:  sqliteStatus,
+		Uptime:  uptime,
+		Version: s.version,
 	})
 }
 
