@@ -104,10 +104,14 @@ func (a *Account) PersistRuntime() {
 	if a.Proxy != nil {
 		data, _ := json.Marshal(a.Proxy)
 		a.ProxyJSON = string(data)
+	} else {
+		a.ProxyJSON = ""
 	}
 	if a.ExtInfo != nil {
 		data, _ := json.Marshal(a.ExtInfo)
 		a.ExtInfoJSON = string(data)
+	} else {
+		a.ExtInfoJSON = ""
 	}
 }
 

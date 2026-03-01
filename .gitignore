@@ -20,8 +20,11 @@ internal/ui/dist/
 # Claude Code
 .claude/HANDOFF.md
 .claude/worktrees/
+.claude/settings.json
 
 # Environment
 .env
 .env.*
 
+# Misc
+web/node_modules

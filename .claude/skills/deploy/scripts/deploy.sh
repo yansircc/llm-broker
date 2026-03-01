@@ -111,6 +111,67 @@ fi
 ssh "$REMOTE" "journalctl -u $SERVICE --since '2 minutes ago' --no-pager -o short-precise" \
     | grep -E '(Stopping|Stopped|Started|server starting)' || true
 
+# ── 6. Smoke test (HTTP endpoints) ───────────────────
+echo ""
+echo "==> smoke testing endpoints..."
+
+SITE="https://DEPLOY_HOST"
+# Read API_TOKEN from remote EnvironmentFile
+API_TOKEN=$(ssh "$REMOTE" "grep -oP '^API_TOKEN=\K.*' /etc/cc-relayer.env 2>/dev/null || echo ''")
+
+SMOKE_FAIL=0
+smoke() {
+    local label="$1" url="$2" auth="${3:-}" expect="${4:-200}"
+    local args=(-s -o /dev/null -w '%{http_code}' --max-time 10)
+    [[ -n "$auth" ]] && args+=(-H "Authorization: Bearer $auth")
+    local code
+    code=$(curl "${args[@]}" "$url" 2>/dev/null || echo "000")
+    if [[ "$code" == "$expect" ]]; then
+        echo "    ✓ $label ($code)"
+    else
+        echo "    ✗ $label (got $code, expected $expect)"
+        SMOKE_FAIL=1
+    fi
+}
+
+# Public endpoints
+smoke "GET /health" "$SITE/health"
+
+# Admin API (needs token)
+if [[ -n "$API_TOKEN" ]]; then
+    smoke "GET /admin/dashboard" "$SITE/admin/dashboard" "$API_TOKEN"
+    smoke "GET /admin/accounts"  "$SITE/admin/accounts"  "$API_TOKEN"
+    smoke "GET /admin/users"     "$SITE/admin/users"      "$API_TOKEN"
+    smoke "GET /admin/health"    "$SITE/admin/health"     "$API_TOKEN"
+else
+    echo "    ⚠ skipping authenticated endpoints (API_TOKEN not found on remote)"
+fi
+
+# Frontend pages (static assets, should return 200)
+smoke "GET /ui/"              "$SITE/ui/"
+smoke "GET /ui/dashboard"     "$SITE/ui/dashboard"
+
+if [[ "$SMOKE_FAIL" -eq 1 ]]; then
+    echo ""
+    echo "==> ⚠ smoke test failures detected — consider rollback:"
+    echo "    bash .claude/skills/deploy/scripts/deploy.sh rollback"
+else
+    echo "    all endpoints OK"
+fi
+
+# ── 7. Browser smoke test (Playwright) ────────────────
+if [[ -d "$REPO_ROOT/web/node_modules/playwright-core" ]]; then
+    echo ""
+    echo "==> browser smoke test..."
+    SITE="$SITE" API_TOKEN="$API_TOKEN" node "$REPO_ROOT/web/smoke.mjs"
+    if [[ $? -ne 0 ]]; then
+        echo "==> ⚠ browser smoke test found JS errors — check output above"
+    fi
+else
+    echo ""
+    echo "    ⚠ skipping browser smoke (run: cd web && npm i && npx playwright install chromium)"
+fi
+
 echo ""
 echo "==> deployed successfully (backup at $REMOTE_BAK)"
 

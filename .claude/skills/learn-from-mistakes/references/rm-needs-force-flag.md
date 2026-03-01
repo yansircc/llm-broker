@@ -1,10 +1,18 @@
 ---
-match: \brm\b(?!.*-[a-zA-Z]*f)
+match: rm[[:space:]]+-r[[:space:]]|rm[[:space:]]+[^-]|rm[[:space:]]*$
 action: inject
+tools: Bash
 ---
 # rm command needs -f flag in sandboxed/automated contexts
 
-When using `rm` to delete files in Bash tool calls, the sandbox may prompt for confirmation which hangs the command. Always use `rm -f` (or `rm -rf` for directories) to avoid interactive prompts.
+## Symptom
 
-Symptom: `rm` command gets rejected or hangs waiting for confirmation.
-Fix: Use `rm -f` for files, `rm -rf` for directories.
+`rm` command gets rejected or hangs waiting for confirmation in the sandbox environment.
+
+## Root Cause
+
+Without `-f` flag, `rm` prompts for confirmation on each file, which hangs in non-interactive contexts.
+
+## Correct Approach
+
+Always use `rm -f` for files, `rm -rf` for directories. Never use bare `rm` without the `-f` flag.
