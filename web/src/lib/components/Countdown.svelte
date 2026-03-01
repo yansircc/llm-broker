@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { onDestroy } from 'svelte';
+	import { fmtDuration } from '$lib/format';
 
 	let {
 		until,
@@ -27,13 +28,7 @@
 			if (hasValue && variant === 'default') return 'expired';
 			return '\u2013';
 		}
-		const totalSecs = Math.floor(diff / 1000);
-		const secs = totalSecs % 60;
-		const totalMins = Math.floor(totalSecs / 60);
-		const mins = totalMins % 60;
-		const hours = Math.floor(totalMins / 60);
-		if (hours > 0) return `${hours}h ${String(mins).padStart(2, '0')}m ${String(secs).padStart(2, '0')}s`;
-		return `${mins}m ${String(secs).padStart(2, '0')}s`;
+		return fmtDuration(diff);
 	});
 	let cls = $derived.by(() => {
 		if (!active) {
