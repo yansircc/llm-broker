@@ -439,9 +439,13 @@ func (r *Relay) HandleCodex(w http.ResponseWriter, req *http.Request) {
 			slog.Warn("codex upstream error", "status", resp.StatusCode, "accountId", acct.ID, "model", model,
 				"body", truncate(string(errBody), 500))
 
-			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(resp.StatusCode)
-			w.Write(errBody)
+			if msg := extractErrorMessage(errBody); msg != "" {
+				writeCodexError(w, resp.StatusCode, msg)
+			} else {
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(resp.StatusCode)
+				w.Write(errBody)
+			}
 			return
 		}
 
@@ -478,9 +482,13 @@ func (r *Relay) HandleCodex(w http.ResponseWriter, req *http.Request) {
 		slog.Error("all codex relay attempts failed", "error", lastErr)
 	}
 	if lastUpstreamBody != nil {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(lastUpstreamStatus)
-		w.Write(lastUpstreamBody)
+		if msg := extractErrorMessage(lastUpstreamBody); msg != "" {
+			writeCodexError(w, lastUpstreamStatus, msg)
+		} else {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(lastUpstreamStatus)
+			w.Write(lastUpstreamBody)
+		}
 		return
 	}
 	writeCodexError(w, http.StatusServiceUnavailable, "no available codex accounts")
@@ -799,6 +807,20 @@ func writeCodexError(w http.ResponseWriter, status int, msg string) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	fmt.Fprintf(w, `{"error":{"message":"%s","type":"error","code":%d}}`, msg, status)
+}
+
+// extractErrorMessage pulls the error.message string from an OpenAI-style JSON error body.
+// Returns empty string if parsing fails.
+func extractErrorMessage(body []byte) string {
+	var envelope struct {
+		Error struct {
+			Message string `json:"message"`
+		} `json:"error"`
+	}
+	if json.Unmarshal(body, &envelope) == nil {
+		return envelope.Error.Message
+	}
+	return ""
 }
 
 type usageData struct {
