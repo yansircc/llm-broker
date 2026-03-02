@@ -48,10 +48,13 @@ func (t *Transformer) Transform(
 	// 1. Strip billing headers from system prompt
 	t.stripBillingHeaders(body)
 
-	// 2. Enforce cache_control compliance (max N blocks, strip TTL)
+	// 2. Strip thinking blocks from assistant messages
+	stripThinkingBlocks(body)
+
+	// 3. Enforce cache_control compliance (max N blocks, strip TTL)
 	t.enforceCacheControl(body)
 
-	// 3. Rewrite metadata.user_id
+	// 4. Rewrite metadata.user_id
 	accountUUID := acct.GetAccountUUID()
 	if metadata, ok := body["metadata"].(map[string]interface{}); ok {
 		if origUserID, ok := metadata["user_id"].(string); ok {
@@ -59,10 +62,10 @@ func (t *Transformer) Transform(
 		}
 	}
 
-	// 4. Compute session hash
+	// 5. Compute session hash
 	result.SessionHash = t.computeSessionHashFromBody(body)
 
-	// 5. Bind/restore stainless headers
+	// 6. Bind/restore stainless headers
 	RemoveAllStainless(result.Headers)
 	t.stainless.BindStainlessFromRequest(acct.ID, reqHeaders, result.Headers)
 
@@ -153,6 +156,40 @@ func walkContentBlocks(v interface{}, fn func(map[string]interface{})) {
 		}
 	case string:
 		// System prompt as string — no cache_control to process
+	}
+}
+
+func stripThinkingBlocks(body map[string]interface{}) {
+	msgs, ok := body["messages"].([]interface{})
+	if !ok {
+		return
+	}
+	for _, msg := range msgs {
+		m, ok := msg.(map[string]interface{})
+		if !ok || m["role"] != "assistant" {
+			continue
+		}
+		content, ok := m["content"].([]interface{})
+		if !ok {
+			continue
+		}
+		filtered := make([]interface{}, 0, len(content))
+		for _, block := range content {
+			b, ok := block.(map[string]interface{})
+			if !ok {
+				filtered = append(filtered, block)
+				continue
+			}
+			typ, _ := b["type"].(string)
+			if typ == "thinking" || typ == "redacted_thinking" {
+				continue
+			}
+			filtered = append(filtered, block)
+		}
+		if len(filtered) == 0 {
+			filtered = []interface{}{map[string]interface{}{"type": "text", "text": ""}}
+		}
+		m["content"] = filtered
 	}
 }
 
