@@ -141,6 +141,8 @@ func (s *Server) handleUpdateAccountStatus(w http.ResponseWriter, r *http.Reques
 		} else {
 			a.Schedulable = true
 			a.ErrorMessage = ""
+			a.OverloadedUntil = nil
+			a.OverloadedAt = nil
 		}
 	}); err != nil {
 		writeAdminError(w, http.StatusNotFound, "not_found", "account not found")
@@ -271,6 +273,8 @@ func (s *Server) handleTestAccount(w http.ResponseWriter, r *http.Request) {
 	}
 
 	s.pool.ObserveSuccess(acct.ID, resp.Header)
+	// Admin test proved account is healthy — clear overload via explicit admin reset
+	s.pool.ClearOverload(acct.ID)
 	writeJSON(w, http.StatusOK, TestAccountResult{OK: true, LatencyMs: latencyMs})
 }
 
@@ -339,6 +343,8 @@ func (s *Server) testCodexAccount(w http.ResponseWriter, r *http.Request, acct *
 
 	latencyMs = time.Since(start).Milliseconds()
 	if gotOutput {
+		// Admin test proved account is healthy — clear overload via explicit admin reset
+		s.pool.ClearOverload(acct.ID)
 		writeJSON(w, http.StatusOK, TestAccountResult{OK: true, LatencyMs: latencyMs})
 	} else {
 		writeJSON(w, http.StatusOK, TestAccountResult{LatencyMs: latencyMs, Error: "stream ended without output"})

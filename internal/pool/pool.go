@@ -403,6 +403,28 @@ func (p *Pool) MarkLastUsed(accountID string) {
 	p.persistLocked(acct)
 }
 
+// ClearOverload is an explicit admin reset that clears overload state.
+// This is one of the two legitimate ways to clear cooldowns (the other being
+// RunCleanup expiry). It does NOT violate the monotonic cooldown invariant
+// because it represents deliberate admin intent, not automated shortening.
+func (p *Pool) ClearOverload(accountID string) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	acct, ok := p.accounts[accountID]
+	if !ok || acct.OverloadedUntil == nil {
+		return
+	}
+	acct.OverloadedUntil = nil
+	acct.OverloadedAt = nil
+	acct.Schedulable = true
+	p.persistLocked(acct)
+	p.bus.Publish(events.Event{
+		Type: events.EventRecover, AccountID: acct.ID,
+		Message: "admin cleared overload",
+	})
+	slog.Info("admin cleared overload", "accountId", acct.ID)
+}
+
 // ---------------------------------------------------------------------------
 // Rate limit header capture (called under mu.Lock)
 // ---------------------------------------------------------------------------
