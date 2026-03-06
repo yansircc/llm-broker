@@ -79,6 +79,15 @@
 		}
 	}
 
+	async function clearEvents() {
+		try {
+			await api('/events', { method: 'DELETE' });
+			data.events = [];
+		} catch (e: any) {
+			error = e.message;
+		}
+	}
+
 	function cancelAddUser() {
 		showAddUser = false;
 		newUserName = '';
@@ -291,13 +300,18 @@ codex -p "Print 'true' for testing purpose"`;
 		</tbody></table>
 	{/if}
 
-	<!-- Recent events -->
-	<h2>recent events</h2>
+	<!-- Recent errors -->
+	<div class="section-header">
+		<h2>recent errors</h2>
+		{#if data.events.length > 0}
+			<button class="btn-sm" onclick={clearEvents}>clear</button>
+		{/if}
+	</div>
 	{#if data.events.length === 0}
-		<p class="muted">no events yet</p>
+		<p class="muted">no errors yet</p>
 	{:else}
 		<ul class="event-list">
-			{#each data.events as ev (ev.ts)}
+			{#each data.events as ev, i (`${ev.ts}|${ev.type}|${ev.account_id}|${i}`)}
 				<li>
 					<span class="ts">{fmtTime(ev.ts)}</span>
 					<span class={eventTypeColor(ev.type)}>{ev.type.toUpperCase()}</span>
@@ -309,6 +323,22 @@ codex -p "Print 'true' for testing purpose"`;
 {/if}
 
 <style>
+	.section-header {
+		display: flex;
+		align-items: center;
+		gap: 10px;
+	}
+	.section-header h2 { margin: 0; }
+	.btn-sm {
+		font-size: 0.75rem;
+		padding: 2px 8px;
+		background: #333;
+		color: #aaa;
+		border: 1px solid #555;
+		border-radius: 3px;
+		cursor: pointer;
+	}
+	.btn-sm:hover { background: #444; color: #fff; }
 	.test-cmd-wrap {
 		position: relative;
 		margin-top: 6px;

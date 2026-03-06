@@ -107,7 +107,7 @@ func main() {
 		MaxRequestBodyMB:  cfg.MaxRequestBodyMB,
 		MaxRetryAccounts:  cfg.MaxRetryAccounts,
 		SessionBindingTTL: cfg.SessionBindingTTL,
-	}, tm)
+	}, tm, bus)
 
 	// Start server
 	ctx := context.Background()

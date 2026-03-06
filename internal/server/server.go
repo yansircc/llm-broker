@@ -108,6 +108,9 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 	mux.Handle("POST /admin/accounts/{id}/refresh", auth(http.HandlerFunc(s.handleRefreshAccount)))
 	mux.Handle("POST /admin/accounts/{id}/test", auth(http.HandlerFunc(s.handleTestAccount)))
 
+	// Admin: events
+	mux.Handle("DELETE /admin/events", auth(http.HandlerFunc(s.handleClearEvents)))
+
 	// Admin: login
 	mux.HandleFunc("POST /admin/login", s.handleLogin)
 

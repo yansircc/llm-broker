@@ -85,7 +85,7 @@ export function eventTypeColor(type: string): string {
 	if (t === 'BAN' || t === '403' || t === '401') return 'r';
 	if (t === '429' || t === 'RATELIMIT' || t === '5H_STOP' || t === '5H-STOP') return 'o';
 	if (t === 'REFRESH' || t === 'RECOVER') return 'g';
-	if (t === 'OVERLOAD') return 'o';
+	if (t === 'OVERLOAD' || t === 'RELAY_ERROR') return 'o';
 	return 'muted';
 }
 

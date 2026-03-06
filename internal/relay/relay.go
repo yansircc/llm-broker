@@ -2,6 +2,7 @@ package relay
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -15,6 +16,7 @@ import (
 
 	"github.com/yansir/cc-relayer/internal/auth"
 	"github.com/yansir/cc-relayer/internal/domain"
+	"github.com/yansir/cc-relayer/internal/events"
 	"github.com/yansir/cc-relayer/internal/identity"
 	"github.com/yansir/cc-relayer/internal/oauth"
 	"github.com/yansir/cc-relayer/internal/pool"
@@ -50,6 +52,7 @@ type Relay struct {
 	store       StoreWriter
 	cfg         Config
 	transport   TransportProvider
+	bus         *events.Bus
 }
 
 func New(
@@ -59,6 +62,7 @@ func New(
 	sw StoreWriter,
 	cfg Config,
 	tp TransportProvider,
+	bus *events.Bus,
 ) *Relay {
 	return &Relay{
 		pool:        p,
@@ -67,6 +71,7 @@ func New(
 		store:       sw,
 		cfg:         cfg,
 		transport:   tp,
+		bus:         bus,
 	}
 }
 
@@ -89,6 +94,7 @@ func (r *Relay) Handle(w http.ResponseWriter, req *http.Request) {
 			return
 		}
 		writeError(w, http.StatusBadRequest, "invalid_request_error", "invalid JSON body")
+		r.bus.Publish(events.Event{Type: events.EventRelayError, Message: "claude: failed to parse request body: " + err.Error()})
 		return
 	}
 
@@ -220,6 +226,22 @@ func (r *Relay) Handle(w http.ResponseWriter, req *http.Request) {
 			lastUpstreamStatus = resp.StatusCode
 			lastUpstreamBody = errBody
 
+			// 429 "Extra usage is required" is a permanent rejection (no paid long-context),
+			// not a temporary rate limit. Don't retry/cooldown — passthrough to client.
+			if resp.StatusCode == 429 && bytes.Contains(errBody, []byte("Extra usage is required")) {
+				slog.Warn("non-retriable 429 (extra usage required)", "accountId", acct.ID, "model", model)
+				if isStream {
+					w.Header().Set("Content-Type", "text/event-stream")
+					w.WriteHeader(resp.StatusCode)
+					fmt.Fprintf(w, "event: error\ndata: %s\n\n", errBody)
+				} else {
+					w.Header().Set("Content-Type", "application/json")
+					w.WriteHeader(resp.StatusCode)
+					w.Write(errBody)
+				}
+				return
+			}
+
 			// 403 non-ban: retry same account up to 2 times without Observe/cooldown.
 			// Only on the 3rd 403 do we Observe (which triggers cooldown) and exclude.
 			if resp.StatusCode == 403 && !pool.IsBanSignal(string(errBody)) {
@@ -310,6 +332,7 @@ func (r *Relay) Handle(w http.ResponseWriter, req *http.Request) {
 	// All attempts failed
 	if lastErr != nil {
 		slog.Error("all relay attempts failed", "error", lastErr)
+		r.bus.Publish(events.Event{Type: events.EventRelayError, Message: "claude: all relay attempts failed: " + lastErr.Error()})
 	}
 	if lastUpstreamBody != nil {
 		sanitizedStatus, sanitizedBody := SanitizeError(lastUpstreamStatus, lastUpstreamBody)
@@ -346,6 +369,7 @@ func (r *Relay) HandleCodex(w http.ResponseWriter, req *http.Request) {
 			return
 		}
 		writeCodexError(w, http.StatusBadRequest, "failed to read request body")
+		r.bus.Publish(events.Event{Type: events.EventRelayError, Message: "codex: failed to read request body: " + err.Error()})
 		return
 	}
 
@@ -419,6 +443,15 @@ func (r *Relay) HandleCodex(w http.ResponseWriter, req *http.Request) {
 			slog.Warn("codex retriable upstream error", "status", resp.StatusCode, "accountId", acct.ID, "model", model,
 				"body", truncate(string(errBody), 500))
 
+			// 429 "Extra usage is required" — permanent rejection, don't retry/cooldown.
+			if resp.StatusCode == 429 && bytes.Contains(errBody, []byte("Extra usage is required")) {
+				slog.Warn("non-retriable 429 (extra usage required)", "accountId", acct.ID, "model", model)
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(resp.StatusCode)
+				w.Write(errBody)
+				return
+			}
+
 			r.pool.Observe(pool.UpstreamResult{
 				AccountID: acct.ID, StatusCode: resp.StatusCode,
 				Headers: resp.Header, ErrBody: errBody, Model: model,
@@ -480,6 +513,7 @@ func (r *Relay) HandleCodex(w http.ResponseWriter, req *http.Request) {
 
 	if lastErr != nil {
 		slog.Error("all codex relay attempts failed", "error", lastErr)
+		r.bus.Publish(events.Event{Type: events.EventRelayError, Message: "codex: all relay attempts failed: " + lastErr.Error()})
 	}
 	if lastUpstreamBody != nil {
 		if msg := extractErrorMessage(lastUpstreamBody); msg != "" {

@@ -243,3 +243,8 @@ func writeAdminError(w http.ResponseWriter, status int, errType, msg string) {
 	w.WriteHeader(status)
 	fmt.Fprintf(w, `{"type":"error","error":{"type":"%s","message":"%s"}}`, errType, msg)
 }
+
+func (s *Server) handleClearEvents(w http.ResponseWriter, r *http.Request) {
+	s.bus.Clear()
+	w.WriteHeader(http.StatusNoContent)
+}

@@ -8,13 +8,14 @@ import (
 type EventType string
 
 const (
-	EventBan       EventType = "ban"
-	EventRefresh   EventType = "refresh"
-	EventRateLimit EventType = "ratelimit"
-	EventRecover   EventType = "recover"
-	EventFiveHStop EventType = "5h_stop"
-	EventOverload  EventType = "overload"
-	EventRequest   EventType = "request"
+	EventBan        EventType = "ban"
+	EventRefresh    EventType = "refresh"
+	EventRateLimit  EventType = "ratelimit"
+	EventRecover    EventType = "recover"
+	EventFiveHStop  EventType = "5h_stop"
+	EventOverload   EventType = "overload"
+	EventRequest    EventType = "request"
+	EventRelayError EventType = "relay_error"
 )
 
 type Event struct {
@@ -112,4 +113,12 @@ func (b *Bus) recentLocked() []Event {
 		result[i] = b.ring[(start+i)%b.ringSize]
 	}
 	return result
+}
+
+// Clear resets the ring buffer, discarding all events.
+func (b *Bus) Clear() {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.ringPos = 0
+	b.ringCount = 0
 }
