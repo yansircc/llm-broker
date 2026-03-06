@@ -69,8 +69,9 @@ func New(
 		Addr:           fmt.Sprintf("%s:%d", cfg.Host, cfg.Port),
 		Handler:        requestLogger(mux),
 		ReadHeaderTimeout: 10 * time.Second,
-		WriteTimeout:   cfg.RequestTimeout + 30*time.Second,
-		MaxHeaderBytes: 1 << 20,
+		WriteTimeout:      cfg.RequestTimeout + 30*time.Second,
+		IdleTimeout:       120 * time.Second,
+		MaxHeaderBytes:    1 << 20,
 	}
 
 	return srv
