@@ -69,9 +69,10 @@ func New(
 	srv.httpServer = &http.Server{
 		Addr:           fmt.Sprintf("%s:%d", cfg.Host, cfg.Port),
 		Handler:        requestLogger(mux),
-		ReadTimeout:    30 * time.Second,
-		WriteTimeout:   cfg.RequestTimeout + 30*time.Second,
-		MaxHeaderBytes: 1 << 20,
+		ReadHeaderTimeout: 10 * time.Second,
+		WriteTimeout:      cfg.RequestTimeout + 30*time.Second,
+		IdleTimeout:       120 * time.Second,
+		MaxHeaderBytes:    1 << 20,
 	}
 
 	return srv
