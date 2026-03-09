@@ -88,6 +88,7 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 	mux.Handle("POST /v1/messages", auth(http.HandlerFunc(s.relay.Handle)))
 	mux.Handle("POST /v1/messages/count_tokens", auth(http.HandlerFunc(s.relay.HandleCountTokens)))
 	mux.Handle("POST /openai/responses", auth(http.HandlerFunc(s.relay.HandleCodex)))
+	mux.Handle("POST /v1/chat/completions", auth(http.HandlerFunc(s.relay.HandleChatCompletions)))
 
 	// Telemetry sink
 	mux.HandleFunc("POST /api/event_logging/batch", func(w http.ResponseWriter, r *http.Request) {
