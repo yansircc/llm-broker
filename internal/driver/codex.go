@@ -14,7 +14,6 @@ import (
 	"time"
 
 	"github.com/yansir/cc-relayer/internal/domain"
-	"github.com/yansir/cc-relayer/internal/oauth"
 )
 
 // CodexState holds the provider-specific rate-limit state for Codex accounts.
@@ -248,18 +247,11 @@ func (d *CodexDriver) ExtractSessionUUID(_ map[string]interface{}) string {
 // ---------------------------------------------------------------------------
 
 func (d *CodexDriver) GenerateAuthURL() (string, OAuthSession, error) {
-	authURL, session, err := oauth.GenerateCodexAuthURL()
-	if err != nil {
-		return "", OAuthSession{}, err
-	}
-	return authURL, OAuthSession{
-		CodeVerifier: session.CodeVerifier,
-		State:        session.State,
-	}, nil
+	return generateCodexAuthURL()
 }
 
 func (d *CodexDriver) ExchangeCode(ctx context.Context, code, verifier, _ string) (*ExchangeResult, error) {
-	result, err := oauth.ExchangeCodexCode(ctx, code, verifier)
+	result, err := exchangeCodexCode(ctx, code, verifier)
 	if err != nil {
 		return nil, err
 	}
@@ -268,14 +260,14 @@ func (d *CodexDriver) ExchangeCode(ctx context.Context, code, verifier, _ string
 	identity := make(map[string]interface{})
 	var subject string
 
-	if result.CodexInfo != nil {
-		if result.CodexInfo.Email != "" {
-			email = result.CodexInfo.Email
+	if result.IDInfo != nil {
+		if result.IDInfo.Email != "" {
+			email = result.IDInfo.Email
 		}
-		subject = result.CodexInfo.ChatGPTAccountID
-		identity["chatgptAccountId"] = result.CodexInfo.ChatGPTAccountID
-		identity["email"] = result.CodexInfo.Email
-		identity["orgTitle"] = result.CodexInfo.OrgTitle
+		subject = result.IDInfo.ChatGPTAccountID
+		identity["chatgptAccountId"] = result.IDInfo.ChatGPTAccountID
+		identity["email"] = result.IDInfo.Email
+		identity["orgTitle"] = result.IDInfo.OrgTitle
 	}
 
 	if subject == "" {
@@ -293,15 +285,7 @@ func (d *CodexDriver) ExchangeCode(ctx context.Context, code, verifier, _ string
 }
 
 func (d *CodexDriver) RefreshToken(ctx context.Context, client *http.Client, refreshToken string) (*TokenResponse, error) {
-	resp, err := oauth.CallCodexRefresh(ctx, client, refreshToken)
-	if err != nil {
-		return nil, err
-	}
-	return &TokenResponse{
-		AccessToken:  resp.AccessToken,
-		RefreshToken: resp.RefreshToken,
-		ExpiresIn:    resp.ExpiresIn,
-	}, nil
+	return refreshCodexToken(ctx, client, refreshToken)
 }
 
 // ---------------------------------------------------------------------------

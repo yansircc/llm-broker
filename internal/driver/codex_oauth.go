@@ -1,4 +1,4 @@
-package oauth
+package driver
 
 import (
 	"context"
@@ -20,8 +20,18 @@ const (
 	codexOAuthScope        = "openid profile email offline_access"
 )
 
-// GenerateCodexAuthURL creates a PKCE-secured authorization URL for Codex OAuth.
-func GenerateCodexAuthURL() (authURL string, session OAuthSession, err error) {
+type codexIDInfo struct {
+	ChatGPTAccountID string
+	Email            string
+	OrgTitle         string
+}
+
+type codexExchangeResult struct {
+	TokenResponse
+	IDInfo *codexIDInfo
+}
+
+func generateCodexAuthURL() (string, OAuthSession, error) {
 	verifier, challenge, err := generatePKCE()
 	if err != nil {
 		return "", OAuthSession{}, fmt.Errorf("generate PKCE: %w", err)
@@ -31,11 +41,11 @@ func GenerateCodexAuthURL() (authURL string, session OAuthSession, err error) {
 	params := url.Values{
 		"response_type":              {"code"},
 		"client_id":                  {codexOAuthClientID},
-		"redirect_uri":              {codexOAuthRedirectURI},
-		"scope":                     {codexOAuthScope},
-		"state":                     {state},
-		"code_challenge":            {challenge},
-		"code_challenge_method":     {"S256"},
+		"redirect_uri":               {codexOAuthRedirectURI},
+		"scope":                      {codexOAuthScope},
+		"state":                      {state},
+		"code_challenge":             {challenge},
+		"code_challenge_method":      {"S256"},
 		"id_token_add_organizations": {"true"},
 		"codex_cli_simplified_flow":  {"true"},
 	}
@@ -46,8 +56,7 @@ func GenerateCodexAuthURL() (authURL string, session OAuthSession, err error) {
 	}, nil
 }
 
-// ExchangeCodexCode exchanges a Codex authorization code for tokens.
-func ExchangeCodexCode(ctx context.Context, code, verifier string) (*ExchangeCodeResult, error) {
+func exchangeCodexCode(ctx context.Context, code, verifier string) (*codexExchangeResult, error) {
 	form := url.Values{
 		"grant_type":    {"authorization_code"},
 		"client_id":     {codexOAuthClientID},
@@ -90,23 +99,20 @@ func ExchangeCodexCode(ctx context.Context, code, verifier string) (*ExchangeCod
 		return nil, fmt.Errorf("empty access_token in response")
 	}
 
-	result := &ExchangeCodeResult{
-		AccessToken:  tokenResp.AccessToken,
-		RefreshToken: tokenResp.RefreshToken,
-		ExpiresIn:    tokenResp.ExpiresIn,
+	result := &codexExchangeResult{
+		TokenResponse: TokenResponse{
+			AccessToken:  tokenResp.AccessToken,
+			RefreshToken: tokenResp.RefreshToken,
+			ExpiresIn:    tokenResp.ExpiresIn,
+		},
 	}
-
 	if tokenResp.IDToken != "" {
-		if info := ParseCodexIDToken(tokenResp.IDToken); info != nil {
-			result.CodexInfo = info
-		}
+		result.IDInfo = parseCodexIDToken(tokenResp.IDToken)
 	}
-
 	return result, nil
 }
 
-// CallCodexRefresh performs a Codex OAuth token refresh.
-func CallCodexRefresh(ctx context.Context, client *http.Client, refreshToken string) (*TokenResponse, error) {
+func refreshCodexToken(ctx context.Context, client *http.Client, refreshToken string) (*TokenResponse, error) {
 	form := url.Values{
 		"grant_type":    {"refresh_token"},
 		"refresh_token": {refreshToken},
@@ -144,15 +150,7 @@ func CallCodexRefresh(ctx context.Context, client *http.Client, refreshToken str
 	return &tokenResp, nil
 }
 
-// CodexIDInfo holds extracted info from the Codex ID token.
-type CodexIDInfo struct {
-	ChatGPTAccountID string `json:"chatgpt_account_id"`
-	Email            string `json:"email"`
-	OrgTitle         string `json:"org_title"`
-}
-
-// ParseCodexIDToken extracts account info from a JWT id_token payload.
-func ParseCodexIDToken(idToken string) *CodexIDInfo {
+func parseCodexIDToken(idToken string) *codexIDInfo {
 	parts := strings.Split(idToken, ".")
 	if len(parts) < 2 {
 		return nil
@@ -180,7 +178,7 @@ func ParseCodexIDToken(idToken string) *CodexIDInfo {
 		return nil
 	}
 
-	info := &CodexIDInfo{
+	info := &codexIDInfo{
 		ChatGPTAccountID: claims.Auth.ChatGPTAccountID,
 		Email:            claims.Email,
 	}

@@ -16,7 +16,6 @@ import (
 
 	"github.com/yansir/cc-relayer/internal/domain"
 	"github.com/yansir/cc-relayer/internal/identity"
-	"github.com/yansir/cc-relayer/internal/oauth"
 )
 
 // ClaudeState holds the provider-specific rate-limit state for Claude accounts.
@@ -310,23 +309,16 @@ func (d *ClaudeDriver) ExtractSessionUUID(body map[string]interface{}) string {
 // ---------------------------------------------------------------------------
 
 func (d *ClaudeDriver) GenerateAuthURL() (string, OAuthSession, error) {
-	authURL, session, err := oauth.GenerateAuthURL()
-	if err != nil {
-		return "", OAuthSession{}, err
-	}
-	return authURL, OAuthSession{
-		CodeVerifier: session.CodeVerifier,
-		State:        session.State,
-	}, nil
+	return generateClaudeAuthURL()
 }
 
 func (d *ClaudeDriver) ExchangeCode(ctx context.Context, code, verifier, state string) (*ExchangeResult, error) {
-	result, err := oauth.ExchangeCode(ctx, code, verifier, state)
+	result, err := exchangeClaudeCode(ctx, code, verifier, state)
 	if err != nil {
 		return nil, err
 	}
 
-	orgUUID, email, orgName, err := oauth.FetchOrgWithToken(ctx, result.AccessToken)
+	orgUUID, email, orgName, err := fetchClaudeOrgWithToken(ctx, result.AccessToken)
 	if err != nil {
 		// Fallback: try API header method
 		orgUUID = fetchOrgUUIDFromAPIHeader(ctx, d.cfg.APIURL, result.AccessToken, d.cfg.APIVersion, d.cfg.BetaHeader)
@@ -352,15 +344,7 @@ func (d *ClaudeDriver) ExchangeCode(ctx context.Context, code, verifier, state s
 }
 
 func (d *ClaudeDriver) RefreshToken(ctx context.Context, client *http.Client, refreshToken string) (*TokenResponse, error) {
-	resp, err := oauth.CallClaudeRefresh(ctx, client, refreshToken)
-	if err != nil {
-		return nil, err
-	}
-	return &TokenResponse{
-		AccessToken:  resp.AccessToken,
-		RefreshToken: resp.RefreshToken,
-		ExpiresIn:    resp.ExpiresIn,
-	}, nil
+	return refreshClaudeToken(ctx, client, refreshToken)
 }
 
 // ---------------------------------------------------------------------------
