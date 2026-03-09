@@ -133,26 +133,19 @@
 		}
 	}
 
-	function buildTestCmd(token: string): string {
+	function buildKeyCheckCmd(token: string): string {
 		const origin = typeof window !== 'undefined' ? window.location.origin : '';
-		return `ANTHROPIC_BASE_URL="${origin}" \\
-ANTHROPIC_AUTH_TOKEN="${token}" \\
-claude -p --model haiku \\
-  --system-prompt "You can only output bool" \\
-  --tools "StructuredOutput" \\
-  --setting-sources "" \\
-  --strict-mcp-config \\
-  --mcp-config '{"mcpServers":{}}' \\
-  --disable-slash-commands \\
-  --output-format stream-json \\
-  --verbose \\
-  --json-schema '{"type":"object","properties":{"result":{"type":"boolean"}},"required":["result"]}' \\
-  "Print 'true' for testing purpose"`;
+		return `BASE_URL="${origin}"
+API_KEY="${token}"
+
+curl -fsS "$BASE_URL/v1/models" \\
+  -H "Authorization: Bearer $API_KEY" \\
+  >/dev/null && echo "key ok"`;
 	}
 
 	async function copyCmd() {
 		if (!createdUser) return;
-		await navigator.clipboard.writeText(buildTestCmd(createdUser.token));
+		await navigator.clipboard.writeText(buildKeyCheckCmd(createdUser.token));
 		copied = true;
 		setTimeout(() => { copied = false; }, 2000);
 	}
@@ -294,7 +287,7 @@ claude -p --model haiku \\
 			<div class="r" style="font-size:11px;margin-top:2px;">copy now — this token will not be shown again</div>
 			<div class="test-cmd-wrap">
 				<button class="copy-btn" onclick={copyCmd}>{copied ? '[copied]' : '[copy]'}</button>
-				<pre class="test-cmd">{buildTestCmd(createdUser.token)}</pre>
+				<pre class="test-cmd">{buildKeyCheckCmd(createdUser.token)}</pre>
 			</div>
 		</div>
 	{/if}
