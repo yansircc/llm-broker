@@ -45,11 +45,37 @@ func NewCodexDriver(cfg CodexConfig) *CodexDriver {
 
 func (d *CodexDriver) Provider() domain.Provider { return domain.ProviderCodex }
 
+func (d *CodexDriver) Info() ProviderInfo {
+	return ProviderInfo{
+		Label:               "Codex",
+		RelayPaths:          []string{"/openai/responses"},
+		OAuthStateRequired:  false,
+		CallbackPlaceholder: "http://localhost:1455/auth/callback?code=...",
+		CallbackHint:        "account metadata is extracted from the id_token.",
+		ProbeLabel:          "codex",
+	}
+}
+
+func (d *CodexDriver) Models() []Model {
+	return []Model{
+		{ID: "gpt-5.4", Object: "model", Created: 1709164800, OwnedBy: "openai", ContextWindow: 1050000},
+		{ID: "gpt-5.3-codex", Object: "model", Created: 1709164800, OwnedBy: "openai", ContextWindow: 400000},
+		{ID: "gpt-5.2-codex", Object: "model", Created: 1709164800, OwnedBy: "openai", ContextWindow: 400000},
+		{ID: "gpt-5.1-codex-max", Object: "model", Created: 1709164800, OwnedBy: "openai", ContextWindow: 400000},
+		{ID: "gpt-5.1-codex", Object: "model", Created: 1709164800, OwnedBy: "openai", ContextWindow: 400000},
+		{ID: "gpt-5.1-codex-mini", Object: "model", Created: 1709164800, OwnedBy: "openai", ContextWindow: 400000},
+		{ID: "codex-1", Object: "model", Created: 1709164800, OwnedBy: "openai", ContextWindow: 192000},
+	}
+}
+
 // ---------------------------------------------------------------------------
 // Relay
 // ---------------------------------------------------------------------------
 
 func (d *CodexDriver) BuildRequest(ctx context.Context, input *RelayInput, acct *domain.Account, token string) (*http.Request, error) {
+	if acct.Subject == "" {
+		return nil, fmt.Errorf("codex account missing subject")
+	}
 	req, err := http.NewRequestWithContext(ctx, "POST", d.cfg.APIURL, strings.NewReader(string(input.RawBody)))
 	if err != nil {
 		return nil, err
@@ -66,16 +92,12 @@ func (d *CodexDriver) BuildRequest(ctx context.Context, input *RelayInput, acct 
 
 	req.Header.Set("Authorization", "Bearer "+token)
 	req.Header.Set("Host", "chatgpt.com")
-	if acct.ExtInfo != nil {
-		if accountID, ok := acct.ExtInfo["chatgptAccountId"].(string); ok && accountID != "" {
-			req.Header.Set("Chatgpt-Account-Id", accountID)
-		}
-	}
+	req.Header.Set("Chatgpt-Account-Id", acct.Subject)
 
 	return req, nil
 }
 
-func (d *CodexDriver) Interpret(statusCode int, headers http.Header, body []byte, model string) Effect {
+func (d *CodexDriver) Interpret(statusCode int, headers http.Header, body []byte, model string, _ json.RawMessage) Effect {
 	switch statusCode {
 	case http.StatusOK:
 		state := d.captureHeaders(headers)
@@ -243,7 +265,7 @@ func (d *CodexDriver) ExchangeCode(ctx context.Context, code, verifier, _ string
 	}
 
 	email := "codex-" + time.Now().Format("0102-1504")
-	extInfo := make(map[string]interface{})
+	identity := make(map[string]interface{})
 	var subject string
 
 	if result.CodexInfo != nil {
@@ -251,9 +273,9 @@ func (d *CodexDriver) ExchangeCode(ctx context.Context, code, verifier, _ string
 			email = result.CodexInfo.Email
 		}
 		subject = result.CodexInfo.ChatGPTAccountID
-		extInfo["chatgptAccountId"] = result.CodexInfo.ChatGPTAccountID
-		extInfo["email"] = result.CodexInfo.Email
-		extInfo["orgTitle"] = result.CodexInfo.OrgTitle
+		identity["chatgptAccountId"] = result.CodexInfo.ChatGPTAccountID
+		identity["email"] = result.CodexInfo.Email
+		identity["orgTitle"] = result.CodexInfo.OrgTitle
 	}
 
 	if subject == "" {
@@ -266,7 +288,7 @@ func (d *CodexDriver) ExchangeCode(ctx context.Context, code, verifier, _ string
 		ExpiresIn:    result.ExpiresIn,
 		Subject:      subject,
 		Email:        email,
-		ExtInfo:      extInfo,
+		Identity:     identity,
 	}, nil
 }
 
@@ -286,22 +308,65 @@ func (d *CodexDriver) RefreshToken(ctx context.Context, client *http.Client, ref
 // Admin
 // ---------------------------------------------------------------------------
 
-func (d *CodexDriver) BuildProbeRequest(ctx context.Context, acct *domain.Account, token string) (*http.Request, error) {
+func (d *CodexDriver) Probe(ctx context.Context, acct *domain.Account, token string, client *http.Client) (ProbeResult, error) {
+	if acct.Subject == "" {
+		return ProbeResult{}, fmt.Errorf("codex account missing subject")
+	}
 	body := `{"model":"gpt-5.1-codex","stream":true,"store":false,"instructions":"Reply: ok","input":[{"role":"user","content":"t"}]}`
 	req, err := http.NewRequestWithContext(ctx, "POST", d.cfg.APIURL, strings.NewReader(body))
 	if err != nil {
-		return nil, err
+		return ProbeResult{}, err
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+token)
 	req.Header.Set("Host", "chatgpt.com")
 	req.Header.Set("Accept", "text/event-stream")
-	if acct.ExtInfo != nil {
-		if accountID, ok := acct.ExtInfo["chatgptAccountId"].(string); ok && accountID != "" {
-			req.Header.Set("Chatgpt-Account-Id", accountID)
+	req.Header.Set("Chatgpt-Account-Id", acct.Subject)
+	resp, err := client.Do(req)
+	if err != nil {
+		return ProbeResult{}, err
+	}
+	defer resp.Body.Close()
+
+	bodyBytes, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return ProbeResult{}, err
+	}
+
+	result := ProbeResult{
+		Effect:  d.Interpret(resp.StatusCode, resp.Header, bodyBytes, "", json.RawMessage(acct.ProviderStateJSON)),
+		Observe: true,
+	}
+	if resp.StatusCode >= http.StatusBadRequest {
+		return result, fmt.Errorf("upstream returned %d", resp.StatusCode)
+	}
+
+	scanner := bufio.NewScanner(bytes.NewReader(bodyBytes))
+	scanner.Buffer(make([]byte, 0, 64*1024), 256*1024)
+	for scanner.Scan() {
+		line := scanner.Text()
+		if strings.HasPrefix(line, "event: response.output_text.delta") {
+			result.ClearCooldown = true
+			return result, nil
+		}
+		if strings.HasPrefix(line, "data: ") && strings.Contains(line, `"error":{`) {
+			return result, fmt.Errorf("upstream error in stream")
 		}
 	}
-	return req, nil
+	if err := scanner.Err(); err != nil {
+		return result, err
+	}
+	return result, fmt.Errorf("stream ended without output")
+}
+
+func (d *CodexDriver) DescribeAccount(acct *domain.Account) []AccountField {
+	if acct == nil || acct.Identity == nil {
+		return nil
+	}
+	if orgTitle, ok := acct.Identity["orgTitle"].(string); ok && orgTitle != "" {
+		return []AccountField{{Label: "organization", Value: orgTitle}}
+	}
+	return nil
 }
 
 func (d *CodexDriver) AutoPriority(state json.RawMessage) int {
@@ -381,18 +446,31 @@ func (d *CodexDriver) CalcCost(model string, usage *Usage) float64 {
 		float64(usage.CacheReadTokens)*cacheReadPrice) / 1_000_000
 }
 
-func (d *CodexDriver) GetUtilization(state json.RawMessage) (primary, secondary *UtilWindow) {
+func (d *CodexDriver) GetUtilization(state json.RawMessage) []UtilWindow {
 	var s CodexState
 	if json.Unmarshal(state, &s) != nil {
-		return nil, nil
+		return nil
 	}
+	var windows []UtilWindow
 	if s.PrimaryUtil > 0 || s.PrimaryReset > 0 {
-		primary = &UtilWindow{Pct: int(s.PrimaryUtil * 100), Reset: s.PrimaryReset}
+		windows = append(windows, UtilWindow{
+			Label: "primary",
+			Pct:   int(s.PrimaryUtil * 100),
+			Reset: s.PrimaryReset,
+		})
 	}
 	if s.SecondaryUtil > 0 || s.SecondaryReset > 0 {
-		secondary = &UtilWindow{Pct: int(s.SecondaryUtil * 100), Reset: s.SecondaryReset}
+		windows = append(windows, UtilWindow{
+			Label: "secondary",
+			Pct:   int(s.SecondaryUtil * 100),
+			Reset: s.SecondaryReset,
+		})
 	}
-	return primary, secondary
+	return windows
+}
+
+func (d *CodexDriver) CanServe(_ json.RawMessage, _ string, _ time.Time) bool {
+	return true
 }
 
 // ---------------------------------------------------------------------------

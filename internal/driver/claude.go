@@ -21,11 +21,11 @@ import (
 
 // ClaudeState holds the provider-specific rate-limit state for Claude accounts.
 type ClaudeState struct {
-	FiveHourStatus string  `json:"five_hour_status,omitempty"`
-	FiveHourUtil   float64 `json:"five_hour_util"`
-	FiveHourReset  int64   `json:"five_hour_reset"`
-	SevenDayUtil   float64 `json:"seven_day_util"`
-	SevenDayReset  int64   `json:"seven_day_reset"`
+	FiveHourUtil      float64 `json:"five_hour_util"`
+	FiveHourReset     int64   `json:"five_hour_reset"`
+	SevenDayUtil      float64 `json:"seven_day_util"`
+	SevenDayReset     int64   `json:"seven_day_reset"`
+	OpusCooldownUntil int64   `json:"opus_cooldown_until,omitempty"`
 }
 
 // ClaudeConfig holds the configuration needed by the Claude driver.
@@ -49,6 +49,30 @@ func NewClaudeDriver(cfg ClaudeConfig, transformer *identity.Transformer) *Claud
 }
 
 func (d *ClaudeDriver) Provider() domain.Provider { return domain.ProviderClaude }
+
+func (d *ClaudeDriver) Info() ProviderInfo {
+	return ProviderInfo{
+		Label:               "Claude",
+		RelayPaths:          []string{"/v1/messages", "/v1/messages/count_tokens"},
+		OAuthStateRequired:  true,
+		CallbackPlaceholder: "https://platform.claude.com/oauth/code/callback?code=...",
+		CallbackHint:        "email and organization metadata are fetched after token exchange.",
+		ProbeLabel:          "haiku",
+	}
+}
+
+func (d *ClaudeDriver) Models() []Model {
+	return []Model{
+		{ID: "claude-opus-4-6", Object: "model", Created: 1709164800, OwnedBy: "anthropic", ContextWindow: 200000},
+		{ID: "claude-opus-4-5", Object: "model", Created: 1709164800, OwnedBy: "anthropic", ContextWindow: 200000},
+		{ID: "claude-opus-4-1", Object: "model", Created: 1709164800, OwnedBy: "anthropic", ContextWindow: 200000},
+		{ID: "claude-opus-4", Object: "model", Created: 1709164800, OwnedBy: "anthropic", ContextWindow: 200000},
+		{ID: "claude-sonnet-4-6", Object: "model", Created: 1709164800, OwnedBy: "anthropic", ContextWindow: 200000},
+		{ID: "claude-sonnet-4-5", Object: "model", Created: 1709164800, OwnedBy: "anthropic", ContextWindow: 200000},
+		{ID: "claude-sonnet-4", Object: "model", Created: 1709164800, OwnedBy: "anthropic", ContextWindow: 200000},
+		{ID: "claude-haiku-4-5", Object: "model", Created: 1709164800, OwnedBy: "anthropic", ContextWindow: 200000},
+	}
+}
 
 // ---------------------------------------------------------------------------
 // Relay
@@ -95,23 +119,23 @@ func (d *ClaudeDriver) BuildRequest(ctx context.Context, input *RelayInput, acct
 	return req, nil
 }
 
-func (d *ClaudeDriver) Interpret(statusCode int, headers http.Header, body []byte, model string) Effect {
+func (d *ClaudeDriver) Interpret(statusCode int, headers http.Header, body []byte, model string, prevState json.RawMessage) Effect {
+	state := d.captureState(headers, prevState)
+	if state.OpusCooldownUntil > 0 && state.OpusCooldownUntil <= time.Now().Unix() {
+		state.OpusCooldownUntil = 0
+	}
 	switch statusCode {
 	case http.StatusOK:
-		state := d.captureHeaders(headers)
-		return Effect{Kind: EffectSuccess, UpdatedState: state}
+		return Effect{Kind: EffectSuccess, UpdatedState: mustMarshalJSON(state)}
 
 	case 529:
-		state := d.captureHeaders(headers)
 		return Effect{
 			Kind:          EffectOverload,
 			CooldownUntil: time.Now().Add(d.cfg.Pauses.Pause529),
-			UpdatedState:  state,
+			UpdatedState:  mustMarshalJSON(state),
 		}
 
 	case 429:
-		state := d.captureHeaders(headers)
-
 		until := time.Now().Add(d.cfg.Pauses.Pause429)
 		if retryAfter := parseRetryAfter(headers.Get("Retry-After")); retryAfter > 0 {
 			until = time.Now().Add(retryAfter)
@@ -120,22 +144,18 @@ func (d *ClaudeDriver) Interpret(statusCode int, headers http.Header, body []byt
 				until = resetTime
 			}
 		}
-
-		eff := Effect{
-			Kind:          EffectCooldown,
-			CooldownUntil: until,
-			UpdatedState:  state,
-		}
-
 		if isOpusModel(model) {
 			if resetStr := headers.Get("anthropic-ratelimit-unified-reset"); resetStr != "" {
 				if resetTime, err := time.Parse(time.RFC3339, resetStr); err == nil {
-					eff.IsOpusLimit = true
-					eff.OpusResetAt = resetTime
+					state.OpusCooldownUntil = resetTime.Unix()
 				}
 			}
 		}
-		return eff
+		return Effect{
+			Kind:          EffectCooldown,
+			CooldownUntil: until,
+			UpdatedState:  mustMarshalJSON(state),
+		}
 
 	case 403:
 		if banSignalPattern.MatchString(string(body)) {
@@ -143,21 +163,24 @@ func (d *ClaudeDriver) Interpret(statusCode int, headers http.Header, body []byt
 				Kind:          EffectBlock,
 				CooldownUntil: time.Now().Add(d.cfg.Pauses.Pause401),
 				ErrorMessage:  fmt.Sprintf("ban signal detected: %s", truncate(string(body), 200)),
+				UpdatedState:  mustMarshalJSON(state),
 			}
 		}
 		return Effect{
 			Kind:          EffectCooldown,
 			CooldownUntil: time.Now().Add(d.cfg.Pauses.Pause403),
+			UpdatedState:  mustMarshalJSON(state),
 		}
 
 	case 401:
 		return Effect{
 			Kind:          EffectAuthFail,
 			CooldownUntil: time.Now().Add(d.cfg.Pauses.Pause401Refresh),
+			UpdatedState:  mustMarshalJSON(state),
 		}
 	}
 
-	return Effect{Kind: EffectSuccess}
+	return Effect{Kind: EffectSuccess, UpdatedState: mustMarshalJSON(state)}
 }
 
 func (d *ClaudeDriver) StreamResponse(ctx context.Context, w http.ResponseWriter, resp *http.Response) (bool, *Usage) {
@@ -320,7 +343,7 @@ func (d *ClaudeDriver) ExchangeCode(ctx context.Context, code, verifier, state s
 		ExpiresIn:    result.ExpiresIn,
 		Subject:      orgUUID,
 		Email:        email,
-		ExtInfo: map[string]interface{}{
+		Identity: map[string]interface{}{
 			"orgUUID": orgUUID,
 			"orgName": orgName,
 			"email":   email,
@@ -344,15 +367,44 @@ func (d *ClaudeDriver) RefreshToken(ctx context.Context, client *http.Client, re
 // Admin
 // ---------------------------------------------------------------------------
 
-func (d *ClaudeDriver) BuildProbeRequest(ctx context.Context, acct *domain.Account, token string) (*http.Request, error) {
+func (d *ClaudeDriver) Probe(ctx context.Context, acct *domain.Account, token string, client *http.Client) (ProbeResult, error) {
 	body := `{"model":"claude-haiku-4-5-20251001","max_tokens":1,"messages":[{"role":"user","content":"hi"}]}`
 	req, err := http.NewRequestWithContext(ctx, "POST", d.cfg.APIURL, strings.NewReader(body))
 	if err != nil {
-		return nil, err
+		return ProbeResult{}, err
 	}
 	req.Header.Set("Content-Type", "application/json")
 	identity.SetRequiredHeaders(req.Header, token, d.cfg.APIVersion, d.cfg.BetaHeader)
-	return req, nil
+	resp, err := client.Do(req)
+	if err != nil {
+		return ProbeResult{}, err
+	}
+	defer resp.Body.Close()
+
+	bodyBytes, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return ProbeResult{}, err
+	}
+
+	result := ProbeResult{
+		Effect:  d.Interpret(resp.StatusCode, resp.Header, bodyBytes, "", json.RawMessage(acct.ProviderStateJSON)),
+		Observe: true,
+	}
+	if resp.StatusCode >= http.StatusBadRequest {
+		return result, fmt.Errorf("upstream returned %d", resp.StatusCode)
+	}
+	result.ClearCooldown = true
+	return result, nil
+}
+
+func (d *ClaudeDriver) DescribeAccount(acct *domain.Account) []AccountField {
+	if acct == nil || acct.Identity == nil {
+		return nil
+	}
+	if orgName, ok := acct.Identity["orgName"].(string); ok && orgName != "" {
+		return []AccountField{{Label: "organization", Value: orgName}}
+	}
+	return nil
 }
 
 func (d *ClaudeDriver) AutoPriority(state json.RawMessage) int {
@@ -406,6 +458,17 @@ func (d *ClaudeDriver) ComputeExhaustedCooldown(state json.RawMessage, now time.
 	return time.Time{}
 }
 
+func (d *ClaudeDriver) CanServe(state json.RawMessage, model string, now time.Time) bool {
+	if !isOpusModel(model) {
+		return true
+	}
+	var s ClaudeState
+	if json.Unmarshal(state, &s) != nil {
+		return true
+	}
+	return s.OpusCooldownUntil == 0 || now.Unix() >= s.OpusCooldownUntil
+}
+
 func (d *ClaudeDriver) CalcCost(model string, usage *Usage) float64 {
 	if usage == nil {
 		return 0
@@ -424,31 +487,43 @@ func (d *ClaudeDriver) CalcCost(model string, usage *Usage) float64 {
 		float64(usage.CacheReadTokens)*cacheReadPrice + float64(usage.CacheCreateTokens)*cacheCreatePrice) / 1_000_000
 }
 
-func (d *ClaudeDriver) GetUtilization(state json.RawMessage) (primary, secondary *UtilWindow) {
+func (d *ClaudeDriver) GetUtilization(state json.RawMessage) []UtilWindow {
 	var s ClaudeState
 	if json.Unmarshal(state, &s) != nil {
-		return nil, nil
+		return nil
 	}
+	var windows []UtilWindow
 	if s.FiveHourUtil > 0 || s.FiveHourReset > 0 {
-		primary = &UtilWindow{Pct: int(s.FiveHourUtil * 100), Reset: s.FiveHourReset}
+		windows = append(windows, UtilWindow{
+			Label: "5h",
+			Pct:   int(s.FiveHourUtil * 100),
+			Reset: s.FiveHourReset,
+		})
 	}
 	if s.SevenDayUtil > 0 || s.SevenDayReset > 0 {
-		secondary = &UtilWindow{Pct: int(s.SevenDayUtil * 100), Reset: s.SevenDayReset}
+		windows = append(windows, UtilWindow{
+			Label: "7d",
+			Pct:   int(s.SevenDayUtil * 100),
+			Reset: s.SevenDayReset,
+		})
 	}
-	return primary, secondary
+	return windows
 }
 
 // ---------------------------------------------------------------------------
 // Internal helpers
 // ---------------------------------------------------------------------------
 
-func (d *ClaudeDriver) captureHeaders(headers http.Header) json.RawMessage {
-	if headers == nil {
-		return nil
+func (d *ClaudeDriver) captureState(headers http.Header, prevState json.RawMessage) ClaudeState {
+	var prev ClaudeState
+	if len(prevState) > 0 {
+		_ = json.Unmarshal(prevState, &prev)
 	}
-	var s ClaudeState
-	if v := headers.Get("anthropic-ratelimit-unified-5h-status"); v != "" {
-		s.FiveHourStatus = v
+	s := ClaudeState{
+		OpusCooldownUntil: prev.OpusCooldownUntil,
+	}
+	if headers == nil {
+		return s
 	}
 	if v := headers.Get("anthropic-ratelimit-unified-5h-utilization"); v != "" {
 		if f, err := strconv.ParseFloat(v, 64); err == nil {
@@ -470,8 +545,7 @@ func (d *ClaudeDriver) captureHeaders(headers http.Header) json.RawMessage {
 			s.SevenDayReset = secs
 		}
 	}
-	data, _ := json.Marshal(s)
-	return data
+	return s
 }
 
 func parseClaudeUsage(data string) *Usage {
