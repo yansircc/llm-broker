@@ -1,7 +1,7 @@
 ---
 name: deploy
 description: |
-  Build and deploy cc-relayer to production (DEPLOY_HOST).
+  Build and deploy cc-relayer to production.
   Triggers: deploy, 部署, push to production, 发布, ship it, 上线.
   Handles: frontend build, Go cross-compile, upload, atomic binary replace, systemctl restart, verification, rollback.
 ---

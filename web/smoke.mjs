@@ -1,10 +1,11 @@
 #!/usr/bin/env node
 // Browser smoke test — catches JS runtime errors that curl can't detect.
-// Usage: SITE=https://DEPLOY_HOST API_TOKEN=xxx node web/smoke.mjs
+// Usage: SITE=https://example.com API_TOKEN=xxx node web/smoke.mjs
 
 import { chromium } from 'playwright-core';
 
-const SITE = (process.env.SITE || 'https://DEPLOY_HOST').replace(/\/$/, '');
+if (!process.env.SITE) { console.error('SITE is required'); process.exit(1); }
+const SITE = process.env.SITE.replace(/\/$/, '');
 const TOKEN = process.env.API_TOKEN;
 if (!TOKEN) { console.error('API_TOKEN is required'); process.exit(1); }
 
