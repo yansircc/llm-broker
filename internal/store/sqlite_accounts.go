@@ -13,7 +13,8 @@ const accountCols = `id, email, provider, status, schedulable, priority, priorit
 	last_used_at, last_refresh_at, proxy_json, ext_info_json,
 	five_hour_status, five_hour_util, five_hour_reset, seven_day_util, seven_day_reset,
 	opus_rate_limit_end_at, overloaded_at, overloaded_until, rate_limited_at,
-	codex_primary_util, codex_primary_reset, codex_secondary_util, codex_secondary_reset`
+	codex_primary_util, codex_primary_reset, codex_secondary_util, codex_secondary_reset,
+	subject, provider_state_json`
 
 func scanAccount(scanner interface{ Scan(...any) error }) (*domain.Account, error) {
 	var (
@@ -28,6 +29,7 @@ func scanAccount(scanner interface{ Scan(...any) error }) (*domain.Account, erro
 		opusEnd, olAt, olUntil, rlAt                 sql.NullInt64
 		cpUtil, csUtil                               float64
 		cpReset, csReset                             int64
+		subject, providerStateJSON                   string
 	)
 	err := scanner.Scan(
 		&id, &email, &provider, &status, &sched, &prio, &priMode, &errMsg,
@@ -36,6 +38,7 @@ func scanAccount(scanner interface{ Scan(...any) error }) (*domain.Account, erro
 		&fhStatus, &fhUtil, &fhReset, &sdUtil, &sdReset,
 		&opusEnd, &olAt, &olUntil, &rlAt,
 		&cpUtil, &cpReset, &csUtil, &csReset,
+		&subject, &providerStateJSON,
 	)
 	if err != nil {
 		return nil, err
@@ -78,6 +81,8 @@ func scanAccount(scanner interface{ Scan(...any) error }) (*domain.Account, erro
 		CodexPrimaryReset:   cpReset,
 		CodexSecondaryUtil:  csUtil,
 		CodexSecondaryReset: csReset,
+		Subject:             subject,
+		ProviderStateJSON:   providerStateJSON,
 	}
 	a.HydrateRuntime()
 	return a, nil
@@ -119,8 +124,9 @@ func (s *SQLiteStore) SaveAccount(ctx context.Context, acct *domain.Account) err
 			last_used_at, last_refresh_at, proxy_json, ext_info_json,
 			five_hour_status, five_hour_util, five_hour_reset, seven_day_util, seven_day_reset,
 			opus_rate_limit_end_at, overloaded_at, overloaded_until, rate_limited_at,
-			codex_primary_util, codex_primary_reset, codex_secondary_util, codex_secondary_reset
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			codex_primary_util, codex_primary_reset, codex_secondary_util, codex_secondary_reset,
+			subject, provider_state_json
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(id) DO UPDATE SET
 			email=excluded.email, provider=excluded.provider, status=excluded.status,
 			schedulable=excluded.schedulable, priority=excluded.priority, priority_mode=excluded.priority_mode,
@@ -136,7 +142,8 @@ func (s *SQLiteStore) SaveAccount(ctx context.Context, acct *domain.Account) err
 			overloaded_at=excluded.overloaded_at, overloaded_until=excluded.overloaded_until,
 			rate_limited_at=excluded.rate_limited_at,
 			codex_primary_util=excluded.codex_primary_util, codex_primary_reset=excluded.codex_primary_reset,
-			codex_secondary_util=excluded.codex_secondary_util, codex_secondary_reset=excluded.codex_secondary_reset`,
+			codex_secondary_util=excluded.codex_secondary_util, codex_secondary_reset=excluded.codex_secondary_reset,
+			subject=excluded.subject, provider_state_json=excluded.provider_state_json`,
 		acct.ID, acct.Email, string(acct.Provider), string(acct.Status),
 		boolInt(acct.Schedulable), acct.Priority, acct.PriorityMode, acct.ErrorMessage,
 		acct.RefreshTokenEnc, acct.AccessTokenEnc, acct.ExpiresAt, acct.CreatedAt.Unix(),
@@ -148,6 +155,7 @@ func (s *SQLiteStore) SaveAccount(ctx context.Context, acct *domain.Account) err
 		nullableUnix(acct.OverloadedUntil), nullableUnix(acct.RateLimitedAt),
 		acct.CodexPrimaryUtil, acct.CodexPrimaryReset,
 		acct.CodexSecondaryUtil, acct.CodexSecondaryReset,
+		acct.Subject, acct.ProviderStateJSON,
 	)
 	return err
 }

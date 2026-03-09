@@ -27,7 +27,9 @@ CREATE TABLE IF NOT EXISTS accounts (
     codex_primary_util REAL NOT NULL DEFAULT 0,
     codex_primary_reset INTEGER NOT NULL DEFAULT 0,
     codex_secondary_util REAL NOT NULL DEFAULT 0,
-    codex_secondary_reset INTEGER NOT NULL DEFAULT 0
+    codex_secondary_reset INTEGER NOT NULL DEFAULT 0,
+    subject TEXT NOT NULL DEFAULT '',
+    provider_state_json TEXT NOT NULL DEFAULT '{}'
 );
 
 CREATE TABLE IF NOT EXISTS users (

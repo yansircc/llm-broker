@@ -1,0 +1,87 @@
+package driver
+
+import (
+	"encoding/json"
+	"net/http"
+	"time"
+)
+
+// ErrorPauses holds configurable error pause durations.
+// Shared between pool and driver implementations.
+type ErrorPauses struct {
+	Pause401        time.Duration
+	Pause401Refresh time.Duration // short cooldown for background token refresh on 401
+	Pause403        time.Duration
+	Pause429        time.Duration
+	Pause529        time.Duration
+}
+
+// EffectKind classifies the outcome of an upstream request.
+type EffectKind int
+
+const (
+	EffectSuccess  EffectKind = iota
+	EffectCooldown            // 429, 403 non-ban
+	EffectOverload            // 529
+	EffectBlock               // 403 ban
+	EffectAuthFail            // 401
+)
+
+// Effect is the provider-agnostic outcome of an upstream request.
+// Pool.Observe applies it without knowing any provider-specific details.
+type Effect struct {
+	Kind          EffectKind
+	CooldownUntil time.Time
+	ErrorMessage  string
+	UpdatedState  json.RawMessage // opaque provider state blob
+	IsOpusLimit   bool
+	OpusResetAt   time.Time
+}
+
+// RelayInput carries the parsed client request.
+type RelayInput struct {
+	Body          map[string]interface{}
+	RawBody       []byte
+	Headers       http.Header
+	RawQuery      string
+	Model         string
+	IsStream      bool
+	IsCountTokens bool // Claude-only: /v1/messages/count_tokens
+}
+
+// Usage holds token counts from a completed request.
+type Usage struct {
+	InputTokens       int
+	OutputTokens      int
+	CacheReadTokens   int
+	CacheCreateTokens int
+}
+
+// TokenResponse is the OAuth refresh/exchange response.
+type TokenResponse struct {
+	AccessToken  string
+	RefreshToken string
+	ExpiresIn    int
+}
+
+// ExchangeResult holds the tokens and identity from an authorization code exchange.
+type ExchangeResult struct {
+	AccessToken  string
+	RefreshToken string
+	ExpiresIn    int
+	Subject      string                 // REQUIRED: orgUUID (Claude), chatgptAccountId (Codex)
+	Email        string
+	ExtInfo      map[string]interface{}
+}
+
+// OAuthSession holds PKCE parameters for a pending OAuth flow.
+type OAuthSession struct {
+	CodeVerifier string `json:"code_verifier"`
+	State        string `json:"state"`
+}
+
+// UtilWindow represents a rate-limit utilization window.
+type UtilWindow struct {
+	Pct   int   // 0-100
+	Reset int64 // unix seconds
+}

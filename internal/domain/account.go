@@ -67,6 +67,10 @@ type Account struct {
 	CodexSecondaryUtil  float64 `db:"codex_secondary_util"  json:"codex_secondary_util"`
 	CodexSecondaryReset int64   `db:"codex_secondary_reset" json:"codex_secondary_reset"`
 
+	// Driver-based fields (Phase 1 additive)
+	Subject            string `db:"subject"              json:"subject,omitempty"`
+	ProviderStateJSON  string `db:"provider_state_json"  json:"-"`
+
 	// Runtime only (not stored in DB)
 	Proxy   *ProxyConfig           `db:"-" json:"proxy,omitempty"`
 	ExtInfo map[string]interface{} `db:"-" json:"ext_info,omitempty"`

@@ -75,6 +75,8 @@ func (s *SQLiteStore) migrate(ctx context.Context) error {
 		{"accounts", "codex_primary_reset", "ALTER TABLE accounts ADD COLUMN codex_primary_reset INTEGER NOT NULL DEFAULT 0"},
 		{"accounts", "codex_secondary_util", "ALTER TABLE accounts ADD COLUMN codex_secondary_util REAL NOT NULL DEFAULT 0"},
 		{"accounts", "codex_secondary_reset", "ALTER TABLE accounts ADD COLUMN codex_secondary_reset INTEGER NOT NULL DEFAULT 0"},
+		{"accounts", "subject", "ALTER TABLE accounts ADD COLUMN subject TEXT NOT NULL DEFAULT ''"},
+		{"accounts", "provider_state_json", "ALTER TABLE accounts ADD COLUMN provider_state_json TEXT NOT NULL DEFAULT '{}'"},
 	}
 	for _, m := range migrations {
 		if !s.columnExists(ctx, m.table, m.column) {
@@ -83,6 +85,8 @@ func (s *SQLiteStore) migrate(ctx context.Context) error {
 			}
 		}
 	}
+	// Ensure unique index on provider+subject (idempotent)
+	_, _ = s.db.ExecContext(ctx, `CREATE UNIQUE INDEX IF NOT EXISTS idx_accounts_provider_subject ON accounts(provider, subject) WHERE subject != ''`)
 	return nil
 }
 
