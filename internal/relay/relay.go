@@ -18,9 +18,9 @@ import (
 	"github.com/yansir/cc-relayer/internal/pool"
 )
 
-// TransportProvider supplies per-account HTTP clients.
+// TransportProvider supplies shared transports keyed by account routing.
 type TransportProvider interface {
-	GetClient(acct *domain.Account) *http.Client
+	ClientForAccount(acct *domain.Account) *http.Client
 }
 
 // StoreWriter writes request logs.
@@ -193,7 +193,7 @@ func (r *Relay) handleWithDriver(w http.ResponseWriter, req *http.Request, drv d
 			break
 		}
 
-		client := r.transport.GetClient(acct)
+		client := r.transport.ClientForAccount(acct)
 		resp, err := client.Do(upReq)
 		if err != nil {
 			slog.Error("upstream request failed", "accountId", acct.ID, "error", err)
@@ -333,7 +333,7 @@ func (r *Relay) handleCountTokens(w http.ResponseWriter, req *http.Request, drv 
 		return
 	}
 
-	client := r.transport.GetClient(acct)
+	client := r.transport.ClientForAccount(acct)
 	resp, err := client.Do(upReq)
 	if err != nil {
 		slog.Error("count_tokens upstream failed", "error", err)

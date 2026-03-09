@@ -17,8 +17,8 @@ import (
 	"golang.org/x/net/proxy"
 )
 
-// Manager provides per-account HTTP clients and transports with utls fingerprinting.
-type Manager struct {
+// Pool reuses round trippers by transport shape (direct or proxy config).
+type Pool struct {
 	mu             sync.Mutex
 	entries        map[string]*poolEntry
 	requestTimeout time.Duration
@@ -29,23 +29,23 @@ type poolEntry struct {
 	lastUsed     time.Time
 }
 
-func NewManager(requestTimeout time.Duration) *Manager {
-	return &Manager{
+func NewPool(requestTimeout time.Duration) *Pool {
+	return &Pool{
 		entries:        make(map[string]*poolEntry),
 		requestTimeout: requestTimeout,
 	}
 }
 
-// GetClient returns an http.Client with a per-account transport (utls + optional proxy).
-func (m *Manager) GetClient(acct *domain.Account) *http.Client {
+// ClientForAccount returns an http.Client backed by the matching shared transport.
+func (m *Pool) ClientForAccount(acct *domain.Account) *http.Client {
 	return &http.Client{
 		Transport: m.getRoundTripper(acct),
 		Timeout:   m.requestTimeout,
 	}
 }
 
-// GetHTTPTransport returns an http.Transport for proxy scenarios (used by token refresh).
-func (m *Manager) GetHTTPTransport(pcfg *domain.ProxyConfig) *http.Transport {
+// TransportForProxy returns a plain http.Transport for refresh flows that only need proxy routing.
+func (m *Pool) TransportForProxy(pcfg *domain.ProxyConfig) *http.Transport {
 	if pcfg == nil {
 		return nil
 	}
@@ -55,7 +55,7 @@ func (m *Manager) GetHTTPTransport(pcfg *domain.ProxyConfig) *http.Transport {
 }
 
 // RunCleanup starts the background cleanup goroutine. Blocks until ctx is canceled.
-func (m *Manager) RunCleanup(ctx context.Context) {
+func (m *Pool) RunCleanup(ctx context.Context) {
 	ticker := time.NewTicker(1 * time.Minute)
 	defer ticker.Stop()
 
@@ -70,7 +70,7 @@ func (m *Manager) RunCleanup(ctx context.Context) {
 }
 
 // Close closes all pooled transports.
-func (m *Manager) Close() {
+func (m *Pool) Close() {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -82,7 +82,7 @@ func (m *Manager) Close() {
 	}
 }
 
-func (m *Manager) getRoundTripper(acct *domain.Account) http.RoundTripper {
+func (m *Pool) getRoundTripper(acct *domain.Account) http.RoundTripper {
 	key := transportKey(acct)
 
 	m.mu.Lock()
@@ -98,7 +98,7 @@ func (m *Manager) getRoundTripper(acct *domain.Account) http.RoundTripper {
 	return rt
 }
 
-func (m *Manager) cleanup(idleTimeout time.Duration) {
+func (m *Pool) cleanup(idleTimeout time.Duration) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
