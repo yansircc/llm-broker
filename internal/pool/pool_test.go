@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -20,13 +21,17 @@ type mockDriver struct {
 }
 
 func (m *mockDriver) Provider() domain.Provider { return m.provider }
+func (m *mockDriver) Info() driver.ProviderInfo {
+	return driver.ProviderInfo{Label: string(m.provider), ProbeLabel: "mock"}
+}
+func (m *mockDriver) Models() []driver.Model { return nil }
 func (m *mockDriver) AutoPriority(state json.RawMessage) int {
 	return 50 // default
 }
 func (m *mockDriver) BuildRequest(_ context.Context, _ *driver.RelayInput, _ *domain.Account, _ string) (*http.Request, error) {
 	return nil, nil
 }
-func (m *mockDriver) Interpret(_ int, _ http.Header, _ []byte, _ string) driver.Effect {
+func (m *mockDriver) Interpret(_ int, _ http.Header, _ []byte, _ string, _ json.RawMessage) driver.Effect {
 	return driver.Effect{}
 }
 func (m *mockDriver) StreamResponse(_ context.Context, _ http.ResponseWriter, _ *http.Response) (bool, *driver.Usage) {
@@ -53,17 +58,28 @@ func (m *mockDriver) ExchangeCode(_ context.Context, _, _, _ string) (*driver.Ex
 func (m *mockDriver) RefreshToken(_ context.Context, _ *http.Client, _ string) (*driver.TokenResponse, error) {
 	return nil, nil
 }
-func (m *mockDriver) BuildProbeRequest(_ context.Context, _ *domain.Account, _ string) (*http.Request, error) {
-	return nil, nil
+func (m *mockDriver) Probe(_ context.Context, _ *domain.Account, _ string, _ *http.Client) (driver.ProbeResult, error) {
+	return driver.ProbeResult{}, nil
 }
-func (m *mockDriver) IsStale(_ json.RawMessage, _ time.Time) bool { return false }
+func (m *mockDriver) DescribeAccount(_ *domain.Account) []driver.AccountField { return nil }
+func (m *mockDriver) IsStale(_ json.RawMessage, _ time.Time) bool             { return false }
 func (m *mockDriver) ComputeExhaustedCooldown(_ json.RawMessage, _ time.Time) time.Time {
 	return time.Time{}
 }
-func (m *mockDriver) CalcCost(_ string, _ *driver.Usage) float64 { return 0 }
-func (m *mockDriver) GetUtilization(_ json.RawMessage) (*driver.UtilWindow, *driver.UtilWindow) {
-	return nil, nil
+func (m *mockDriver) CanServe(state json.RawMessage, model string, _ time.Time) bool {
+	if !strings.Contains(model, "opus") {
+		return true
+	}
+	var flags struct {
+		DenyOpus bool `json:"deny_opus"`
+	}
+	if json.Unmarshal(state, &flags) != nil {
+		return true
+	}
+	return !flags.DenyOpus
 }
+func (m *mockDriver) CalcCost(_ string, _ *driver.Usage) float64           { return 0 }
+func (m *mockDriver) GetUtilization(_ json.RawMessage) []driver.UtilWindow { return nil }
 
 var testDriver = &mockDriver{provider: domain.ProviderClaude}
 
@@ -75,7 +91,7 @@ func newTestPool(t *testing.T, accounts ...*domain.Account) *Pool {
 		accounts:      make(map[string]*domain.Account),
 		store:         ms,
 		bus:           bus,
-		pauses:        ErrorPauses{Pause401: 30 * time.Minute, Pause401Refresh: 30 * time.Second, Pause403: 10 * time.Minute, Pause429: 60 * time.Second, Pause529: 5 * time.Minute},
+		pauses:        driver.ErrorPauses{Pause401: 30 * time.Minute, Pause401Refresh: 30 * time.Second, Pause403: 10 * time.Minute, Pause429: 60 * time.Second, Pause529: 5 * time.Minute},
 		sessions:      store.NewTTLMap[SessionBinding](),
 		stainless:     store.NewTTLMap[string](),
 		oauthSessions: store.NewTTLMap[string](),
@@ -89,32 +105,32 @@ func newTestPool(t *testing.T, accounts ...*domain.Account) *Pool {
 
 func activeAccount(id, email string) *domain.Account {
 	return &domain.Account{
-		ID:          id,
-		Email:       email,
-		Provider:    domain.ProviderClaude,
-		Status:      domain.StatusActive,
-		Schedulable: true,
-		Priority:    50,
+		ID:       id,
+		Email:    email,
+		Provider: domain.ProviderClaude,
+		Subject:  id,
+		Status:   domain.StatusActive,
+		Priority: 50,
 	}
 }
 
 // Test 1: Pick never returns unavailable accounts
 func TestPick_NeverReturnsUnavailable(t *testing.T) {
-	blocked := &domain.Account{ID: "b", Email: "b@x", Provider: domain.ProviderClaude, Status: domain.StatusBlocked, Schedulable: true, Priority: 99}
-	unschedulable := &domain.Account{ID: "u", Email: "u@x", Provider: domain.ProviderClaude, Status: domain.StatusActive, Schedulable: false, Priority: 99}
+	blocked := &domain.Account{ID: "b", Email: "b@x", Provider: domain.ProviderClaude, Subject: "b", Status: domain.StatusBlocked, Priority: 99}
+	cooling := activeAccount("c", "c@x")
 	overloaded := activeAccount("o", "o@x")
 	future := time.Now().Add(1 * time.Hour)
-	overloaded.OverloadedUntil = &future
+	cooling.CooldownUntil = &future
+	overloaded.CooldownUntil = &future
 	opusLimited := activeAccount("op", "op@x")
-	opusEnd := time.Now().Add(1 * time.Hour)
-	opusLimited.OpusRateLimitEndAt = &opusEnd
+	opusLimited.ProviderStateJSON = `{"deny_opus":true}`
 	good := activeAccount("g", "g@x")
 	good.Priority = 99 // highest priority to ensure deterministic selection
 
-	p := newTestPool(t, blocked, unschedulable, overloaded, opusLimited, good)
+	p := newTestPool(t, blocked, cooling, overloaded, opusLimited, good)
 
 	// Pick should return "good" (highest priority, others filtered)
-	acct, err := p.Pick(testDriver, nil, false, "")
+	acct, err := p.Pick(testDriver, nil, "claude-haiku", "")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -123,7 +139,7 @@ func TestPick_NeverReturnsUnavailable(t *testing.T) {
 	}
 
 	// With opus, opusLimited should also be excluded, still get "good"
-	acct, err = p.Pick(testDriver, nil, true, "")
+	acct, err = p.Pick(testDriver, nil, "claude-opus-4-6", "")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -132,7 +148,7 @@ func TestPick_NeverReturnsUnavailable(t *testing.T) {
 	}
 
 	// Exclude "good" with opus → no accounts available (opusLimited blocked by opus check)
-	_, err = p.Pick(testDriver, []string{"g"}, true, "")
+	_, err = p.Pick(testDriver, []string{"g"}, "claude-opus-4-6", "")
 	if err == nil {
 		t.Fatal("expected error when all accounts unavailable for opus")
 	}
@@ -145,19 +161,19 @@ func TestApplyCooldown_Monotonic(t *testing.T) {
 
 	long := time.Now().Add(1 * time.Hour)
 	p.applyCooldown(acct, long)
-	if acct.OverloadedUntil == nil || !acct.OverloadedUntil.Equal(long.UTC()) {
+	if acct.CooldownUntil == nil || !acct.CooldownUntil.Equal(long.UTC()) {
 		t.Fatal("long cooldown should be set")
 	}
 
 	short := time.Now().Add(5 * time.Minute)
 	p.applyCooldown(acct, short)
-	if !acct.OverloadedUntil.Equal(long.UTC()) {
+	if !acct.CooldownUntil.Equal(long.UTC()) {
 		t.Fatal("short cooldown should not overwrite long cooldown")
 	}
 
 	longer := time.Now().Add(2 * time.Hour)
 	p.applyCooldown(acct, longer)
-	if !acct.OverloadedUntil.Equal(longer.UTC()) {
+	if !acct.CooldownUntil.Equal(longer.UTC()) {
 		t.Fatal("longer cooldown should overwrite existing")
 	}
 }
@@ -183,11 +199,8 @@ func TestObserve_ConcurrentCooldown(t *testing.T) {
 	p.mu.RLock()
 	defer p.mu.RUnlock()
 	a := p.accounts["a"]
-	if a.OverloadedUntil == nil {
-		t.Fatal("overloadedUntil should be set after 529s")
-	}
-	if a.Schedulable {
-		t.Fatal("schedulable should be false after 529")
+	if a.CooldownUntil == nil {
+		t.Fatal("cooldownUntil should be set after 529s")
 	}
 }
 
@@ -212,11 +225,8 @@ func TestObserve401_BackgroundRefresh(t *testing.T) {
 	if a.Status == domain.StatusError {
 		t.Fatal("401 should NOT set StatusError anymore")
 	}
-	if a.Schedulable {
-		t.Fatal("schedulable should be false after 401")
-	}
-	if a.OverloadedUntil == nil {
-		t.Fatal("overloadedUntil should be set with Pause401Refresh")
+	if a.CooldownUntil == nil {
+		t.Fatal("cooldownUntil should be set with Pause401Refresh")
 	}
 	p.mu.RUnlock()
 
@@ -242,32 +252,23 @@ func TestObserve_StatusTransitions(t *testing.T) {
 		})
 		p.mu.RLock()
 		a := p.accounts["a"]
-		if a.Schedulable {
-			t.Fatal("should be unschedulable after 529")
-		}
-		if a.OverloadedAt == nil {
-			t.Fatal("overloadedAt should be set")
+		if a.CooldownUntil == nil {
+			t.Fatal("cooldownUntil should be set")
 		}
 		p.mu.RUnlock()
 	})
 
-	t.Run("429_cooldown_and_opus", func(t *testing.T) {
+	t.Run("429_cooldown", func(t *testing.T) {
 		acct := activeAccount("a", "a@x")
 		p := newTestPool(t, acct)
-		opusReset := time.Now().Add(10 * time.Minute)
 		p.Observe("a", driver.Effect{
 			Kind:          driver.EffectCooldown,
 			CooldownUntil: time.Now().Add(1 * time.Minute),
-			IsOpusLimit:   true,
-			OpusResetAt:   opusReset,
 		})
 		p.mu.RLock()
 		a := p.accounts["a"]
-		if a.Schedulable {
-			t.Fatal("should be unschedulable after 429")
-		}
-		if a.OpusRateLimitEndAt == nil {
-			t.Fatal("OpusRateLimitEndAt should be set for opus 429")
+		if a.CooldownUntil == nil {
+			t.Fatal("cooldownUntil should be set")
 		}
 		p.mu.RUnlock()
 	})
@@ -300,8 +301,8 @@ func TestObserve_StatusTransitions(t *testing.T) {
 		if a.Status != domain.StatusActive {
 			t.Fatalf("non-ban 403 should keep status active, got %s", a.Status)
 		}
-		if a.Schedulable {
-			t.Fatal("should be unschedulable after non-ban 403")
+		if a.CooldownUntil == nil {
+			t.Fatal("cooldownUntil should be set after non-ban 403")
 		}
 		p.mu.RUnlock()
 	})
@@ -311,9 +312,8 @@ func TestObserve_StatusTransitions(t *testing.T) {
 func TestStoreTokens_RestoresAccount(t *testing.T) {
 	acct := activeAccount("a", "a@x")
 	acct.Status = domain.StatusError
-	acct.Schedulable = false
 	future := time.Now().Add(1 * time.Hour)
-	acct.OverloadedUntil = &future
+	acct.CooldownUntil = &future
 	p := newTestPool(t, acct)
 
 	err := p.StoreTokens("a", "enc_access", "enc_refresh", time.Now().Add(1*time.Hour).Unix())
@@ -326,11 +326,8 @@ func TestStoreTokens_RestoresAccount(t *testing.T) {
 	if a.Status != domain.StatusActive {
 		t.Fatalf("expected active, got %s", a.Status)
 	}
-	if !a.Schedulable {
-		t.Fatal("should be schedulable after StoreTokens")
-	}
-	if a.OverloadedUntil != nil {
-		t.Fatal("overloadedUntil should be cleared")
+	if a.CooldownUntil != nil {
+		t.Fatal("cooldownUntil should be cleared")
 	}
 	if a.ErrorMessage != "" {
 		t.Fatal("errorMessage should be cleared")
@@ -387,7 +384,7 @@ func TestPick_PrioritySort(t *testing.T) {
 	p := newTestPool(t, a1, a2, a3)
 
 	// a3 should win (highest priority)
-	acct, err := p.Pick(testDriver, nil, false, "")
+	acct, err := p.Pick(testDriver, nil, "claude-haiku", "")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -396,7 +393,7 @@ func TestPick_PrioritySort(t *testing.T) {
 	}
 
 	// Exclude a3, then a2 should win (same priority, older lastUsedAt)
-	acct, err = p.Pick(testDriver, []string{"a3"}, false, "")
+	acct, err = p.Pick(testDriver, []string{"a3"}, "claude-haiku", "")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
