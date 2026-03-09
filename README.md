@@ -30,7 +30,13 @@ Requires Go 1.24+ and Node 22+.
 
 ## Quick Start
 
-### 1. Start the server
+### 1. Initialize the database
+
+```bash
+./cc-relayer migrate
+```
+
+### 2. Start the server
 
 ```bash
 export ENCRYPTION_KEY=$(openssl rand -hex 16)
@@ -43,7 +49,7 @@ echo "API_TOKEN=$API_TOKEN"
 
 Listens on `0.0.0.0:3000` by default. Data stored in SQLite at `./cc-relayer.db`.
 
-### 2. Add an account
+### 3. Add an account
 
 ```bash
 # Generate OAuth URL
@@ -60,7 +66,7 @@ curl -X POST https://YOUR_SERVER/admin/accounts/exchange-code \
 
 Or use the WebUI at `https://YOUR_SERVER/`.
 
-### 3. Configure Claude Code
+### 4. Configure Claude Code
 
 ```bash
 export ANTHROPIC_BASE_URL=http://YOUR_SERVER
@@ -68,7 +74,7 @@ export ANTHROPIC_API_KEY=YOUR_API_TOKEN
 claude
 ```
 
-### 4. Configure Codex CLI
+### 5. Configure Codex CLI
 
 ```bash
 export OPENAI_BASE_URL=http://YOUR_SERVER/openai
@@ -146,12 +152,12 @@ internal/
   domain/               Pure types (Account, User, RequestLog)
   events/               Ring buffer event bus
   identity/             Request masking, stainless binding
-  oauth/                PKCE flows (Claude + Codex), token management
   pool/                 Account state machine, scheduling
   relay/                Stateless request forwarding
   server/               HTTP handlers, admin API, WebUI
   store/                SQLite persistence
-  transport/            Per-account HTTP clients, proxy support
+  tokens/               Access token encryption and refresh
+  transport/            Shared HTTP transport pool, proxy support
   ui/                   Embedded SvelteKit frontend
 web/                    SvelteKit source (adapter-static)
 ```

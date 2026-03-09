@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"log/slog"
-	"net/http"
 	"os"
 	"time"
 
@@ -14,35 +13,27 @@ import (
 	"github.com/yansir/cc-relayer/internal/driver"
 	"github.com/yansir/cc-relayer/internal/events"
 	"github.com/yansir/cc-relayer/internal/identity"
-	"github.com/yansir/cc-relayer/internal/oauth"
 	"github.com/yansir/cc-relayer/internal/pool"
 	"github.com/yansir/cc-relayer/internal/relay"
 	"github.com/yansir/cc-relayer/internal/server"
 	"github.com/yansir/cc-relayer/internal/store"
+	"github.com/yansir/cc-relayer/internal/tokens"
 	"github.com/yansir/cc-relayer/internal/transport"
 )
 
 var version = "dev"
 
-type refreshAdapter struct {
-	drv driver.Driver
-}
-
-func (a refreshAdapter) RefreshToken(ctx context.Context, client *http.Client, refreshToken string) (*oauth.TokenResponse, error) {
-	resp, err := a.drv.RefreshToken(ctx, client, refreshToken)
-	if err != nil || resp == nil {
-		return nil, err
-	}
-	return &oauth.TokenResponse{
-		AccessToken:  resp.AccessToken,
-		RefreshToken: resp.RefreshToken,
-		ExpiresIn:    resp.ExpiresIn,
-	}, nil
-}
-
 func main() {
-	// Load configuration
 	cfg := config.Load()
+	if len(os.Args) > 1 && os.Args[1] == "migrate" {
+		if err := store.Migrate(cfg.DBPath); err != nil {
+			slog.Error("database migration failed", "path", cfg.DBPath, "error", err)
+			os.Exit(1)
+		}
+		slog.Info("database migration complete", "path", cfg.DBPath)
+		return
+	}
+
 	if err := cfg.Validate(); err != nil {
 		slog.Error("config validation failed", "error", err)
 		os.Exit(1)
@@ -82,9 +73,9 @@ func main() {
 	// Initialize event bus
 	bus := events.NewBus(200)
 
-	// Initialize transport manager
-	tm := transport.NewManager(cfg.RequestTimeout)
-	defer tm.Close()
+	// Initialize shared transport pool
+	transportPool := transport.NewPool(cfg.RequestTimeout)
+	defer transportPool.Close()
 
 	// Initialize pool (loads all accounts from DB)
 	p, err := pool.New(s, bus, driver.ErrorPauses{
@@ -125,13 +116,9 @@ func main() {
 			Pauses: pauses,
 		}),
 	}
-	refreshDrivers := make(map[domain.Provider]oauth.RefreshDriver, len(drivers))
-	for provider, drv := range drivers {
-		refreshDrivers[provider] = refreshAdapter{drv: drv}
-	}
 
 	// Initialize token manager
-	tokMgr := oauth.NewTokenManager(p, c, tm, cfg.TokenRefreshAdvance, refreshDrivers)
+	tokMgr := tokens.NewManager(p, c, transportPool, cfg.TokenRefreshAdvance, drivers)
 	p.SetDrivers(drivers)
 
 	// Wire 401 → background token refresh
@@ -148,11 +135,11 @@ func main() {
 		MaxRequestBodyMB:  cfg.MaxRequestBodyMB,
 		MaxRetryAccounts:  cfg.MaxRetryAccounts,
 		SessionBindingTTL: cfg.SessionBindingTTL,
-	}, tm, bus, drivers)
+	}, transportPool, bus, drivers)
 
 	// Start server
 	ctx := context.Background()
-	srv := server.New(cfg, s, p, tokMgr, r, tm, authMw, bus, version, drivers)
+	srv := server.New(cfg, s, p, tokMgr, r, transportPool, authMw, bus, version, drivers)
 	if err := srv.Run(ctx); err != nil {
 		slog.Error("server error", "error", err)
 		os.Exit(1)
