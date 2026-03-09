@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/yansir/cc-relayer/internal/domain"
+	"github.com/yansircc/llm-broker/internal/domain"
 
 	_ "modernc.org/sqlite"
 )

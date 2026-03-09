@@ -7,7 +7,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/yansir/cc-relayer/internal/domain"
+	"github.com/yansircc/llm-broker/internal/domain"
 )
 
 // runRateLimitRefresh periodically probes accounts whose reset window has expired.

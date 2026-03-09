@@ -1,5 +1,5 @@
 ---
-match: cd.*/code/52/cc-relayer[[:space:]]*(&&|[[:space:]]).*deploy
+match: cd.*/code/52/[^[:space:]]+[[:space:]]*(&&|[[:space:]]).*deploy
 action: inject
 tools: Bash
 ---
@@ -9,17 +9,17 @@ tools: Bash
 `deploy.sh` builds and deploys old code from `main` branch instead of the worktree's changes. The deploy "succeeds" but none of your changes take effect.
 
 ## Root Cause
-`deploy.sh` uses `git rev-parse --show-toplevel` to determine the repo root. When you `cd /path/to/main-repo && bash .claude/skills/deploy/scripts/deploy.sh`, the script resolves to the main repo root and compiles from there — ignoring the worktree branch entirely.
+`deploy.sh` uses `git rev-parse --show-toplevel` to determine the repo root. When you `cd /path/to/main-repo && bash .claude/skills/deploy/scripts/deploy.sh`, the script resolves to the main repo root and compiles from there, ignoring the worktree branch entirely.
 
 ## Correct Approach
 Always run deploy from the worktree directory (or any subdirectory of it):
 
 ```bash
 # WRONG — compiles main branch
-cd /Users/yansir/code/52/cc-relayer && bash .claude/skills/deploy/scripts/deploy.sh
+cd /Users/yansir/code/52/<main-repo> && bash .claude/skills/deploy/scripts/deploy.sh
 
 # RIGHT — compiles worktree branch
-bash /Users/yansir/code/52/cc-relayer/.claude/skills/deploy/scripts/deploy.sh
+bash /Users/yansir/code/52/<worktree>/.claude/skills/deploy/scripts/deploy.sh
 # (runs from current cwd which is the worktree)
 ```
 

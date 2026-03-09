@@ -7,7 +7,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/yansir/cc-relayer/internal/domain"
+	"github.com/yansircc/llm-broker/internal/domain"
 )
 
 // handleListAccounts returns all accounts (without tokens).

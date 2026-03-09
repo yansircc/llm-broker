@@ -6,19 +6,19 @@ import (
 	"os"
 	"time"
 
-	"github.com/yansir/cc-relayer/internal/auth"
-	"github.com/yansir/cc-relayer/internal/config"
-	"github.com/yansir/cc-relayer/internal/crypto"
-	"github.com/yansir/cc-relayer/internal/domain"
-	"github.com/yansir/cc-relayer/internal/driver"
-	"github.com/yansir/cc-relayer/internal/events"
-	"github.com/yansir/cc-relayer/internal/identity"
-	"github.com/yansir/cc-relayer/internal/pool"
-	"github.com/yansir/cc-relayer/internal/relay"
-	"github.com/yansir/cc-relayer/internal/server"
-	"github.com/yansir/cc-relayer/internal/store"
-	"github.com/yansir/cc-relayer/internal/tokens"
-	"github.com/yansir/cc-relayer/internal/transport"
+	"github.com/yansircc/llm-broker/internal/auth"
+	"github.com/yansircc/llm-broker/internal/config"
+	"github.com/yansircc/llm-broker/internal/crypto"
+	"github.com/yansircc/llm-broker/internal/domain"
+	"github.com/yansircc/llm-broker/internal/driver"
+	"github.com/yansircc/llm-broker/internal/events"
+	"github.com/yansircc/llm-broker/internal/identity"
+	"github.com/yansircc/llm-broker/internal/pool"
+	"github.com/yansircc/llm-broker/internal/relay"
+	"github.com/yansircc/llm-broker/internal/server"
+	"github.com/yansircc/llm-broker/internal/store"
+	"github.com/yansircc/llm-broker/internal/tokens"
+	"github.com/yansircc/llm-broker/internal/transport"
 )
 
 var version = "dev"
@@ -51,7 +51,7 @@ func main() {
 	}
 	logHandler := events.NewLogHandler(level, 1000)
 	slog.SetDefault(slog.New(logHandler))
-	slog.Info("cc-relayer starting", "version", version)
+	slog.Info("llm-broker starting", "version", version)
 
 	// Open SQLite database
 	s, err := store.New(cfg.DBPath)

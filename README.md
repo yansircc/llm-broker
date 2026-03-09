@@ -1,8 +1,8 @@
-# cc-relayer
+# broker
 
-[![CI](https://github.com/yansircc/cc-relayer/actions/workflows/ci.yml/badge.svg)](https://github.com/yansircc/cc-relayer/actions/workflows/ci.yml)
+[![CI](https://github.com/yansircc/llm-broker/actions/workflows/ci.yml/badge.svg)](https://github.com/yansircc/llm-broker/actions/workflows/ci.yml)
 
-`cc-relayer` is a personal VPS relay for Claude Code and Codex CLI. In the current architecture it is closer to an LLM account orchestration kernel than a thin proxy: it schedules a small pool of OAuth accounts, keeps identity boundaries intact, manages token refresh, and exposes one stable relay surface.
+`broker` is a personal VPS relay for Claude Code and Codex CLI. The repository name is `llm-broker`. In the current architecture it is closer to an LLM account orchestration kernel than a thin proxy: it schedules a small pool of OAuth accounts, keeps identity boundaries intact, manages token refresh, and exposes one stable relay surface.
 
 ## Architecture
 
@@ -73,10 +73,10 @@ That is why:
 ### 1. Build
 
 ```bash
-git clone https://github.com/yansircc/cc-relayer.git
-cd cc-relayer
+git clone https://github.com/yansircc/llm-broker.git
+cd llm-broker
 cd web && npm ci && npm run build && cd ..
-go build -o cc-relayer ./cmd/relay
+go build -o llm-broker ./cmd/relay
 ```
 
 Requires:
@@ -87,7 +87,7 @@ Requires:
 ### 2. Create the schema
 
 ```bash
-./cc-relayer migrate
+./llm-broker migrate
 ```
 
 Schema migration is explicit. Startup does not mutate the database.
@@ -98,13 +98,13 @@ Schema migration is explicit. Startup does not mutate the database.
 export ENCRYPTION_KEY=$(openssl rand -hex 16)
 export API_TOKEN=$(openssl rand -hex 16)
 
-./cc-relayer
+./llm-broker
 ```
 
 Defaults:
 
 - listen: `0.0.0.0:3000`
-- SQLite: `./cc-relayer.db`
+- SQLite: `./llm-broker.db`
 
 ### 4. Add accounts
 

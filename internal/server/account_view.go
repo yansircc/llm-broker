@@ -3,7 +3,7 @@ package server
 import (
 	"encoding/json"
 
-	"github.com/yansir/cc-relayer/internal/domain"
+	"github.com/yansircc/llm-broker/internal/domain"
 )
 
 type accountProjection struct {

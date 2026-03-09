@@ -5,7 +5,7 @@ import (
 	"database/sql"
 	"time"
 
-	"github.com/yansir/cc-relayer/internal/domain"
+	"github.com/yansircc/llm-broker/internal/domain"
 )
 
 func (s *SQLiteStore) CreateUser(ctx context.Context, u *domain.User) error {
@@ -65,8 +65,8 @@ func (s *SQLiteStore) UpdateUserLastActive(ctx context.Context, id string) error
 func scanUser(scanner interface{ Scan(...any) error }) (*domain.User, error) {
 	var (
 		id, name, tokenHash, tokenPrefix, status string
-		createdAt                                 int64
-		lastActiveAt                              sql.NullInt64
+		createdAt                                int64
+		lastActiveAt                             sql.NullInt64
 	)
 	err := scanner.Scan(&id, &name, &tokenHash, &tokenPrefix, &status, &createdAt, &lastActiveAt)
 	if err == sql.ErrNoRows {

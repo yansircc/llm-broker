@@ -1,4 +1,4 @@
-# cc-relayer
+# broker
 
 This file is for LLM agents working in this repo.
 
@@ -74,7 +74,7 @@ This is a synchronous state-machine core with an event side channel. It is not a
    `provider_state_json` answers "what is this account's current provider-specific runtime state?"
 
 7. Database migration is explicit.
-   Startup should not silently rewrite schema. Use `cc-relayer migrate`.
+   Startup should not silently rewrite schema. Use `llm-broker migrate`.
 
 ## Architectural Boundary
 

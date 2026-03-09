@@ -3,13 +3,13 @@ VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 .PHONY: build run clean test deps lint ui dev-ui dev-go
 
 build: ui
-	go build -ldflags="-s -w -X main.version=$(VERSION)" -o cc-relayer ./cmd/relay
+	go build -ldflags="-s -w -X main.version=$(VERSION)" -o llm-broker ./cmd/relay
 
 run: build
-	./cc-relayer
+	./llm-broker
 
 clean:
-	rm -f cc-relayer
+	rm -f llm-broker
 	rm -rf internal/ui/dist
 
 test:

@@ -168,9 +168,9 @@ func (s *SQLiteStore) validateCurrentSchema(ctx context.Context) error {
 			continue
 		}
 		if len(cols) == 0 {
-			return fmt.Errorf("database schema missing table %q; run `cc-relayer migrate`", check.table)
+			return fmt.Errorf("database schema missing table %q; run `llm-broker migrate`", check.table)
 		}
-		return fmt.Errorf("database schema for %q is not current; run `cc-relayer migrate`", check.table)
+		return fmt.Errorf("database schema for %q is not current; run `llm-broker migrate`", check.table)
 	}
 
 	return nil

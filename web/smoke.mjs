@@ -36,7 +36,9 @@ async function run() {
     });
 
     try {
-      await page.goto(`${SITE}${path}`, { waitUntil: 'networkidle', timeout: 15000 });
+      await page.goto(`${SITE}${path}`, { waitUntil: 'domcontentloaded', timeout: 15000 });
+      // Some pages keep background requests alive; don't let that block smoke navigation.
+      await page.waitForLoadState('load', { timeout: 5000 }).catch(() => {});
       // extra settle time for async API calls + reactive rendering
       await page.waitForTimeout(1000);
     } catch (e) {

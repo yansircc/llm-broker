@@ -12,7 +12,7 @@ import (
 	"time"
 
 	utls "github.com/refraction-networking/utls"
-	"github.com/yansir/cc-relayer/internal/domain"
+	"github.com/yansircc/llm-broker/internal/domain"
 	"golang.org/x/net/http2"
 	"golang.org/x/net/proxy"
 )

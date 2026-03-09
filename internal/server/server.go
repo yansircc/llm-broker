@@ -13,17 +13,17 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/yansir/cc-relayer/internal/auth"
-	"github.com/yansir/cc-relayer/internal/config"
-	"github.com/yansir/cc-relayer/internal/domain"
-	"github.com/yansir/cc-relayer/internal/driver"
-	"github.com/yansir/cc-relayer/internal/events"
-	"github.com/yansir/cc-relayer/internal/pool"
-	"github.com/yansir/cc-relayer/internal/relay"
-	"github.com/yansir/cc-relayer/internal/store"
-	"github.com/yansir/cc-relayer/internal/tokens"
-	"github.com/yansir/cc-relayer/internal/transport"
-	"github.com/yansir/cc-relayer/internal/ui"
+	"github.com/yansircc/llm-broker/internal/auth"
+	"github.com/yansircc/llm-broker/internal/config"
+	"github.com/yansircc/llm-broker/internal/domain"
+	"github.com/yansircc/llm-broker/internal/driver"
+	"github.com/yansircc/llm-broker/internal/events"
+	"github.com/yansircc/llm-broker/internal/pool"
+	"github.com/yansircc/llm-broker/internal/relay"
+	"github.com/yansircc/llm-broker/internal/store"
+	"github.com/yansircc/llm-broker/internal/tokens"
+	"github.com/yansircc/llm-broker/internal/transport"
+	"github.com/yansircc/llm-broker/internal/ui"
 )
 
 // Server is the main HTTP server.

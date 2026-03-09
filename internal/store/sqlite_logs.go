@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/yansir/cc-relayer/internal/domain"
+	"github.com/yansircc/llm-broker/internal/domain"
 )
 
 func (s *SQLiteStore) InsertRequestLog(ctx context.Context, l *domain.RequestLog) error {

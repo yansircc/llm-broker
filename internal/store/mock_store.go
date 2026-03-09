@@ -5,7 +5,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/yansir/cc-relayer/internal/domain"
+	"github.com/yansircc/llm-broker/internal/domain"
 )
 
 // MockStore implements Store for testing.
@@ -16,12 +16,12 @@ type MockStore struct {
 	logs     []*domain.RequestLog
 
 	// Error injection
-	SaveAccountErr    error
-	ListAccountsErr   error
-	GetAccountErr     error
-	DeleteAccountErr  error
-	CreateUserErr     error
-	InsertRequestErr  error
+	SaveAccountErr   error
+	ListAccountsErr  error
+	GetAccountErr    error
+	DeleteAccountErr error
+	CreateUserErr    error
+	InsertRequestErr error
 }
 
 func NewMockStore() *MockStore {
@@ -32,7 +32,7 @@ func NewMockStore() *MockStore {
 }
 
 func (m *MockStore) Ping(_ context.Context) error { return nil }
-func (m *MockStore) Close() error                  { return nil }
+func (m *MockStore) Close() error                 { return nil }
 
 func (m *MockStore) GetAccount(_ context.Context, id string) (*domain.Account, error) {
 	m.mu.Lock()

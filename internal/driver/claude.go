@@ -14,8 +14,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/yansir/cc-relayer/internal/domain"
-	"github.com/yansir/cc-relayer/internal/identity"
+	"github.com/yansircc/llm-broker/internal/domain"
+	"github.com/yansircc/llm-broker/internal/identity"
 )
 
 // ClaudeState holds the provider-specific rate-limit state for Claude accounts.

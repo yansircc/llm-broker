@@ -13,7 +13,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/yansir/cc-relayer/internal/domain"
+	"github.com/yansircc/llm-broker/internal/domain"
 )
 
 // CodexState holds the provider-specific rate-limit state for Codex accounts.

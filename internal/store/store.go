@@ -4,10 +4,10 @@ import (
 	"context"
 	"time"
 
-	"github.com/yansir/cc-relayer/internal/domain"
+	"github.com/yansircc/llm-broker/internal/domain"
 )
 
-// Store is the persistence interface for cc-relayer.
+// Store is the persistence interface for broker.
 // Account operations use typed structs instead of map[string]string.
 // Ephemeral state (sessions, stainless, locks, OAuth) lives in Pool or Server memory.
 type Store interface {

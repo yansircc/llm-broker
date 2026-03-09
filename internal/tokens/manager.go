@@ -8,9 +8,9 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/yansir/cc-relayer/internal/crypto"
-	"github.com/yansir/cc-relayer/internal/domain"
-	"github.com/yansir/cc-relayer/internal/driver"
+	"github.com/yansircc/llm-broker/internal/crypto"
+	"github.com/yansircc/llm-broker/internal/domain"
+	"github.com/yansircc/llm-broker/internal/driver"
 )
 
 const tokenSalt = "salt"

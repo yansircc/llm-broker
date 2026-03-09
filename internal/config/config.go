@@ -24,7 +24,7 @@ type Config struct {
 	ClaudeBetaHeader string
 
 	// Codex API
-	CodexAPIURL        string
+	CodexAPIURL         string
 	CodexRequestTimeout time.Duration
 
 	// Scheduling
@@ -53,7 +53,7 @@ func Load() *Config {
 		Host: envOr("HOST", "0.0.0.0"),
 		Port: envInt("PORT", 3000),
 
-		DBPath: envOr("DB_PATH", "./cc-relayer.db"),
+		DBPath: envOr("DB_PATH", "./llm-broker.db"),
 
 		EncryptionKey: os.Getenv("ENCRYPTION_KEY"),
 		StaticToken:   os.Getenv("API_TOKEN"),
@@ -71,8 +71,8 @@ func Load() *Config {
 		ErrorPause401:        envDuration("ERROR_PAUSE_401", 30*time.Minute),
 		ErrorPause401Refresh: envDuration("ERROR_PAUSE_401_REFRESH", 30*time.Second),
 		ErrorPause403:        envDuration("ERROR_PAUSE_403", 10*time.Minute),
-		ErrorPause429: envDuration("ERROR_PAUSE_429", 60*time.Second),
-		ErrorPause529: envDuration("ERROR_PAUSE_529", 5*time.Minute),
+		ErrorPause429:        envDuration("ERROR_PAUSE_429", 60*time.Second),
+		ErrorPause529:        envDuration("ERROR_PAUSE_529", 5*time.Minute),
 
 		RequestTimeout:   envDuration("REQUEST_TIMEOUT", 5*time.Minute),
 		MaxRequestBodyMB: envInt("REQUEST_MAX_SIZE_MB", 60),

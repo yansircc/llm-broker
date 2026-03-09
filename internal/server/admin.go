@@ -7,9 +7,9 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/yansir/cc-relayer/internal/auth"
-	"github.com/yansir/cc-relayer/internal/domain"
-	"github.com/yansir/cc-relayer/internal/driver"
+	"github.com/yansircc/llm-broker/internal/auth"
+	"github.com/yansircc/llm-broker/internal/domain"
+	"github.com/yansircc/llm-broker/internal/driver"
 )
 
 // ---------------------------------------------------------------------------

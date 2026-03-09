@@ -9,10 +9,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/yansir/cc-relayer/internal/domain"
-	"github.com/yansir/cc-relayer/internal/driver"
-	"github.com/yansir/cc-relayer/internal/events"
-	"github.com/yansir/cc-relayer/internal/store"
+	"github.com/yansircc/llm-broker/internal/domain"
+	"github.com/yansircc/llm-broker/internal/driver"
+	"github.com/yansircc/llm-broker/internal/events"
+	"github.com/yansircc/llm-broker/internal/store"
 )
 
 // mockDriver is a minimal Driver implementation for pool tests.

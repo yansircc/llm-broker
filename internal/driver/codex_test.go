@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/yansir/cc-relayer/internal/domain"
+	"github.com/yansircc/llm-broker/internal/domain"
 )
 
 type roundTripFunc func(*http.Request) (*http.Response, error)

@@ -1,4 +1,4 @@
-module github.com/yansir/cc-relayer
+module github.com/yansircc/llm-broker
 
 go 1.24.0
 

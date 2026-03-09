@@ -12,7 +12,7 @@ match_on: new
 
 ## Root Cause
 
-个人项目沿用了库/框架的兼容性策略。cc-relayer 没有外部消费者，不需要任何 deprecation 过渡期。
+个人项目沿用了库/框架的兼容性策略。broker 没有外部消费者，不需要任何 deprecation 过渡期。
 
 ## Correct Approach
 

@@ -1,22 +1,22 @@
 ---
 name: deploy
 description: |
-  Build and deploy cc-relayer to production.
+  Build and deploy broker (`llm-broker`) to production.
   Triggers: deploy, 部署, push to production, 发布, ship it, 上线.
-  Handles: frontend build, Go cross-compile, upload, atomic binary replace, systemctl restart, verification, rollback.
+  Handles: frontend build, Go cross-compile, remote snapshot, upload, migrate, restart, verification, rollback.
 ---
 
-## Deploy cc-relayer
+## Deploy broker
 
 Run `scripts/deploy.sh` from the repo root (or any worktree). The script handles the full pipeline:
 
 1. Build SvelteKit frontend (`web/` → `internal/ui/dist`)
 2. Cross-compile Go binary for linux/amd64
-3. Upload to remote via scp
-4. **Backup current binary** to `cc-relayer.bak`
-5. Atomic replace (`mv`) + `systemctl restart`
-6. Verify service health — **if service fails, auto-rollback to backup**
-7. **Smoke test HTTP endpoints** — `/health`, admin API, frontend pages
+3. Create a remote snapshot of binary, env, service unit, and SQLite DB
+4. Upload to remote via scp
+5. Stop service, run `migrate`, replace binary, restart
+6. Verify service health — if restart fails, auto-restore the snapshot
+7. Smoke test HTTP endpoints — `/health`, admin API, frontend pages
 
 ```bash
 bash .claude/skills/deploy/scripts/deploy.sh
@@ -24,7 +24,19 @@ bash .claude/skills/deploy/scripts/deploy.sh
 
 ### Rollback
 
-Manually rollback to the previous version (e.g. logic bug but process still alive):
+Manually rollback to the most recent snapshot:
+
+```bash
+bash .claude/skills/deploy/scripts/restore.sh latest
+```
+
+Or restore a specific snapshot:
+
+```bash
+bash .claude/skills/deploy/scripts/restore.sh 20260309T211816Z-deploy
+```
+
+`deploy.sh rollback` is also available as a shortcut:
 
 ```bash
 bash .claude/skills/deploy/scripts/deploy.sh rollback
@@ -32,7 +44,7 @@ bash .claude/skills/deploy/scripts/deploy.sh rollback
 
 ### Partial deploy
 
-To skip frontend build (Go-only change):
+To skip frontend build for a Go-only change:
 
 ```bash
 SKIP_FRONTEND=1 bash .claude/skills/deploy/scripts/deploy.sh
@@ -40,7 +52,7 @@ SKIP_FRONTEND=1 bash .claude/skills/deploy/scripts/deploy.sh
 
 ### Failure handling
 
-- **Service fails after deploy** — script auto-rollbacks to backup and restores service
-- **Manual rollback** — use `rollback` subcommand when service is running but behaving wrong
-- **No backup exists** — first-ever deploy has no backup; script warns but can't auto-recover
-- **npm/go/scp fails** — exits before touching remote binary, no risk
+- Service fails after deploy — script auto-restores the snapshot it just took
+- Manual rollback — use `restore.sh` or the `rollback` shortcut
+- No snapshot exists — first deploy can only fail forward; nothing remote is deleted before upload succeeds
+- npm/go/scp fails — exits before touching the remote runtime

@@ -144,8 +144,7 @@ fi
 if [[ -d "$REPO_ROOT/web/node_modules/playwright-core" ]]; then
     echo ""
     echo "==> browser smoke test..."
-    SITE="$SITE" API_TOKEN="$API_TOKEN" node "$REPO_ROOT/web/smoke.mjs"
-    if [[ $? -ne 0 ]]; then
+    if ! SITE="$SITE" API_TOKEN="$API_TOKEN" node "$REPO_ROOT/web/smoke.mjs"; then
         echo "==> ⚠ browser smoke test found JS errors — check output above"
     fi
 else

@@ -18,6 +18,6 @@
 	});
 </script>
 
-<h1><a href="{base}/dashboard" style="text-decoration:none;color:inherit;">cc-relayer</a></h1>
+<h1><a href="{base}/dashboard" style="text-decoration:none;color:inherit;">broker</a></h1>
 
 {@render children()}

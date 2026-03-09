@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/yansir/cc-relayer/internal/domain"
+	"github.com/yansircc/llm-broker/internal/domain"
 )
 
 const accountCols = `id, email, provider, status, priority, priority_mode, error_message,
