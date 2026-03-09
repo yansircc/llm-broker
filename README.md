@@ -58,7 +58,7 @@ curl -X POST https://YOUR_SERVER/admin/accounts/exchange-code \
   -d '{"session_id": "...", "callback_url": "https://..."}'
 ```
 
-Or use the WebUI at `https://YOUR_SERVER/ui/`.
+Or use the WebUI at `https://YOUR_SERVER/`.
 
 ### 3. Configure Claude Code
 
@@ -78,7 +78,7 @@ codex
 
 ## WebUI
 
-Built-in admin dashboard at `/ui/` — manage accounts, users, view usage and events. Authenticate with your `API_TOKEN`.
+Built-in admin dashboard at `/` and `/dashboard` — manage accounts, users, view usage and events. Authenticate with your `API_TOKEN`.
 
 ## Admin API
 
@@ -105,7 +105,7 @@ All endpoints require `API_TOKEN` via `x-api-key` or `Authorization: Bearer`.
 Session binding → Pool selection (priority DESC, lastUsedAt ASC)
 ```
 
-Four-way availability filter: status, schedulable, overloadedUntil, opus rate limit.
+Availability filter: status, cooldown_until, and provider-specific gates derived from provider_state_json.
 
 ### Error Handling
 

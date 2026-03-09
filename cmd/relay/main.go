@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"log/slog"
+	"net/http"
 	"os"
 	"time"
 
@@ -22,6 +23,22 @@ import (
 )
 
 var version = "dev"
+
+type refreshAdapter struct {
+	drv driver.Driver
+}
+
+func (a refreshAdapter) RefreshToken(ctx context.Context, client *http.Client, refreshToken string) (*oauth.TokenResponse, error) {
+	resp, err := a.drv.RefreshToken(ctx, client, refreshToken)
+	if err != nil || resp == nil {
+		return nil, err
+	}
+	return &oauth.TokenResponse{
+		AccessToken:  resp.AccessToken,
+		RefreshToken: resp.RefreshToken,
+		ExpiresIn:    resp.ExpiresIn,
+	}, nil
+}
 
 func main() {
 	// Load configuration
@@ -70,7 +87,7 @@ func main() {
 	defer tm.Close()
 
 	// Initialize pool (loads all accounts from DB)
-	p, err := pool.New(s, bus, pool.ErrorPauses{
+	p, err := pool.New(s, bus, driver.ErrorPauses{
 		Pause401:        cfg.ErrorPause401,
 		Pause401Refresh: cfg.ErrorPause401Refresh,
 		Pause403:        cfg.ErrorPause403,
@@ -81,18 +98,6 @@ func main() {
 		slog.Error("pool init failed", "error", err)
 		os.Exit(1)
 	}
-
-	// Initialize token manager
-	tokMgr := oauth.NewTokenManager(p, c, tm, cfg.TokenRefreshAdvance)
-
-	// Wire 401 → background token refresh
-	p.SetOnAuthFailure(func(accountID string) {
-		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-		defer cancel()
-		if _, err := tokMgr.ForceRefresh(ctx, accountID); err != nil {
-			slog.Error("401 background refresh failed", "accountId", accountID, "error", err)
-		}
-	})
 
 	// Initialize auth middleware
 	authMw := auth.NewMiddleware(cfg.StaticToken, s)
@@ -120,7 +125,23 @@ func main() {
 			Pauses: pauses,
 		}),
 	}
+	refreshDrivers := make(map[domain.Provider]oauth.RefreshDriver, len(drivers))
+	for provider, drv := range drivers {
+		refreshDrivers[provider] = refreshAdapter{drv: drv}
+	}
+
+	// Initialize token manager
+	tokMgr := oauth.NewTokenManager(p, c, tm, cfg.TokenRefreshAdvance, refreshDrivers)
 	p.SetDrivers(drivers)
+
+	// Wire 401 → background token refresh
+	p.SetOnAuthFailure(func(accountID string) {
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		if _, err := tokMgr.ForceRefresh(ctx, accountID); err != nil {
+			slog.Error("401 background refresh failed", "accountId", accountID, "error", err)
+		}
+	})
 
 	// Initialize relay
 	r := relay.New(p, tokMgr, s, relay.Config{
