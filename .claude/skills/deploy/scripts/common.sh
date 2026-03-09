@@ -4,7 +4,12 @@ set -euo pipefail
 SCRIPT_DIR="$(cd -- "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(git -C "$SCRIPT_DIR" rev-parse --show-toplevel)"
 
-REMOTE="${REMOTE:?Set REMOTE (e.g. user@host)}"
+# Load .env from repo root (gitignored, holds REMOTE/SITE)
+if [[ -f "$REPO_ROOT/.env" ]]; then
+    set -a; source "$REPO_ROOT/.env"; set +a
+fi
+
+REMOTE="${REMOTE:?Set REMOTE in .env or environment (e.g. user@host)}"
 SERVICE="${SERVICE:-cc-relayer}"
 REMOTE_BIN="${REMOTE_BIN:-/usr/local/bin/cc-relayer}"
 REMOTE_ENV="${REMOTE_ENV:-/etc/cc-relayer.env}"
@@ -12,7 +17,7 @@ REMOTE_SERVICE="${REMOTE_SERVICE:-/etc/systemd/system/${SERVICE}.service}"
 SNAPSHOT_ROOT="${SNAPSHOT_ROOT:-/var/backups/cc-relayer}"
 TMP_LOCAL="${TMP_LOCAL:-/tmp/cc-relayer-new}"
 TMP_REMOTE="${TMP_REMOTE:-/tmp/cc-relayer-new}"
-SITE="${SITE:?Set SITE (e.g. https://example.com)}"
+SITE="${SITE:?Set SITE in .env or environment (e.g. https://example.com)}"
 
 sanitize_label() {
     local label="${1:-manual}"
