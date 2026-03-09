@@ -72,8 +72,8 @@ func New(
 	srv.registerRoutes(mux)
 
 	srv.httpServer = &http.Server{
-		Addr:           fmt.Sprintf("%s:%d", cfg.Host, cfg.Port),
-		Handler:        requestLogger(mux),
+		Addr:              fmt.Sprintf("%s:%d", cfg.Host, cfg.Port),
+		Handler:           requestLogger(mux),
 		ReadHeaderTimeout: 10 * time.Second,
 		WriteTimeout:      cfg.RequestTimeout + 30*time.Second,
 		IdleTimeout:       120 * time.Second,
@@ -86,18 +86,16 @@ func New(
 func (s *Server) registerRoutes(mux *http.ServeMux) {
 	auth := s.authMw.Authenticate
 
-	// Root redirect
-	mux.HandleFunc("GET /{$}", func(w http.ResponseWriter, r *http.Request) {
-		http.Redirect(w, r, "/ui/dashboard", http.StatusFound)
-	})
-
 	// Models endpoint (no auth — public metadata)
 	mux.HandleFunc("GET /v1/models", s.handleListModels)
 
-	// Relay endpoints (unified handler via Driver interface)
-	mux.Handle("POST /v1/messages", auth(http.HandlerFunc(s.relay.Handle)))
-	mux.Handle("POST /v1/messages/count_tokens", auth(http.HandlerFunc(s.relay.Handle)))
-	mux.Handle("POST /openai/responses", auth(http.HandlerFunc(s.relay.Handle)))
+	// Relay endpoints (registered explicitly from driver info)
+	for _, provider := range sortedDriverProviders(s.drivers) {
+		drv := s.drivers[provider]
+		for _, path := range drv.Info().RelayPaths {
+			mux.Handle("POST "+path, auth(http.HandlerFunc(s.relay.HandleProvider(provider))))
+		}
+	}
 
 	// Telemetry sink
 	mux.HandleFunc("POST /api/event_logging/batch", func(w http.ResponseWriter, r *http.Request) {
@@ -107,6 +105,7 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 	})
 
 	// Admin: accounts
+	mux.Handle("GET /admin/providers", auth(http.HandlerFunc(s.handleListProviders)))
 	mux.Handle("POST /admin/accounts/generate-auth-url", auth(http.HandlerFunc(s.handleGenerateAuthURL)))
 	mux.Handle("POST /admin/accounts/exchange-code", auth(http.HandlerFunc(s.handleExchangeCode)))
 	mux.Handle("GET /admin/accounts", auth(http.HandlerFunc(s.handleListAccounts)))
@@ -154,29 +153,17 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 	// WebUI
 	distFS, err := fs.Sub(ui.FS, "dist")
 	if err != nil {
-		slog.Warn("ui dist not found, /ui/ disabled", "error", err)
+		slog.Warn("ui dist not found, root UI disabled", "error", err)
 		return
 	}
 	indexHTML, _ := fs.ReadFile(distFS, "index.html")
-	fileServer := http.StripPrefix("/ui/", http.FileServer(http.FS(distFS)))
-	mux.HandleFunc("/ui/", func(w http.ResponseWriter, r *http.Request) {
-		path := strings.TrimPrefix(r.URL.Path, "/ui/")
-		if path == "" || path == "index.html" {
-			w.Header().Set("Content-Type", "text/html; charset=utf-8")
-			w.Header().Set("Cache-Control", "no-cache")
-			w.Write(indexHTML)
+	fileServer := http.FileServer(http.FS(distFS))
+	mux.HandleFunc("GET /{path...}", func(w http.ResponseWriter, r *http.Request) {
+		if isReservedUIPath(r.URL.Path) {
+			http.NotFound(w, r)
 			return
 		}
-		if strings.HasPrefix(path, "_app/immutable/") {
-			w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
-		}
-		if _, err := fs.Stat(distFS, path); err != nil {
-			w.Header().Set("Content-Type", "text/html; charset=utf-8")
-			w.Header().Set("Cache-Control", "no-cache")
-			w.Write(indexHTML)
-			return
-		}
-		fileServer.ServeHTTP(w, r)
+		serveUI(distFS, indexHTML, fileServer, w, r)
 	})
 }
 
@@ -216,46 +203,59 @@ func requestLogger(next http.Handler) http.Handler {
 	})
 }
 
-type modelEntry struct {
-	ID            string `json:"id"`
-	Object        string `json:"object"`
-	Created       int64  `json:"created"`
-	OwnedBy      string `json:"owned_by"`
-	ContextWindow int    `json:"context_window"`
+func serveUI(distFS fs.FS, indexHTML []byte, fileServer http.Handler, w http.ResponseWriter, r *http.Request) {
+	path := strings.TrimPrefix(r.URL.Path, "/")
+	if path == "" || path == "index.html" {
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		w.Header().Set("Cache-Control", "no-cache")
+		w.Write(indexHTML)
+		return
+	}
+	if strings.HasPrefix(path, "_app/immutable/") {
+		w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
+	}
+	if _, err := fs.Stat(distFS, path); err != nil {
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		w.Header().Set("Cache-Control", "no-cache")
+		w.Write(indexHTML)
+		return
+	}
+	fileServer.ServeHTTP(w, r)
+}
+
+func isReservedUIPath(path string) bool {
+	switch {
+	case path == "/admin" || strings.HasPrefix(path, "/admin/"):
+		return true
+	case path == "/api" || strings.HasPrefix(path, "/api/"):
+		return true
+	case path == "/v1" || strings.HasPrefix(path, "/v1/"):
+		return true
+	case path == "/openai" || strings.HasPrefix(path, "/openai/"):
+		return true
+	case path == "/ui" || strings.HasPrefix(path, "/ui/"):
+		return true
+	case path == "/add-account" || path == "/add-account/":
+		return true
+	case path == "/health":
+		return true
+	default:
+		return false
+	}
 }
 
 type modelsResponse struct {
-	Object string       `json:"object"`
-	Data   []modelEntry `json:"data"`
-}
-
-var modelsResp = modelsResponse{
-	Object: "list",
-	Data: []modelEntry{
-		// Claude models
-		{ID: "claude-opus-4-6", Object: "model", Created: 1709164800, OwnedBy: "anthropic", ContextWindow: 200000},
-		{ID: "claude-opus-4-5", Object: "model", Created: 1709164800, OwnedBy: "anthropic", ContextWindow: 200000},
-		{ID: "claude-opus-4-1", Object: "model", Created: 1709164800, OwnedBy: "anthropic", ContextWindow: 200000},
-		{ID: "claude-opus-4", Object: "model", Created: 1709164800, OwnedBy: "anthropic", ContextWindow: 200000},
-		{ID: "claude-sonnet-4-6", Object: "model", Created: 1709164800, OwnedBy: "anthropic", ContextWindow: 200000},
-		{ID: "claude-sonnet-4-5", Object: "model", Created: 1709164800, OwnedBy: "anthropic", ContextWindow: 200000},
-		{ID: "claude-sonnet-4", Object: "model", Created: 1709164800, OwnedBy: "anthropic", ContextWindow: 200000},
-		{ID: "claude-haiku-4-5", Object: "model", Created: 1709164800, OwnedBy: "anthropic", ContextWindow: 200000},
-		// Codex models
-		{ID: "gpt-5.4", Object: "model", Created: 1709164800, OwnedBy: "openai", ContextWindow: 1050000},
-		{ID: "gpt-5.3-codex", Object: "model", Created: 1709164800, OwnedBy: "openai", ContextWindow: 400000},
-		{ID: "gpt-5.2-codex", Object: "model", Created: 1709164800, OwnedBy: "openai", ContextWindow: 400000},
-		{ID: "gpt-5.1-codex-max", Object: "model", Created: 1709164800, OwnedBy: "openai", ContextWindow: 400000},
-		{ID: "gpt-5.1-codex", Object: "model", Created: 1709164800, OwnedBy: "openai", ContextWindow: 400000},
-		{ID: "gpt-5.1-codex-mini", Object: "model", Created: 1709164800, OwnedBy: "openai", ContextWindow: 400000},
-		{ID: "gpt-5-codex", Object: "model", Created: 1709164800, OwnedBy: "openai", ContextWindow: 400000},
-		{ID: "codex-1", Object: "model", Created: 1709164800, OwnedBy: "openai", ContextWindow: 192000},
-	},
+	Object string         `json:"object"`
+	Data   []driver.Model `json:"data"`
 }
 
 func (s *Server) handleListModels(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(modelsResp)
+	data := make([]driver.Model, 0)
+	for _, provider := range sortedDriverProviders(s.drivers) {
+		data = append(data, s.drivers[provider].Models()...)
+	}
+	json.NewEncoder(w).Encode(modelsResponse{Object: "list", Data: data})
 }
 
 func (s *Server) runLogPurge(ctx context.Context) {
@@ -275,4 +275,25 @@ func (s *Server) runLogPurge(ctx context.Context) {
 			}
 		}
 	}
+}
+
+func (s *Server) probeAccount(ctx context.Context, acct *domain.Account) (driver.ProbeResult, error) {
+	accessToken, err := s.tokens.EnsureValidToken(ctx, acct.ID)
+	if err != nil {
+		return driver.ProbeResult{}, fmt.Errorf("token unavailable: %w", err)
+	}
+
+	drv, ok := s.drivers[acct.Provider]
+	if !ok {
+		return driver.ProbeResult{}, fmt.Errorf("unknown provider")
+	}
+
+	result, err := drv.Probe(ctx, acct, accessToken, s.transportMgr.GetClient(acct))
+	if result.Observe {
+		s.pool.Observe(acct.ID, result.Effect)
+	}
+	if result.ClearCooldown {
+		s.pool.ClearCooldown(acct.ID)
+	}
+	return result, err
 }

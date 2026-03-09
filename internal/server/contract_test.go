@@ -12,6 +12,7 @@ import (
 	"github.com/yansir/cc-relayer/internal/auth"
 	"github.com/yansir/cc-relayer/internal/config"
 	"github.com/yansir/cc-relayer/internal/domain"
+	"github.com/yansir/cc-relayer/internal/driver"
 	"github.com/yansir/cc-relayer/internal/events"
 	"github.com/yansir/cc-relayer/internal/pool"
 	"github.com/yansir/cc-relayer/internal/store"
@@ -25,7 +26,7 @@ func newTestServer(t *testing.T) *Server {
 	t.Helper()
 	ms := store.NewMockStore()
 	bus := events.NewBus(100)
-	p, err := pool.New(ms, bus, pool.ErrorPauses{
+	p, err := pool.New(ms, bus, driver.ErrorPauses{
 		Pause401:        30 * time.Minute,
 		Pause401Refresh: 30 * time.Second,
 		Pause403:        10 * time.Minute,
@@ -147,7 +148,7 @@ func TestGetAccount_EmptySessions(t *testing.T) {
 	}
 	srv.store.SaveAccount(context.Background(), acct)
 	// Reload pool
-	srv.pool, _ = pool.New(srv.store, srv.bus, pool.ErrorPauses{
+	srv.pool, _ = pool.New(srv.store, srv.bus, driver.ErrorPauses{
 		Pause401: 30 * time.Minute, Pause401Refresh: 30 * time.Second,
 		Pause403: 10 * time.Minute, Pause429: 60 * time.Second, Pause529: 5 * time.Minute,
 	})
@@ -176,7 +177,7 @@ func TestGetAccount_NullableFields(t *testing.T) {
 		Status:   domain.StatusActive,
 	}
 	srv.store.SaveAccount(context.Background(), acct)
-	srv.pool, _ = pool.New(srv.store, srv.bus, pool.ErrorPauses{
+	srv.pool, _ = pool.New(srv.store, srv.bus, driver.ErrorPauses{
 		Pause401: 30 * time.Minute, Pause401Refresh: 30 * time.Second,
 		Pause403: 10 * time.Minute, Pause429: 60 * time.Second, Pause529: 5 * time.Minute,
 	})
@@ -191,23 +192,22 @@ func TestGetAccount_NullableFields(t *testing.T) {
 	}
 	body := w.Body.Bytes()
 
-	// ext_info and stainless are nullable — either absent or null or {}
-	assertJSONNullable(t, body, "ext_info")
+	assertJSONArray(t, body, "provider_fields")
 	assertJSONNullable(t, body, "stainless")
 }
 
-func TestGetAccount_WithExtInfo(t *testing.T) {
+func TestGetAccount_WithIdentity(t *testing.T) {
 	srv := newTestServer(t)
 
 	acct := &domain.Account{
-		ID:          "test-3",
-		Email:       "t3@example.com",
-		Provider:    domain.ProviderClaude,
-		Status:      domain.StatusActive,
-		ExtInfoJSON: `{"orgUUID":"abc-123"}`,
+		ID:           "test-3",
+		Email:        "t3@example.com",
+		Provider:     domain.ProviderClaude,
+		Status:       domain.StatusActive,
+		IdentityJSON: `{"orgUUID":"abc-123"}`,
 	}
 	srv.store.SaveAccount(context.Background(), acct)
-	srv.pool, _ = pool.New(srv.store, srv.bus, pool.ErrorPauses{
+	srv.pool, _ = pool.New(srv.store, srv.bus, driver.ErrorPauses{
 		Pause401: 30 * time.Minute, Pause401Refresh: 30 * time.Second,
 		Pause403: 10 * time.Minute, Pause429: 60 * time.Second, Pause529: 5 * time.Minute,
 	})
@@ -222,13 +222,13 @@ func TestGetAccount_WithExtInfo(t *testing.T) {
 	}
 	body := w.Body.Bytes()
 
-	val := jsonPath(t, body, "ext_info")
-	m, ok := val.(map[string]interface{})
+	val := jsonPath(t, body, "provider_fields")
+	fields, ok := val.([]interface{})
 	if !ok {
-		t.Fatalf("ext_info is %T, expected object", val)
+		t.Fatalf("provider_fields is %T, expected array", val)
 	}
-	if m["orgUUID"] != "abc-123" {
-		t.Errorf("ext_info.orgUUID = %v, want abc-123", m["orgUUID"])
+	if len(fields) != 0 {
+		t.Fatalf("provider_fields = %v, want empty for metadata without display mapping", fields)
 	}
 }
 

@@ -9,6 +9,7 @@ import (
 
 	"github.com/yansir/cc-relayer/internal/auth"
 	"github.com/yansir/cc-relayer/internal/domain"
+	"github.com/yansir/cc-relayer/internal/driver"
 )
 
 // ---------------------------------------------------------------------------
@@ -99,29 +100,18 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		av := DashboardAccount{
-			ID:              a.ID,
-			Email:           a.Email,
-			Provider:        string(a.Provider),
-			Status:          string(a.Status),
-			PriorityMode:    a.PriorityMode,
-			Priority:        pri,
-			OverloadedUntil: a.OverloadedUntil,
-			LastUsedAt:      a.LastUsedAt,
+			ID:            a.ID,
+			Email:         a.Email,
+			Provider:      string(a.Provider),
+			Status:        string(a.Status),
+			PriorityMode:  a.PriorityMode,
+			Priority:      pri,
+			CooldownUntil: a.CooldownUntil,
+			LastUsedAt:    a.LastUsedAt,
+			Windows:       []UtilizationWindowResponse{},
 		}
 		if drv, ok := s.drivers[a.Provider]; ok {
-			primary, secondary := drv.GetUtilization(json.RawMessage(a.ProviderStateJSON))
-			if primary != nil {
-				av.FiveHourUtil = &primary.Pct
-				if primary.Reset > 0 {
-					av.FiveHourReset = &primary.Reset
-				}
-			}
-			if secondary != nil {
-				av.SevenDayUtil = &secondary.Pct
-				if secondary.Reset > 0 {
-					av.SevenDayReset = &secondary.Reset
-				}
-			}
+			av.Windows = toWindowResponses(drv.GetUtilization(json.RawMessage(a.ProviderStateJSON)))
 		}
 		acctViews = append(acctViews, av)
 	}
@@ -174,6 +164,41 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 		Users:    userViews,
 		Events:   evViews,
 	})
+}
+
+func toWindowResponses(windows []driver.UtilWindow) []UtilizationWindowResponse {
+	if len(windows) == 0 {
+		return []UtilizationWindowResponse{}
+	}
+	resp := make([]UtilizationWindowResponse, 0, len(windows))
+	for _, w := range windows {
+		resp = append(resp, UtilizationWindowResponse{
+			Label: w.Label,
+			Pct:   w.Pct,
+			Reset: w.Reset,
+		})
+	}
+	return resp
+}
+
+func toFieldResponses(fields []driver.AccountField) []AccountFieldResponse {
+	if len(fields) == 0 {
+		return []AccountFieldResponse{}
+	}
+	resp := make([]AccountFieldResponse, 0, len(fields))
+	for _, f := range fields {
+		if f.Label == "" || f.Value == "" {
+			continue
+		}
+		resp = append(resp, AccountFieldResponse{
+			Label: f.Label,
+			Value: f.Value,
+		})
+	}
+	if len(resp) == 0 {
+		return []AccountFieldResponse{}
+	}
+	return resp
 }
 
 // ---------------------------------------------------------------------------

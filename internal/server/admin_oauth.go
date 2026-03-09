@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"log/slog"
 	"net/http"
+	"slices"
 	"time"
 
 	"github.com/google/uuid"
@@ -12,14 +13,33 @@ import (
 	"github.com/yansir/cc-relayer/internal/oauth"
 )
 
+func (s *Server) handleListProviders(w http.ResponseWriter, r *http.Request) {
+	options := make([]ProviderOptionResponse, 0, len(s.drivers))
+	for _, provider := range sortedDriverProviders(s.drivers) {
+		info := s.drivers[provider].Info()
+		options = append(options, ProviderOptionResponse{
+			ID:                  string(provider),
+			Label:               info.Label,
+			CallbackPlaceholder: info.CallbackPlaceholder,
+			CallbackHint:        info.CallbackHint,
+		})
+	}
+	writeJSON(w, http.StatusOK, options)
+}
+
 // handleGenerateAuthURL generates a PKCE-secured auth URL for manual browser-based OAuth.
 func (s *Server) handleGenerateAuthURL(w http.ResponseWriter, r *http.Request) {
 	provider := r.URL.Query().Get("provider")
 	if provider == "" {
-		provider = "claude"
+		writeAdminError(w, http.StatusBadRequest, "invalid_request", "provider is required")
+		return
 	}
 
-	drv := s.drivers[resolveProvider(provider)]
+	drv, ok := s.driverByID(provider)
+	if !ok {
+		writeAdminError(w, http.StatusBadRequest, "invalid_request", "unknown provider")
+		return
+	}
 	authURL, session, err := drv.GenerateAuthURL()
 	if err != nil {
 		writeAdminError(w, http.StatusInternalServerError, "internal_error", err.Error())
@@ -45,6 +65,7 @@ func (s *Server) handleGenerateAuthURL(w http.ResponseWriter, r *http.Request) {
 // handleExchangeCode accepts an auth code and exchanges it for tokens.
 func (s *Server) handleExchangeCode(w http.ResponseWriter, r *http.Request) {
 	var req struct {
+		Provider     string `json:"provider"`
 		SessionID    string `json:"session_id"`
 		CallbackURL  string `json:"callback_url"`
 		Code         string `json:"code"`
@@ -56,7 +77,7 @@ func (s *Server) handleExchangeCode(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	provider := "claude"
+	provider := req.Provider
 
 	if req.SessionID != "" {
 		sessionJSON, ok := s.pool.GetDelOAuthSession(req.SessionID)
@@ -90,13 +111,21 @@ func (s *Server) handleExchangeCode(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if provider != "codex" && req.State == "" {
-		writeAdminError(w, http.StatusBadRequest, "invalid_request", "state is required for Claude OAuth")
+	if provider == "" {
+		writeAdminError(w, http.StatusBadRequest, "invalid_request", "provider is required")
 		return
 	}
 
-	// Unified exchange via driver
-	drv := s.drivers[resolveProvider(provider)]
+	drv, ok := s.driverByID(provider)
+	if !ok {
+		writeAdminError(w, http.StatusBadRequest, "invalid_request", "unknown provider")
+		return
+	}
+	if drv.Info().OAuthStateRequired && req.State == "" {
+		writeAdminError(w, http.StatusBadRequest, "invalid_request", "state is required")
+		return
+	}
+
 	result, err := drv.ExchangeCode(r.Context(), req.Code, req.CodeVerifier, req.State)
 	if err != nil {
 		slog.Error("exchange code failed", "provider", provider, "error", err)
@@ -110,16 +139,6 @@ func (s *Server) handleExchangeCode(w http.ResponseWriter, r *http.Request) {
 
 	// Dedup by provider + subject
 	existing := s.pool.FindBySubject(drv.Provider(), result.Subject)
-
-	// Fallback: pre-migration accounts have subject='' — search by ExtInfo key
-	if existing == nil {
-		switch drv.Provider() {
-		case domain.ProviderClaude:
-			existing = s.pool.FindByExtInfoKey(drv.Provider(), "orgUUID", result.Subject)
-		case domain.ProviderCodex:
-			existing = s.pool.FindByExtInfoKey(drv.Provider(), "chatgptAccountId", result.Subject)
-		}
-	}
 
 	if existing != nil {
 		encAccess, err := s.tokens.EncryptToken(result.AccessToken)
@@ -140,7 +159,7 @@ func (s *Server) handleExchangeCode(w http.ResponseWriter, r *http.Request) {
 		_ = s.pool.Update(existing.ID, func(a *domain.Account) {
 			a.Email = result.Email
 			a.Status = domain.StatusActive
-			a.ExtInfo = result.ExtInfo
+			a.Identity = result.Identity
 			a.Subject = result.Subject
 		})
 
@@ -168,14 +187,13 @@ func (s *Server) handleExchangeCode(w http.ResponseWriter, r *http.Request) {
 		Provider:        drv.Provider(),
 		Subject:         result.Subject,
 		Status:          domain.StatusActive,
-		Schedulable:     true,
 		Priority:        50,
 		PriorityMode:    "auto",
 		RefreshTokenEnc: encRefresh,
 		AccessTokenEnc:  encAccess,
 		ExpiresAt:       expiresAt,
 		CreatedAt:       time.Now().UTC(),
-		ExtInfo:         result.ExtInfo,
+		Identity:        result.Identity,
 	}
 	now := time.Now().UTC()
 	acct.LastRefreshAt = &now
@@ -189,10 +207,16 @@ func (s *Server) handleExchangeCode(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"id": acct.ID, "email": result.Email, "status": "active"})
 }
 
-// resolveProvider maps a string to a domain.Provider.
-func resolveProvider(s string) domain.Provider {
-	if s == "codex" {
-		return domain.ProviderCodex
+func sortedDriverProviders(drivers map[domain.Provider]driver.Driver) []domain.Provider {
+	providers := make([]domain.Provider, 0, len(drivers))
+	for provider := range drivers {
+		providers = append(providers, provider)
 	}
-	return domain.ProviderClaude
+	slices.Sort(providers)
+	return providers
+}
+
+func (s *Server) driverByID(id string) (driver.Driver, bool) {
+	drv, ok := s.drivers[domain.Provider(id)]
+	return drv, ok
 }

@@ -1,10 +1,7 @@
 package server
 
 import (
-	"bufio"
 	"encoding/json"
-	"fmt"
-	"io"
 	"log/slog"
 	"net/http"
 	"strings"
@@ -19,19 +16,20 @@ func (s *Server) handleListAccounts(w http.ResponseWriter, r *http.Request) {
 
 	views := make([]AccountListItem, 0, len(accounts))
 	for _, a := range accounts {
+		windows := []UtilizationWindowResponse{}
+		if drv, ok := s.drivers[a.Provider]; ok {
+			windows = toWindowResponses(drv.GetUtilization(json.RawMessage(a.ProviderStateJSON)))
+		}
 		views = append(views, AccountListItem{
-			ID:                 a.ID,
-			Email:              a.Email,
-			Provider:           string(a.Provider),
-			Status:             string(a.Status),
-			Priority:           a.Priority,
-			PriorityMode:       a.PriorityMode,
-			Schedulable:        a.Schedulable,
-			ExtInfo:            a.ExtInfo,
-			LastUsedAt:         a.LastUsedAt,
-			OverloadedUntil:    a.OverloadedUntil,
-			FiveHourStatus:     a.FiveHourStatus,
-			OpusRateLimitEndAt: a.OpusRateLimitEndAt,
+			ID:            a.ID,
+			Email:         a.Email,
+			Provider:      string(a.Provider),
+			Status:        string(a.Status),
+			Priority:      a.Priority,
+			PriorityMode:  a.PriorityMode,
+			LastUsedAt:    a.LastUsedAt,
+			CooldownUntil: a.CooldownUntil,
+			Windows:       windows,
 		})
 	}
 	writeJSON(w, http.StatusOK, views)
@@ -72,32 +70,49 @@ func (s *Server) handleGetAccount(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var autoScore int
+	windows := []UtilizationWindowResponse{}
+	probeLabel := string(acct.Provider)
+	providerFields := []AccountFieldResponse{}
 	if acct.PriorityMode == "auto" {
 		if drv, ok := s.drivers[acct.Provider]; ok {
 			autoScore = drv.AutoPriority(json.RawMessage(acct.ProviderStateJSON))
+			windows = toWindowResponses(drv.GetUtilization(json.RawMessage(acct.ProviderStateJSON)))
+			probeLabel = drv.Info().ProbeLabel
+			providerFields = toFieldResponses(drv.DescribeAccount(acct))
+		}
+	}
+	if len(windows) == 0 {
+		if drv, ok := s.drivers[acct.Provider]; ok {
+			windows = toWindowResponses(drv.GetUtilization(json.RawMessage(acct.ProviderStateJSON)))
+			if probeLabel == string(acct.Provider) {
+				probeLabel = drv.Info().ProbeLabel
+			}
+			if len(providerFields) == 0 {
+				providerFields = toFieldResponses(drv.DescribeAccount(acct))
+			}
 		}
 	}
 
 	writeJSON(w, http.StatusOK, AccountDetailResponse{
-		ID:                 acct.ID,
-		Email:              acct.Email,
-		Provider:           acct.Provider,
-		Status:             acct.Status,
-		Priority:           acct.Priority,
-		PriorityMode:       acct.PriorityMode,
-		AutoScore:          autoScore,
-		Schedulable:        acct.Schedulable,
-		ErrorMessage:       acct.ErrorMessage,
-		ExtInfo:            acct.ExtInfo,
-		CreatedAt:          acct.CreatedAt,
-		LastUsedAt:         acct.LastUsedAt,
-		LastRefreshAt:      acct.LastRefreshAt,
-		ExpiresAt:          acct.ExpiresAt,
-		FiveHourStatus:     acct.FiveHourStatus,
-		OverloadedUntil:    acct.OverloadedUntil,
-		OpusRateLimitEndAt: acct.OpusRateLimitEndAt,
-		Stainless:          stainless,
-		Sessions:           sessions,
+		ID:             acct.ID,
+		Email:          acct.Email,
+		Provider:       acct.Provider,
+		Subject:        acct.Subject,
+		Status:         acct.Status,
+		ProbeLabel:     probeLabel,
+		Priority:       acct.Priority,
+		PriorityMode:   acct.PriorityMode,
+		AutoScore:      autoScore,
+		ErrorMessage:   acct.ErrorMessage,
+		ProviderFields: providerFields,
+		CreatedAt:      acct.CreatedAt,
+		LastUsedAt:     acct.LastUsedAt,
+		LastRefreshAt:  acct.LastRefreshAt,
+		ExpiresAt:      acct.ExpiresAt,
+		CooldownUntil:  acct.CooldownUntil,
+		Windows:        windows,
+		Stainless:      stainless,
+		Sessions:       sessions,
 	})
 }
 
@@ -137,13 +152,10 @@ func (s *Server) handleUpdateAccountStatus(w http.ResponseWriter, r *http.Reques
 	if err := s.pool.Update(id, func(a *domain.Account) {
 		a.Status = domain.Status(req.Status)
 		if req.Status == "disabled" {
-			a.Schedulable = false
-		} else {
-			a.Schedulable = true
-			a.ErrorMessage = ""
-			a.OverloadedUntil = nil
-			a.OverloadedAt = nil
+			return
 		}
+		a.ErrorMessage = ""
+		a.CooldownUntil = nil
 	}); err != nil {
 		writeAdminError(w, http.StatusNotFound, "not_found", "account not found")
 		return
@@ -196,53 +208,11 @@ func (s *Server) handleRefreshAccount(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	accessToken, err := s.tokens.ForceRefresh(r.Context(), id)
-	if err != nil {
+	if _, err := s.tokens.ForceRefresh(r.Context(), id); err != nil {
 		writeAdminError(w, http.StatusInternalServerError, "internal_error", "token refresh failed: "+err.Error())
 		return
 	}
 	slog.Info("account token force refreshed", "id", id)
-
-	// Back-fill Subject if empty (pre-migration accounts)
-	if acct.Subject == "" {
-		switch acct.Provider {
-		case domain.ProviderClaude:
-			// Claude: fetch orgUUID via API probe
-			orgUUID := s.fetchOrgUUIDViaAPI(r.Context(), acct, accessToken)
-			if orgUUID != "" {
-				_ = s.pool.Update(id, func(a *domain.Account) {
-					a.Subject = orgUUID
-					if a.ExtInfo == nil {
-						a.ExtInfo = make(map[string]interface{})
-					}
-					a.ExtInfo["orgUUID"] = orgUUID
-				})
-				slog.Info("account subject back-filled", "id", id, "subject", orgUUID)
-			}
-		case domain.ProviderCodex:
-			// Codex: extract chatgptAccountId from existing ExtInfo
-			if acct.ExtInfo != nil {
-				if chatgptID, ok := acct.ExtInfo["chatgptAccountId"].(string); ok && chatgptID != "" {
-					_ = s.pool.Update(id, func(a *domain.Account) {
-						a.Subject = chatgptID
-					})
-					slog.Info("account subject back-filled", "id", id, "subject", chatgptID)
-				}
-			}
-		}
-	} else if acct.Provider != domain.ProviderCodex && (acct.ExtInfo == nil || acct.ExtInfo["orgUUID"] == nil || acct.ExtInfo["orgUUID"] == "") {
-		// Back-fill org UUID in ExtInfo if missing (Claude accounts with Subject already set)
-		orgUUID := s.fetchOrgUUIDViaAPI(r.Context(), acct, accessToken)
-		if orgUUID != "" {
-			_ = s.pool.Update(id, func(a *domain.Account) {
-				if a.ExtInfo == nil {
-					a.ExtInfo = make(map[string]interface{})
-				}
-				a.ExtInfo["orgUUID"] = orgUUID
-			})
-			slog.Info("account org UUID back-filled", "id", id, "orgUUID", orgUUID)
-		}
-	}
 
 	writeJSON(w, http.StatusOK, map[string]string{"id": id, "status": "refreshed"})
 }
@@ -255,75 +225,13 @@ func (s *Server) handleTestAccount(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	accessToken, err := s.tokens.EnsureValidToken(r.Context(), acct.ID)
-	if err != nil {
-		writeJSON(w, http.StatusOK, TestAccountResult{Error: "token unavailable: " + err.Error()})
-		return
-	}
-
-	drv, ok := s.drivers[acct.Provider]
-	if !ok {
-		writeJSON(w, http.StatusOK, TestAccountResult{Error: "unknown provider"})
-		return
-	}
-
-	probeReq, err := drv.BuildProbeRequest(r.Context(), acct, accessToken)
-	if err != nil {
-		writeJSON(w, http.StatusOK, TestAccountResult{Error: "failed to create request"})
-		return
-	}
-
-	client := s.transportMgr.GetClient(acct)
 	start := time.Now()
-	resp, err := client.Do(probeReq)
+	_, err := s.probeAccount(r.Context(), acct)
 	latencyMs := time.Since(start).Milliseconds()
-
 	if err != nil {
 		writeJSON(w, http.StatusOK, TestAccountResult{LatencyMs: latencyMs, Error: err.Error()})
 		return
 	}
-	defer resp.Body.Close()
-	body, _ := io.ReadAll(resp.Body)
-
-	if resp.StatusCode >= 400 {
-		effect := drv.Interpret(resp.StatusCode, resp.Header, body, "")
-		s.pool.Observe(acct.ID, effect)
-		writeJSON(w, http.StatusOK, TestAccountResult{LatencyMs: latencyMs, Error: fmt.Sprintf("upstream returned %d", resp.StatusCode)})
-		return
-	}
-
-	// Success — capture rate-limit headers
-	effect := drv.Interpret(http.StatusOK, resp.Header, nil, "")
-	s.pool.Observe(acct.ID, effect)
-
-	// For Codex streaming probes, verify we got output before clearing overload
-	if acct.Provider == domain.ProviderCodex {
-		scanner := bufio.NewScanner(strings.NewReader(string(body)))
-		scanner.Buffer(make([]byte, 0, 64*1024), 256*1024)
-		gotOutput := false
-		for scanner.Scan() {
-			line := scanner.Text()
-			if strings.HasPrefix(line, "event: response.output_text.delta") {
-				gotOutput = true
-				break
-			}
-			if strings.HasPrefix(line, "data: ") && strings.Contains(line, `"error":{`) {
-				writeJSON(w, http.StatusOK, TestAccountResult{
-					LatencyMs: time.Since(start).Milliseconds(),
-					Error:     "upstream error in stream",
-				})
-				return
-			}
-		}
-		if !gotOutput {
-			writeJSON(w, http.StatusOK, TestAccountResult{LatencyMs: time.Since(start).Milliseconds(), Error: "stream ended without output"})
-			return
-		}
-	}
-
-	// All validation passed — clear overload
-	s.pool.ClearOverload(acct.ID)
-
 	writeJSON(w, http.StatusOK, TestAccountResult{OK: true, LatencyMs: latencyMs})
 }
 
