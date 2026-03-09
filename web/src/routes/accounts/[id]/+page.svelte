@@ -3,7 +3,7 @@
 	import { goto } from '$app/navigation';
 	import { base } from '$app/paths';
 	import { api } from '$lib/api';
-	import { timeAgo, fmtDate, dotClass } from '$lib/format';
+	import { timeAgo, fmtDate, dotClass, remainClass, remainTime } from '$lib/format';
 	import Countdown from '$lib/components/Countdown.svelte';
 	import PriorityEditor from '$lib/components/PriorityEditor.svelte';
 	import ConfirmAction from '$lib/components/ConfirmAction.svelte';
@@ -12,20 +12,20 @@
 		id: string;
 		email: string;
 		provider: string;
+		subject: string;
 		status: string;
+		probe_label: string;
 		priority: number;
 		priority_mode: string;
 		auto_score: number;
-		schedulable: boolean;
 		error_message: string;
-		ext_info: Record<string, string> | null;
+		provider_fields: { label: string; value: string }[];
 		created_at: string;
 		last_used_at: string | null;
 		last_refresh_at: string | null;
 		expires_at: number;
-		five_hour_status: string;
-		overloaded_until: string | null;
-		opus_rate_limit_end_at: string | null;
+		cooldown_until: string | null;
+		windows: { label: string; pct: number; reset?: number }[];
 		stainless: Record<string, string> | null;
 		sessions: { session_uuid: string; account_id: string; created_at: string; last_used_at: string; expires_at: string }[];
 	}
@@ -49,12 +49,6 @@
 		} finally {
 			loading = false;
 		}
-	}
-
-	function fiveHourColor(status: string): string {
-		if (status === 'allowed') return 'g';
-		if (status === 'stopped' || status === 'warning') return 'o';
-		return 'r';
 	}
 
 	async function testAccount() {
@@ -173,7 +167,7 @@
 	{#if testResult}
 		<div class="bar" style="margin-top:0">
 			{#if testResult.ok}
-				<span class="g">&#10003; ok</span> &mdash; {acct.provider === 'codex' ? 'codex' : 'haiku'} &mdash; {(testResult.latency_ms / 1000).toFixed(1)}s &mdash; <span class="muted">{testResult.time}</span>
+				<span class="g">&#10003; ok</span> &mdash; {acct.probe_label} &mdash; {(testResult.latency_ms / 1000).toFixed(1)}s &mdash; <span class="muted">{testResult.time}</span>
 			{:else}
 				<span class="r">&#10007; failed</span> &mdash; {testResult.error} &mdash; <span class="muted">{testResult.time}</span>
 			{/if}
@@ -188,6 +182,9 @@
 		<dt>status</dt>
 		<dd><span class={dotClass(acct.status)}>{acct.status}</span></dd>
 
+		<dt>subject</dt>
+		<dd class="muted">{acct.subject || '-'}</dd>
+
 		<dt>email</dt>
 		<dd>
 			{#if editingEmail}
@@ -201,18 +198,12 @@
 			{#if emailError}<span class="error-msg">{emailError}</span>{/if}
 		</dd>
 
-		<dt>org</dt>
-		<dd>
-			{#if acct.ext_info}
-				{#if acct.provider === 'codex'}
-					{acct.ext_info.orgTitle || '-'} <span class="muted">(account: {acct.ext_info.chatgptAccountId || '-'})</span>
-				{:else}
-					{acct.ext_info.orgName} <span class="muted">(uuid: {acct.ext_info.orgUUID})</span>
-				{/if}
-			{:else}
-				<span class="muted">-</span>
-			{/if}
-		</dd>
+		{#if acct.provider_fields.length > 0}
+			{#each acct.provider_fields as field (field.label)}
+				<dt>{field.label}</dt>
+				<dd>{field.value}</dd>
+			{/each}
+		{/if}
 
 		<dt>priority</dt>
 		<dd>
@@ -240,33 +231,26 @@
 
 	<h2>scheduling</h2>
 	<dl>
-		<dt>schedulable</dt>
-		<dd class={acct.schedulable ? 'g' : 'r'}>{acct.schedulable ? 'yes' : 'no'}</dd>
-
 		<dt>cooldown</dt>
 		<dd>
-			<Countdown until={acct.overloaded_until} variant="cooldown" />
+			<Countdown until={acct.cooldown_until} variant="cooldown" />
 		</dd>
 
-		{#if acct.provider !== 'codex'}
-			<dt>5h window</dt>
-			<dd><span class={fiveHourColor(acct.five_hour_status)}>{acct.five_hour_status || '-'}</span></dd>
-
-			<dt>5h remain</dt>
-			<dd><span class="muted">-</span></dd>
-
-			<dt>7d remain</dt>
-			<dd><span class="muted">-</span></dd>
-
-			<dt>opus rate limit</dt>
-			<dd>
-				<Countdown until={acct.opus_rate_limit_end_at} variant="cooldown" />
-			</dd>
+		{#if acct.windows.length > 0}
+			{#each acct.windows as window (window.label)}
+				<dt>{window.label}</dt>
+				<dd>
+					{#if acct.status === 'blocked' || acct.status === 'disabled'}
+						<span class="muted">&ndash;</span>
+					{:else}
+						{@const remain = 100 - window.pct}
+						<span class={remainClass(remain)}>{remain}%</span>
+						<span class="muted">{remainTime(window.reset ?? null)}</span>
+					{/if}
+				</dd>
+			{/each}
 		{:else}
-			<dt>primary remain</dt>
-			<dd><span class="muted">-</span></dd>
-
-			<dt>secondary remain</dt>
+			<dt>windows</dt>
 			<dd><span class="muted">-</span></dd>
 		{/if}
 
@@ -283,18 +267,14 @@
 		</dd>
 	</dl>
 
-	{#if acct.provider !== 'codex'}
-	<h2>stainless fingerprint</h2>
 	{#if acct.stainless && Object.keys(acct.stainless).length > 0}
+		<h2>stainless fingerprint</h2>
 		<dl>
 			{#each Object.entries(acct.stainless) as [key, value] (key)}
 				<dt>{key}</dt>
 				<dd>{value}</dd>
 			{/each}
 		</dl>
-	{:else}
-		<p class="muted">not captured yet</p>
-	{/if}
 	{/if}
 
 	<h2>bound sessions <span class="muted">({acct.sessions?.length ?? 0})</span></h2>

@@ -27,7 +27,7 @@ export async function api<T = unknown>(path: string, opts: RequestInit = {}): Pr
 		});
 
 		if (res.status === 401) {
-			window.location.href = '/ui/login';
+			window.location.href = '/login';
 			throw new ApiError(401, 'Unauthorized');
 		}
 

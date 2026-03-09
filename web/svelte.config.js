@@ -8,10 +8,7 @@ const config = {
 			assets: '../internal/ui/dist',
 			fallback: 'index.html',
 			precompress: true
-		}),
-		paths: {
-			base: '/ui'
-		}
+		})
 	}
 };
 

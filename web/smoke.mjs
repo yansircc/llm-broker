@@ -11,7 +11,7 @@ if (!TOKEN) { console.error('API_TOKEN is required'); process.exit(1); }
 const domain = new URL(SITE).hostname;
 
 // Pages to visit — detail pages extracted dynamically from dashboard links
-const staticPages = ['/ui/dashboard', '/ui/add-account'];
+const staticPages = ['/'];
 
 async function run() {
   const browser = await chromium.launch();
@@ -47,14 +47,16 @@ async function run() {
   }
 
   // 1. Visit dashboard and extract detail page links
-  const dashboard = await visit('/ui/dashboard');
+  const dashboard = await visit('/dashboard');
   let detailPages = [];
   try {
     const links = await dashboard.$$eval('a[href]', (els) =>
       els.map((a) => a.getAttribute('href')).filter(Boolean)
     );
-    const accountLink = links.find((h) => h.match(/\/ui\/accounts\/\d+/));
-    const userLink = links.find((h) => h.match(/\/ui\/users\/\d+/));
+    const addAccountLink = links.find((h) => h.match(/^\/add-account\/[^/]+$/));
+    const accountLink = links.find((h) => h.match(/^\/accounts\/[^/]+$/));
+    const userLink = links.find((h) => h.match(/^\/users\/[^/]+$/));
+    if (addAccountLink) detailPages.push(addAccountLink);
     if (accountLink) detailPages.push(accountLink);
     if (userLink) detailPages.push(userLink);
   } catch { /* no links found — skip detail pages */ }

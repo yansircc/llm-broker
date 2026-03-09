@@ -3,6 +3,7 @@
 	import { api } from '$lib/api';
 	import { fmtNum, fmtCost, fmtTime, timeAgo, remainClass, remainTime, eventTypeColor, dotClass } from '$lib/format';
 	import Countdown from '$lib/components/Countdown.svelte';
+	import { addAccountPath, type ProviderOption } from '$lib/providers';
 
 	interface UsagePeriod {
 		label: string;
@@ -20,12 +21,9 @@
 		status: string;
 		priority_mode: string;
 		priority: number;
-		overloaded_until: string | null;
+		cooldown_until: string | null;
 		last_used_at: string | null;
-		five_hour_util: number | null;
-		seven_day_util: number | null;
-		five_hour_reset: number | null;
-		seven_day_reset: number | null;
+		windows: { label: string; pct: number; reset?: number }[];
 	}
 
 	interface UserView {
@@ -55,8 +53,16 @@
 		events: EventInfo[];
 	}
 
+	interface AccountGroup {
+		provider: string;
+		accounts: AccountView[];
+		window_labels: string[];
+	}
+
 	let data = $state<DashboardData | null>(null);
+	let providers = $state<ProviderOption[]>([]);
 	let error = $state('');
+	let providerError = $state('');
 	let lastRefresh = $state('');
 
 	let showAddUser = $state(false);
@@ -71,8 +77,18 @@
 	});
 
 	async function loadAll() {
+		error = '';
+		providerError = '';
 		try {
 			data = await api<DashboardData>('/dashboard');
+			providers = [];
+			if (data.accounts.length === 0) {
+				try {
+					providers = await api<ProviderOption[]>('/providers');
+				} catch (e: any) {
+					providerError = e.message;
+				}
+			}
 			lastRefresh = new Date().toLocaleTimeString('en-GB', { hour12: false });
 		} catch (e: any) {
 			error = e.message;
@@ -134,18 +150,37 @@ claude -p --model haiku \\
   "Print 'true' for testing purpose"`;
 	}
 
-	function buildCodexTestCmd(token: string): string {
-		const origin = typeof window !== 'undefined' ? window.location.origin : '';
-		return `OPENAI_BASE_URL="${origin}/openai" \\
-OPENAI_API_KEY="${token}" \\
-codex -p "Print 'true' for testing purpose"`;
-	}
-
 	async function copyCmd() {
 		if (!createdUser) return;
 		await navigator.clipboard.writeText(buildTestCmd(createdUser.token));
 		copied = true;
 		setTimeout(() => { copied = false; }, 2000);
+	}
+
+	function windowAt(a: AccountView, index: number) {
+		return a.windows[index] ?? null;
+	}
+
+	function groupAccounts(accounts: AccountView[]): AccountGroup[] {
+		const groups = new Map<string, AccountGroup>();
+		for (const account of accounts) {
+			let group = groups.get(account.provider);
+			if (!group) {
+				group = {
+					provider: account.provider,
+					accounts: [],
+					window_labels: []
+				};
+				groups.set(account.provider, group);
+			}
+			group.accounts.push(account);
+			account.windows.forEach((window, index) => {
+				if (!group!.window_labels[index]) {
+					group!.window_labels[index] = window.label;
+				}
+			});
+		}
+		return [...groups.values()].sort((a, b) => a.provider.localeCompare(b.provider));
 	}
 
 </script>
@@ -185,64 +220,49 @@ codex -p "Print 'true' for testing purpose"`;
 		</tbody></table>
 	{/if}
 
-	<!-- Claude accounts -->
-	{@const claudeAccounts = data.accounts.filter(a => a.provider !== 'codex')}
-	{@const codexAccounts = data.accounts.filter(a => a.provider === 'codex')}
-	<h2>claude accounts <a href="{base}/add-account" class="add-link">[+ add]</a></h2>
-	{#if claudeAccounts.length === 0}
-		<p class="muted">no claude accounts</p>
+	{@const accountGroups = groupAccounts(data.accounts)}
+	{#if accountGroups.length === 0}
+		<h2>accounts</h2>
+		<p class="muted">no accounts</p>
+		{#if providerError}
+			<p class="error-msg">{providerError}</p>
+		{:else if providers.length > 0}
+			<div class="bar">
+				{#each providers as provider (provider.id)}
+					<div style="margin-bottom:8px">
+						<a href={addAccountPath(base, provider.id)}>[+ {provider.label}]</a>
+					</div>
+				{/each}
+			</div>
+		{/if}
 	{:else}
-		<table><thead>
-			<tr>
-				<th>email</th>
-				<th>status</th>
-				<th>pri</th>
-				<th>cooldown</th>
-				<th>last used</th>
-				<th class="num">5h remain</th>
-				<th class="num">7d remain</th>
-			</tr></thead><tbody>
-			{#each claudeAccounts as a (a.id)}
+		{#each accountGroups as group (group.provider)}
+			<h2>{group.provider} accounts <a href={addAccountPath(base, group.provider)} class="add-link">[+ add]</a></h2>
+			<table><thead>
 				<tr>
-					<td><a href="{base}/accounts/{a.id}">{a.email}</a></td>
-					<td><span class={dotClass(a.status)}>{a.status}</span></td>
-					<td>{a.priority}{#if a.priority_mode === 'auto'} <span class="muted">(a)</span>{/if}</td>
-					<Countdown until={a.overloaded_until} tag="td" variant="cooldown" />
-					<td>{timeAgo(a.last_used_at ?? '')}</td>
-					<td class="num">{#if a.status === 'blocked' || a.status === 'disabled'}<span class="muted">&ndash;</span>{:else if a.five_hour_util != null}{@const remain = 100 - a.five_hour_util}<span class={remainClass(remain)}>{remain}%</span> <span class="muted">{remainTime(a.five_hour_reset)}</span>{:else}<span class="muted">&ndash;</span>{/if}</td>
-					<td class="num">{#if a.status === 'blocked' || a.status === 'disabled'}<span class="muted">&ndash;</span>{:else if a.seven_day_util != null}{@const remain = 100 - a.seven_day_util}<span class={remainClass(remain)}>{remain}%</span> <span class="muted">{remainTime(a.seven_day_reset)}</span>{:else}<span class="muted">&ndash;</span>{/if}</td>
-				</tr>
-			{/each}
-		</tbody></table>
-	{/if}
-
-	<!-- Codex accounts -->
-	<h2>codex accounts <a href="{base}/add-account" class="add-link">[+ add]</a></h2>
-	{#if codexAccounts.length === 0}
-		<p class="muted">no codex accounts</p>
-	{:else}
-		<table><thead>
-			<tr>
-				<th>email</th>
-				<th>status</th>
-				<th>pri</th>
-				<th>cooldown</th>
-				<th>last used</th>
-				<th class="num">primary</th>
-				<th class="num">secondary</th>
-			</tr></thead><tbody>
-			{#each codexAccounts as a (a.id)}
-				<tr>
-					<td><a href="{base}/accounts/{a.id}">{a.email}</a></td>
-					<td><span class={dotClass(a.status)}>{a.status}</span></td>
-					<td>{a.priority}{#if a.priority_mode === 'auto'} <span class="muted">(a)</span>{/if}</td>
-					<Countdown until={a.overloaded_until} tag="td" variant="cooldown" />
-					<td>{timeAgo(a.last_used_at ?? '')}</td>
-					<td class="num">{#if a.status === 'blocked' || a.status === 'disabled'}<span class="muted">&ndash;</span>{:else if a.five_hour_util != null}{@const remain = 100 - a.five_hour_util}<span class={remainClass(remain)}>{remain}%</span> <span class="muted">{remainTime(a.five_hour_reset)}</span>{:else}<span class="muted">&ndash;</span>{/if}</td>
-					<td class="num">{#if a.status === 'blocked' || a.status === 'disabled'}<span class="muted">&ndash;</span>{:else if a.seven_day_util != null}{@const remain = 100 - a.seven_day_util}<span class={remainClass(remain)}>{remain}%</span> <span class="muted">{remainTime(a.seven_day_reset)}</span>{:else}<span class="muted">&ndash;</span>{/if}</td>
-				</tr>
-			{/each}
-		</tbody></table>
+					<th>email</th>
+					<th>status</th>
+					<th>pri</th>
+					<th>cooldown</th>
+					<th>last used</th>
+					<th class="num">{group.window_labels[0] || 'window 1'}</th>
+					<th class="num">{group.window_labels[1] || 'window 2'}</th>
+				</tr></thead><tbody>
+				{#each group.accounts as a (a.id)}
+					{@const primary = windowAt(a, 0)}
+					{@const secondary = windowAt(a, 1)}
+					<tr>
+						<td><a href="{base}/accounts/{a.id}">{a.email}</a></td>
+						<td><span class={dotClass(a.status)}>{a.status}</span></td>
+						<td>{a.priority}{#if a.priority_mode === 'auto'} <span class="muted">(a)</span>{/if}</td>
+						<Countdown until={a.cooldown_until} tag="td" variant="cooldown" />
+						<td>{timeAgo(a.last_used_at ?? '')}</td>
+						<td class="num">{#if a.status === 'blocked' || a.status === 'disabled'}<span class="muted">&ndash;</span>{:else if primary}{@const remain = 100 - primary.pct}<span class={remainClass(remain)}>{remain}%</span> <span class="muted">{remainTime(primary.reset ?? null)}</span>{:else}<span class="muted">&ndash;</span>{/if}</td>
+						<td class="num">{#if a.status === 'blocked' || a.status === 'disabled'}<span class="muted">&ndash;</span>{:else if secondary}{@const remain = 100 - secondary.pct}<span class={remainClass(remain)}>{remain}%</span> <span class="muted">{remainTime(secondary.reset ?? null)}</span>{:else}<span class="muted">&ndash;</span>{/if}</td>
+					</tr>
+				{/each}
+			</tbody></table>
+		{/each}
 	{/if}
 
 	<!-- Users -->
