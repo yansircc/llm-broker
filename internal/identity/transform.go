@@ -52,7 +52,7 @@ func (t *Transformer) Transform(
 	t.enforceCacheControl(body)
 
 	// 3. Rewrite metadata.user_id
-	accountUUID := acct.GetAccountUUID()
+	accountUUID := acct.IdentityString("account_uuid")
 	if metadata, ok := body["metadata"].(map[string]interface{}); ok {
 		if origUserID, ok := metadata["user_id"].(string); ok {
 			metadata["user_id"] = RewriteUserID(origUserID, acct.ID, accountUUID)

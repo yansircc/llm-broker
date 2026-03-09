@@ -16,9 +16,7 @@ const claudeSalt = "salt"
 
 // PoolAccess provides the methods TokenManager needs from Pool.
 type PoolAccess interface {
-	GetTokenInfo(accountID string) (refreshEnc, accessEnc string, expiresAt int64, ok bool)
-	GetProvider(accountID string) (domain.Provider, bool)
-	GetProxy(accountID string) *domain.ProxyConfig
+	Get(accountID string) *domain.Account
 	StoreTokens(accountID, accessTokenEnc, refreshTokenEnc string, expiresAt int64) error
 	MarkError(accountID, msg string)
 	AcquireRefreshLock(accountID, lockID string) bool
@@ -30,21 +28,28 @@ type TransportProvider interface {
 	GetHTTPTransport(proxy *domain.ProxyConfig) *http.Transport
 }
 
+// RefreshDriver performs provider-specific token refresh.
+type RefreshDriver interface {
+	RefreshToken(ctx context.Context, client *http.Client, refreshToken string) (*TokenResponse, error)
+}
+
 // TokenManager handles OAuth token refresh with locking.
 type TokenManager struct {
 	pool                PoolAccess
 	crypto              *crypto.Crypto
 	transport           TransportProvider
+	drivers             map[domain.Provider]RefreshDriver
 	client              *http.Client
 	tokenRefreshAdvance time.Duration
 }
 
 // NewTokenManager creates a token manager.
-func NewTokenManager(pool PoolAccess, c *crypto.Crypto, tp TransportProvider, refreshAdvance time.Duration) *TokenManager {
+func NewTokenManager(pool PoolAccess, c *crypto.Crypto, tp TransportProvider, refreshAdvance time.Duration, drivers map[domain.Provider]RefreshDriver) *TokenManager {
 	return &TokenManager{
 		pool:                pool,
 		crypto:              c,
 		transport:           tp,
+		drivers:             drivers,
 		client:              &http.Client{Timeout: 30 * time.Second},
 		tokenRefreshAdvance: refreshAdvance,
 	}
@@ -54,17 +59,17 @@ func NewTokenManager(pool PoolAccess, c *crypto.Crypto, tp TransportProvider, re
 // If expired (within advance window), triggers a refresh.
 // Returns the decrypted access token.
 func (tm *TokenManager) EnsureValidToken(ctx context.Context, accountID string) (string, error) {
-	refreshEnc, accessEnc, expiresAt, ok := tm.pool.GetTokenInfo(accountID)
-	if !ok {
+	acct := tm.pool.Get(accountID)
+	if acct == nil {
 		return "", fmt.Errorf("account %s not found", accountID)
 	}
 
 	now := time.Now().UnixMilli()
 
 	// Token still valid
-	if expiresAt > 0 && now < expiresAt-tm.tokenRefreshAdvance.Milliseconds() {
-		if accessEnc != "" {
-			token, err := tm.crypto.Decrypt(accessEnc, claudeSalt)
+	if acct.ExpiresAt > 0 && now < acct.ExpiresAt-tm.tokenRefreshAdvance.Milliseconds() {
+		if acct.AccessTokenEnc != "" {
+			token, err := tm.crypto.Decrypt(acct.AccessTokenEnc, claudeSalt)
 			if err != nil {
 				return "", fmt.Errorf("decrypt access token: %w", err)
 			}
@@ -75,7 +80,6 @@ func (tm *TokenManager) EnsureValidToken(ctx context.Context, accountID string) 
 	}
 
 	// Token expired or about to expire — refresh
-	_ = refreshEnc // will be read again in refresh()
 	return tm.refresh(ctx, accountID)
 }
 
@@ -89,12 +93,12 @@ func (tm *TokenManager) refresh(ctx context.Context, accountID string) (string, 
 		slog.Info("token refresh locked, waiting", "accountId", accountID)
 		time.Sleep(2 * time.Second)
 
-		_, accessEnc, expiresAt, ok := tm.pool.GetTokenInfo(accountID)
-		if !ok {
+		acct := tm.pool.Get(accountID)
+		if acct == nil {
 			return "", fmt.Errorf("account not found after wait")
 		}
-		if accessEnc != "" && expiresAt > time.Now().UnixMilli() {
-			token, err := tm.crypto.Decrypt(accessEnc, claudeSalt)
+		if acct.AccessTokenEnc != "" && acct.ExpiresAt > time.Now().UnixMilli() {
+			token, err := tm.crypto.Decrypt(acct.AccessTokenEnc, claudeSalt)
 			if err == nil && token != "" {
 				return token, nil
 			}
@@ -104,12 +108,12 @@ func (tm *TokenManager) refresh(ctx context.Context, accountID string) (string, 
 
 	defer tm.pool.ReleaseRefreshLock(accountID, lockID)
 
-	refreshEnc, _, _, ok := tm.pool.GetTokenInfo(accountID)
-	if !ok {
+	acct := tm.pool.Get(accountID)
+	if acct == nil {
 		return "", fmt.Errorf("account %s not found", accountID)
 	}
 
-	refreshToken, err := tm.crypto.Decrypt(refreshEnc, claudeSalt)
+	refreshToken, err := tm.crypto.Decrypt(acct.RefreshTokenEnc, claudeSalt)
 	if err != nil {
 		tm.markError(accountID, "decrypt refresh token: "+err.Error())
 		return "", fmt.Errorf("decrypt refresh token: %w", err)
@@ -121,24 +125,26 @@ func (tm *TokenManager) refresh(ctx context.Context, accountID string) (string, 
 
 	slog.Info("refreshing token", "accountId", accountID)
 
-	provider, _ := tm.pool.GetProvider(accountID)
-	var tokenResp *TokenResponse
-	if provider == domain.ProviderCodex {
-		tokenResp, err = CallCodexRefresh(ctx, tm.client, refreshToken)
-	} else {
-		// Use account-specific proxy transport for Claude refresh
-		client := tm.client
-		if tm.transport != nil {
-			proxy := tm.pool.GetProxy(accountID)
-			if proxy != nil {
-				client = &http.Client{
-					Transport: tm.transport.GetHTTPTransport(proxy),
-					Timeout:   30 * time.Second,
-				}
-			}
-		}
-		tokenResp, err = CallClaudeRefresh(ctx, client, refreshToken)
+	if acct.Provider == "" {
+		tm.markError(accountID, "unknown provider")
+		return "", fmt.Errorf("unknown provider for account %s", accountID)
 	}
+
+	drv, ok := tm.drivers[acct.Provider]
+	if !ok {
+		tm.markError(accountID, "no refresh driver")
+		return "", fmt.Errorf("no refresh driver for provider %s", acct.Provider)
+	}
+
+	client := tm.client
+	if tm.transport != nil && acct.Proxy != nil {
+		client = &http.Client{
+			Transport: tm.transport.GetHTTPTransport(acct.Proxy),
+			Timeout:   30 * time.Second,
+		}
+	}
+
+	tokenResp, err := drv.RefreshToken(ctx, client, refreshToken)
 	if err != nil {
 		tm.markError(accountID, err.Error())
 		return "", fmt.Errorf("oauth refresh: %w", err)

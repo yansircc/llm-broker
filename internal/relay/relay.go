@@ -71,18 +71,24 @@ func New(
 	}
 }
 
-// routeDriver selects the driver based on the request path.
-func (r *Relay) routeDriver(req *http.Request) driver.Driver {
-	if strings.HasPrefix(req.URL.Path, "/openai/") {
-		return r.drivers[domain.ProviderCodex]
-	}
-	return r.drivers[domain.ProviderClaude]
+func (r *Relay) driverFor(provider domain.Provider) driver.Driver {
+	return r.drivers[provider]
 }
 
-// Handle processes relay requests for all providers using the Driver interface.
-func (r *Relay) Handle(w http.ResponseWriter, req *http.Request) {
+// HandleProvider processes relay requests for a specific provider.
+func (r *Relay) HandleProvider(provider domain.Provider) http.HandlerFunc {
+	return func(w http.ResponseWriter, req *http.Request) {
+		drv := r.driverFor(provider)
+		if drv == nil {
+			http.Error(w, "unknown provider", http.StatusNotFound)
+			return
+		}
+		r.handleWithDriver(w, req, drv)
+	}
+}
+
+func (r *Relay) handleWithDriver(w http.ResponseWriter, req *http.Request, drv driver.Driver) {
 	ctx := req.Context()
-	drv := r.routeDriver(req)
 
 	keyInfo := auth.GetKeyInfo(ctx)
 	if keyInfo == nil {
@@ -112,8 +118,6 @@ func (r *Relay) Handle(w http.ResponseWriter, req *http.Request) {
 
 	model, _ := body["model"].(string)
 	isStream, _ := body["stream"].(bool)
-	isOpus := isOpusModel(model)
-
 	input := &driver.RelayInput{
 		Body:     body,
 		RawBody:  rawBody,
@@ -141,8 +145,7 @@ func (r *Relay) Handle(w http.ResponseWriter, req *http.Request) {
 	var sessionBoundAccountID string
 	if sessionUUID != "" {
 		if boundID, ok := r.pool.GetSessionBinding(sessionUUID); ok {
-			acct := r.pool.Get(boundID)
-			if acct != nil && acct.Status == domain.StatusActive && acct.Schedulable {
+			if r.pool.IsAvailableFor(boundID, drv, model) {
 				sessionBoundAccountID = boundID
 				r.pool.RenewSessionBinding(sessionUUID, r.cfg.SessionBindingTTL)
 			} else if oldSession {
@@ -170,7 +173,7 @@ func (r *Relay) Handle(w http.ResponseWriter, req *http.Request) {
 			boundID = sessionBoundAccountID
 		}
 
-		acct, err := r.pool.Pick(drv, excludeIDs, isOpus, boundID)
+		acct, err := r.pool.Pick(drv, excludeIDs, model, boundID)
 		if err != nil {
 			lastErr = err
 			break
@@ -223,7 +226,7 @@ func (r *Relay) Handle(w http.ResponseWriter, req *http.Request) {
 				continue
 			}
 
-			effect := drv.Interpret(resp.StatusCode, resp.Header, errBody, model)
+			effect := drv.Interpret(resp.StatusCode, resp.Header, errBody, model, json.RawMessage(acct.ProviderStateJSON))
 			r.pool.Observe(acct.ID, effect)
 			excludeIDs = append(excludeIDs, acct.ID)
 			lastErr = fmt.Errorf("upstream %d", resp.StatusCode)
@@ -236,7 +239,7 @@ func (r *Relay) Handle(w http.ResponseWriter, req *http.Request) {
 			resp.Body.Close()
 
 			// Capture rate-limit headers even on non-retriable errors
-			effect := drv.Interpret(http.StatusOK, resp.Header, nil, model)
+			effect := drv.Interpret(http.StatusOK, resp.Header, nil, model, json.RawMessage(acct.ProviderStateJSON))
 			r.pool.Observe(acct.ID, effect)
 
 			slog.Warn("upstream non-retriable error",
@@ -249,7 +252,7 @@ func (r *Relay) Handle(w http.ResponseWriter, req *http.Request) {
 
 		// Success
 		defer resp.Body.Close()
-		effect := drv.Interpret(http.StatusOK, resp.Header, nil, model)
+		effect := drv.Interpret(http.StatusOK, resp.Header, nil, model, json.RawMessage(acct.ProviderStateJSON))
 		r.pool.Observe(acct.ID, effect)
 
 		if sessionUUID != "" {
@@ -310,7 +313,7 @@ func (r *Relay) Handle(w http.ResponseWriter, req *http.Request) {
 func (r *Relay) handleCountTokens(w http.ResponseWriter, req *http.Request, drv driver.Driver, input *driver.RelayInput, keyInfo *auth.KeyInfo) {
 	ctx := req.Context()
 
-	acct, err := r.pool.Pick(drv, nil, isOpusModel(input.Model), keyInfo.BoundAccountID)
+	acct, err := r.pool.Pick(drv, nil, input.Model, keyInfo.BoundAccountID)
 	if err != nil {
 		slog.Warn("count_tokens: account selection failed", "error", err)
 		drv.WriteError(w, http.StatusServiceUnavailable, "no available accounts")
