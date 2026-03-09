@@ -6,20 +6,16 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
-	"regexp"
 	"slices"
 	"sort"
-	"strconv"
 	"sync"
 	"time"
 
 	"github.com/yansir/cc-relayer/internal/domain"
+	"github.com/yansir/cc-relayer/internal/driver"
 	"github.com/yansir/cc-relayer/internal/events"
 	"github.com/yansir/cc-relayer/internal/store"
 )
-
-// Ban signal patterns in 403 response bodies.
-var banSignalPattern = regexp.MustCompile(`(?i)(organization has been disabled|account has been disabled|Too many active sessions|only authorized for use with claude code)`)
 
 // SessionBinding holds the account ID bound to a session UUID.
 type SessionBinding struct {
@@ -28,24 +24,8 @@ type SessionBinding struct {
 	LastUsedAt time.Time
 }
 
-// UpstreamResult encapsulates the outcome of a single upstream request.
-type UpstreamResult struct {
-	AccountID  string
-	StatusCode int
-	Headers    http.Header
-	ErrBody    []byte
-	Model      string
-	IsOpus     bool
-}
-
-// ErrorPauses holds configurable error pause durations.
-type ErrorPauses struct {
-	Pause401        time.Duration
-	Pause401Refresh time.Duration // short cooldown for background token refresh on 401
-	Pause403        time.Duration
-	Pause429        time.Duration
-	Pause529        time.Duration
-}
+// ErrorPauses is an alias for driver.ErrorPauses for backward compatibility.
+type ErrorPauses = driver.ErrorPauses
 
 // Pool is the central authority for account state.
 // All account reads and writes go through Pool. Store.SaveAccount is only
@@ -64,6 +44,9 @@ type Pool struct {
 	refreshLocks  *store.TTLMap[string] // accountID -> lockID
 
 	onAuthFailure func(accountID string) // called on 401 to trigger background token refresh
+
+	// Driver integration
+	drivers map[domain.Provider]driver.Driver
 }
 
 // SetOnAuthFailure registers a callback invoked when a 401 is observed.
@@ -92,8 +75,64 @@ func New(s store.Store, bus *events.Bus, pauses ErrorPauses) (*Pool, error) {
 		acct.HydrateRuntime()
 		p.accounts[acct.ID] = acct
 	}
-	slog.Info("pool loaded", "accounts", len(p.accounts))
+	migrated := p.migrateProviderState()
+	slog.Info("pool loaded", "accounts", len(p.accounts), "migrated", migrated)
 	return p, nil
+}
+
+// migrateProviderState backfills ProviderStateJSON and Subject from old fields
+// for pre-migration accounts. Runs once at startup. Returns count of migrated accounts.
+func (p *Pool) migrateProviderState() int {
+	count := 0
+	for _, acct := range p.accounts {
+		changed := false
+
+		// Backfill ProviderStateJSON from old rate-limit fields
+		if acct.ProviderStateJSON == "" || acct.ProviderStateJSON == "{}" {
+			var stateJSON []byte
+			if acct.Provider == domain.ProviderCodex {
+				stateJSON, _ = json.Marshal(map[string]interface{}{
+					"primary_util":    acct.CodexPrimaryUtil,
+					"primary_reset":   acct.CodexPrimaryReset,
+					"secondary_util":  acct.CodexSecondaryUtil,
+					"secondary_reset": acct.CodexSecondaryReset,
+				})
+			} else {
+				stateJSON, _ = json.Marshal(map[string]interface{}{
+					"five_hour_status": acct.FiveHourStatus,
+					"five_hour_util":   acct.FiveHourUtil,
+					"five_hour_reset":  acct.FiveHourReset,
+					"seven_day_util":   acct.SevenDayUtil,
+					"seven_day_reset":  acct.SevenDayReset,
+				})
+			}
+			acct.ProviderStateJSON = string(stateJSON)
+			changed = true
+		}
+
+		// Backfill Subject from ExtInfo
+		if acct.Subject == "" && acct.ExtInfo != nil {
+			switch acct.Provider {
+			case domain.ProviderClaude:
+				if orgUUID, ok := acct.ExtInfo["orgUUID"].(string); ok && orgUUID != "" {
+					acct.Subject = orgUUID
+					changed = true
+				}
+			case domain.ProviderCodex:
+				if chatgptID, ok := acct.ExtInfo["chatgptAccountId"].(string); ok && chatgptID != "" {
+					acct.Subject = chatgptID
+					changed = true
+				}
+			}
+		}
+
+		if changed {
+			p.persistLocked(acct)
+			count++
+			slog.Info("migrated account provider state", "id", acct.ID, "email", acct.Email, "provider", acct.Provider)
+		}
+	}
+	return count
 }
 
 // ---------------------------------------------------------------------------
@@ -130,68 +169,6 @@ func (p *Pool) List() []*domain.Account {
 
 // Pick selects the best available account for a request.
 // boundAccountID is from API key binding or session binding.
-// excludeIDs are accounts to skip (already failed this request).
-func (p *Pool) Pick(provider domain.Provider, excludeIDs []string, isOpus bool, boundAccountID string) (*domain.Account, error) {
-	p.mu.RLock()
-	defer p.mu.RUnlock()
-
-	// 1. Bound account — highest priority
-	if boundAccountID != "" {
-		acct, ok := p.accounts[boundAccountID]
-		if ok && p.isAvailable(acct, isOpus) {
-			copy := *acct
-			return &copy, nil
-		}
-		if ok {
-			return nil, fmt.Errorf("bound account %s unavailable (status=%s, schedulable=%v)",
-				boundAccountID, acct.Status, acct.Schedulable)
-		}
-	}
-
-	// 2. Pool selection — filter, sort, pick best
-	type scored struct {
-		acct     *domain.Account
-		priority int
-	}
-	var candidates []scored
-	for _, acct := range p.accounts {
-		if slices.Contains(excludeIDs, acct.ID) {
-			continue
-		}
-		if !p.matchesProvider(acct, provider) {
-			continue
-		}
-		if !p.isAvailable(acct, isOpus) {
-			continue
-		}
-		pri := acct.Priority
-		if acct.PriorityMode == "auto" {
-			pri = AutoPriority(acct)
-		}
-		candidates = append(candidates, scored{acct: acct, priority: pri})
-	}
-
-	if len(candidates) == 0 {
-		return nil, fmt.Errorf("no available accounts")
-	}
-
-	// Sort: priority DESC, then lastUsedAt ASC (round-robin)
-	sort.Slice(candidates, func(i, j int) bool {
-		if candidates[i].priority != candidates[j].priority {
-			return candidates[i].priority > candidates[j].priority
-		}
-		ti := timeOrZero(candidates[i].acct.LastUsedAt)
-		tj := timeOrZero(candidates[j].acct.LastUsedAt)
-		return ti.Before(tj)
-	})
-
-	selected := candidates[0].acct
-	copy := *selected
-	slog.Debug("account selected", "accountId", selected.ID, "email", selected.Email,
-		"priority", candidates[0].priority, "mode", selected.PriorityMode)
-	return &copy, nil
-}
-
 func (p *Pool) isAvailable(acct *domain.Account, isOpus bool) bool {
 	if acct.Status != domain.StatusActive {
 		return false
@@ -222,185 +199,11 @@ func (p *Pool) matchesProvider(acct *domain.Account, provider domain.Provider) b
 	return ap == provider
 }
 
-// AutoPriority computes the effective priority for an auto-mode account.
-// Claude: min(5h_remain%, 7d_remain%); Codex: min(primary_remain%, secondary_remain%).
-func AutoPriority(acct *domain.Account) int {
-	if acct.Provider == domain.ProviderCodex {
-		primaryRemain := 100.0
-		if acct.CodexPrimaryUtil > 0 {
-			primaryRemain = (1.0 - acct.CodexPrimaryUtil) * 100
-		}
-		secondaryRemain := 100.0
-		if acct.CodexSecondaryUtil > 0 {
-			secondaryRemain = (1.0 - acct.CodexSecondaryUtil) * 100
-		}
-		pri := primaryRemain
-		if secondaryRemain < pri {
-			pri = secondaryRemain
-		}
-		return int(pri)
-	}
-
-	fiveRemain := 100.0
-	if acct.FiveHourUtil > 0 {
-		fiveRemain = (1.0 - acct.FiveHourUtil) * 100
-	}
-	sevenRemain := 100.0
-	if acct.SevenDayUtil > 0 {
-		sevenRemain = (1.0 - acct.SevenDayUtil) * 100
-	}
-	pri := fiveRemain
-	if sevenRemain < pri {
-		pri = sevenRemain
-	}
-	return int(pri)
-}
-
 func timeOrZero(t *time.Time) time.Time {
 	if t == nil {
 		return time.Time{}
 	}
 	return *t
-}
-
-// ---------------------------------------------------------------------------
-// Observe (unified state-change entry point) [invariant 1]
-// ---------------------------------------------------------------------------
-
-// Observe records the outcome of an upstream request. This is the ONLY write
-// path for account health state. All error handling, rate limit capture, and
-// cooldown logic flows through here.
-func (p *Pool) Observe(r UpstreamResult) {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-
-	acct, ok := p.accounts[r.AccountID]
-	if !ok {
-		return
-	}
-
-	switch r.StatusCode {
-	case http.StatusOK:
-		// Capture rate limit headers and set lastUsedAt
-		now := time.Now().UTC()
-		acct.LastUsedAt = &now
-		if acct.Provider == domain.ProviderCodex {
-			p.captureCodexHeadersLocked(acct, r.Headers)
-		} else {
-			p.captureClaudeHeadersLocked(acct, r.Headers)
-		}
-
-	case 529:
-		until := time.Now().Add(p.pauses.Pause529)
-		p.applyCooldown(acct, until)
-		now := time.Now().UTC()
-		acct.OverloadedAt = &now
-		p.bus.Publish(events.Event{
-			Type: events.EventOverload, AccountID: acct.ID,
-			Message: fmt.Sprintf("529 overloaded, cooldown until %s", until.Format(time.RFC3339)),
-		})
-		slog.Warn("account overloaded (529)", "accountId", acct.ID, "model", r.Model)
-
-	case 429:
-		// Capture headers first (may contain utilization data)
-		if acct.Provider == domain.ProviderCodex {
-			p.captureCodexHeadersLocked(acct, r.Headers)
-		} else {
-			p.captureClaudeHeadersLocked(acct, r.Headers)
-		}
-
-		// Determine cooldown: Retry-After > unified-reset > codex body resets_in_seconds > config default
-		until := time.Now().Add(p.pauses.Pause429)
-		if retryAfter := parseRetryAfter(r.Headers.Get("Retry-After")); retryAfter > 0 {
-			until = time.Now().Add(retryAfter)
-		} else if resetStr := r.Headers.Get("anthropic-ratelimit-unified-reset"); resetStr != "" {
-			if resetTime, err := time.Parse(time.RFC3339, resetStr); err == nil {
-				until = resetTime
-			}
-		} else if acct.Provider == domain.ProviderCodex && len(r.ErrBody) > 0 {
-			if resetsIn := parseCodexResetsIn(r.ErrBody); resetsIn > 0 {
-				until = time.Now().Add(resetsIn)
-			}
-		}
-		p.applyCooldown(acct, until)
-		now := time.Now().UTC()
-		acct.OverloadedAt = &now
-		acct.RateLimitedAt = &now
-
-		// Mark Opus-specific rate limit
-		if r.IsOpus {
-			if resetStr := r.Headers.Get("anthropic-ratelimit-unified-reset"); resetStr != "" {
-				if resetTime, err := time.Parse(time.RFC3339, resetStr); err == nil {
-					acct.OpusRateLimitEndAt = &resetTime
-				}
-			}
-		}
-
-		p.bus.Publish(events.Event{
-			Type: events.EventRateLimit, AccountID: acct.ID,
-			Message: fmt.Sprintf("429 rate limited, cooldown until %s", until.Format(time.RFC3339)),
-		})
-		slog.Warn("account rate limited (429)", "accountId", acct.ID, "model", r.Model, "until", until.UTC())
-
-	case 403:
-		bodyStr := string(r.ErrBody)
-		if banSignalPattern.MatchString(bodyStr) {
-			until := time.Now().Add(p.pauses.Pause401)
-			acct.Status = domain.StatusBlocked
-			acct.ErrorMessage = fmt.Sprintf("ban signal detected: %s", truncate(bodyStr, 200))
-			acct.Schedulable = false
-			p.applyCooldown(acct, until)
-			p.bus.Publish(events.Event{
-				Type: events.EventBan, AccountID: acct.ID,
-				Message: acct.ErrorMessage,
-			})
-			slog.Error("ban signal detected (403)", "accountId", acct.ID, "model", r.Model)
-		} else {
-			until := time.Now().Add(p.pauses.Pause403)
-			p.applyCooldown(acct, until)
-			now := time.Now().UTC()
-			acct.OverloadedAt = &now
-			slog.Warn("account forbidden (403)", "accountId", acct.ID, "model", r.Model)
-		}
-
-	case 401:
-		until := time.Now().Add(p.pauses.Pause401Refresh)
-		p.applyCooldown(acct, until)
-		p.bus.Publish(events.Event{
-			Type: events.EventRefresh, AccountID: acct.ID,
-			Message: "401 auth failed, background refresh triggered",
-		})
-		slog.Warn("account auth failed (401), triggering refresh",
-			"accountId", acct.ID, "model", r.Model)
-		if p.onAuthFailure != nil {
-			go p.onAuthFailure(acct.ID)
-		}
-	}
-
-	p.persistLocked(acct)
-}
-
-// ObserveSuccess is a shorthand for recording a successful request with rate
-// limit header capture (used by admin_probe and relay success path).
-func (p *Pool) ObserveSuccess(accountID string, headers http.Header) {
-	p.Observe(UpstreamResult{
-		AccountID:  accountID,
-		StatusCode: http.StatusOK,
-		Headers:    headers,
-	})
-}
-
-// MarkLastUsed updates the lastUsedAt timestamp for an account.
-func (p *Pool) MarkLastUsed(accountID string) {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	acct, ok := p.accounts[accountID]
-	if !ok {
-		return
-	}
-	now := time.Now().UTC()
-	acct.LastUsedAt = &now
-	p.persistLocked(acct)
 }
 
 // ClearOverload is an explicit admin reset that clears overload state.
@@ -423,135 +226,6 @@ func (p *Pool) ClearOverload(accountID string) {
 		Message: "admin cleared overload",
 	})
 	slog.Info("admin cleared overload", "accountId", acct.ID)
-}
-
-// ---------------------------------------------------------------------------
-// Rate limit header capture (called under mu.Lock)
-// ---------------------------------------------------------------------------
-
-func (p *Pool) captureClaudeHeadersLocked(acct *domain.Account, headers http.Header) {
-	if headers == nil {
-		return
-	}
-
-	// 5-hour status
-	if status := headers.Get("anthropic-ratelimit-unified-5h-status"); status != "" {
-		acct.FiveHourStatus = status
-		if status == "rejected" {
-			fiveHourReset := headers.Get("anthropic-ratelimit-unified-5h-reset")
-			now := time.Now().UTC()
-			acct.Schedulable = false
-			acct.OverloadedAt = &now
-
-			resetTime := now.Add(5 * time.Hour)
-			if fiveHourReset != "" {
-				if secs, err := strconv.ParseInt(fiveHourReset, 10, 64); err == nil && secs > 0 {
-					resetTime = time.Unix(secs, 0)
-				} else if parsed, err := time.Parse(time.RFC3339, fiveHourReset); err == nil {
-					resetTime = parsed
-				}
-			}
-			p.applyCooldown(acct, resetTime)
-			p.bus.Publish(events.Event{
-				Type: events.EventFiveHStop, AccountID: acct.ID,
-				Message: fmt.Sprintf("5h limit rejected, until %s", resetTime.Format(time.RFC3339)),
-			})
-			slog.Warn("account 5h limit rejected", "accountId", acct.ID, "until", resetTime)
-		}
-	}
-
-	// Utilization + reset
-	if v := headers.Get("anthropic-ratelimit-unified-5h-utilization"); v != "" {
-		if f, err := strconv.ParseFloat(v, 64); err == nil {
-			acct.FiveHourUtil = f
-		}
-	}
-	if v := headers.Get("anthropic-ratelimit-unified-5h-reset"); v != "" {
-		if secs, err := strconv.ParseInt(v, 10, 64); err == nil {
-			acct.FiveHourReset = secs
-		}
-	}
-	if v := headers.Get("anthropic-ratelimit-unified-7d-utilization"); v != "" {
-		if f, err := strconv.ParseFloat(v, 64); err == nil {
-			acct.SevenDayUtil = f
-		}
-	}
-	if v := headers.Get("anthropic-ratelimit-unified-7d-reset"); v != "" {
-		if secs, err := strconv.ParseInt(v, 10, 64); err == nil {
-			acct.SevenDayReset = secs
-		}
-	}
-
-	// Proactive cooldown on near-exhaustion
-	p.maybeCooldownLocked(acct, acct.FiveHourUtil, acct.FiveHourReset, "5h")
-	p.maybeCooldownLocked(acct, acct.SevenDayUtil, acct.SevenDayReset, "7d")
-}
-
-func (p *Pool) captureCodexHeadersLocked(acct *domain.Account, headers http.Header) {
-	if headers == nil {
-		return
-	}
-
-	var primaryResetSecs, secondaryResetSecs int
-
-	if v := headers.Get("x-codex-primary-used-percent"); v != "" {
-		if pct, err := strconv.ParseFloat(v, 64); err == nil {
-			acct.CodexPrimaryUtil = pct / 100
-		}
-	}
-	if v := headers.Get("x-codex-primary-reset-after-seconds"); v != "" {
-		if secs, err := strconv.Atoi(v); err == nil {
-			primaryResetSecs = secs
-			acct.CodexPrimaryReset = time.Now().Unix() + int64(secs)
-		}
-	}
-	if v := headers.Get("x-codex-secondary-used-percent"); v != "" {
-		if pct, err := strconv.ParseFloat(v, 64); err == nil {
-			acct.CodexSecondaryUtil = pct / 100
-		}
-	}
-	if v := headers.Get("x-codex-secondary-reset-after-seconds"); v != "" {
-		if secs, err := strconv.Atoi(v); err == nil {
-			secondaryResetSecs = secs
-			acct.CodexSecondaryReset = time.Now().Unix() + int64(secs)
-		}
-	}
-
-	// Proactive cooldown: pick the longest reset among exhausted windows
-	var cooldownUntil time.Time
-	if acct.CodexPrimaryUtil >= 0.99 && primaryResetSecs > 0 {
-		t := time.Now().Add(time.Duration(primaryResetSecs) * time.Second)
-		if t.After(cooldownUntil) {
-			cooldownUntil = t
-		}
-	}
-	if acct.CodexSecondaryUtil >= 0.99 && secondaryResetSecs > 0 {
-		t := time.Now().Add(time.Duration(secondaryResetSecs) * time.Second)
-		if t.After(cooldownUntil) {
-			cooldownUntil = t
-		}
-	}
-	if !cooldownUntil.IsZero() {
-		p.applyCooldown(acct, cooldownUntil)
-		now := time.Now().UTC()
-		acct.OverloadedAt = &now
-		slog.Warn("codex account rate limit exhausted", "accountId", acct.ID, "until", cooldownUntil)
-	}
-}
-
-// maybeCooldownLocked sets cooldown if utilization >= 0.99 and reset is in the future.
-func (p *Pool) maybeCooldownLocked(acct *domain.Account, util float64, resetSecs int64, window string) {
-	if util < 0.99 || resetSecs <= 0 {
-		return
-	}
-	resetTime := time.Unix(resetSecs, 0)
-	if time.Now().After(resetTime) {
-		return
-	}
-	p.applyCooldown(acct, resetTime)
-	now := time.Now().UTC()
-	acct.OverloadedAt = &now
-	slog.Warn("account rate limit exhausted", "accountId", acct.ID, "window", window, "until", resetTime)
 }
 
 // ---------------------------------------------------------------------------
@@ -748,23 +422,18 @@ func (p *Pool) cleanup() {
 }
 
 func (p *Pool) computeExhaustedCooldown(acct *domain.Account, now int64) int64 {
-	var cooldownUntil int64
-	if acct.Provider == domain.ProviderCodex {
-		if acct.CodexPrimaryUtil >= 0.99 && acct.CodexPrimaryReset > now {
-			cooldownUntil = acct.CodexPrimaryReset
-		}
-		if acct.CodexSecondaryUtil >= 0.99 && acct.CodexSecondaryReset > now && acct.CodexSecondaryReset > cooldownUntil {
-			cooldownUntil = acct.CodexSecondaryReset
-		}
-	} else {
-		if acct.FiveHourUtil >= 0.99 && acct.FiveHourReset > now {
-			cooldownUntil = acct.FiveHourReset
-		}
-		if acct.SevenDayUtil >= 0.99 && acct.SevenDayReset > now && acct.SevenDayReset > cooldownUntil {
-			cooldownUntil = acct.SevenDayReset
-		}
+	if p.drivers == nil {
+		return 0
 	}
-	return cooldownUntil
+	drv, ok := p.drivers[acct.Provider]
+	if !ok {
+		return 0
+	}
+	t := drv.ComputeExhaustedCooldown(json.RawMessage(acct.ProviderStateJSON), time.Unix(now, 0))
+	if !t.IsZero() {
+		return t.Unix()
+	}
+	return 0
 }
 
 // ---------------------------------------------------------------------------
@@ -920,48 +589,177 @@ func (p *Pool) MarkError(accountID, msg string) {
 }
 
 // ---------------------------------------------------------------------------
-// Helpers
+// Driver integration
 // ---------------------------------------------------------------------------
 
-func parseRetryAfter(value string) time.Duration {
-	if value == "" {
-		return 0
+// SetDrivers injects provider drivers into the pool.
+func (p *Pool) SetDrivers(drivers map[domain.Provider]driver.Driver) {
+	p.drivers = drivers
+}
+
+// Observe applies a provider-agnostic Effect to an account.
+func (p *Pool) Observe(accountID string, effect driver.Effect) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	acct, ok := p.accounts[accountID]
+	if !ok {
+		return
 	}
-	if secs, err := strconv.Atoi(value); err == nil && secs > 0 {
-		return time.Duration(secs) * time.Second
-	}
-	if t, err := time.Parse(time.RFC1123, value); err == nil {
-		if d := time.Until(t); d > 0 {
-			return d
+
+	switch effect.Kind {
+	case driver.EffectSuccess:
+		now := time.Now().UTC()
+		acct.LastUsedAt = &now
+
+	case driver.EffectCooldown:
+		p.applyCooldown(acct, effect.CooldownUntil)
+		now := time.Now().UTC()
+		acct.OverloadedAt = &now
+		acct.RateLimitedAt = &now
+		if effect.IsOpusLimit {
+			acct.OpusRateLimitEndAt = &effect.OpusResetAt
+		}
+		p.bus.Publish(events.Event{
+			Type: events.EventRateLimit, AccountID: acct.ID,
+			Message: fmt.Sprintf("cooldown until %s", effect.CooldownUntil.Format(time.RFC3339)),
+		})
+
+	case driver.EffectOverload:
+		p.applyCooldown(acct, effect.CooldownUntil)
+		now := time.Now().UTC()
+		acct.OverloadedAt = &now
+		p.bus.Publish(events.Event{
+			Type: events.EventOverload, AccountID: acct.ID,
+			Message: fmt.Sprintf("overloaded, cooldown until %s", effect.CooldownUntil.Format(time.RFC3339)),
+		})
+
+	case driver.EffectBlock:
+		acct.Status = domain.StatusBlocked
+		acct.ErrorMessage = effect.ErrorMessage
+		acct.Schedulable = false
+		p.applyCooldown(acct, effect.CooldownUntil)
+		p.bus.Publish(events.Event{
+			Type: events.EventBan, AccountID: acct.ID,
+			Message: effect.ErrorMessage,
+		})
+
+	case driver.EffectAuthFail:
+		p.applyCooldown(acct, effect.CooldownUntil)
+		p.bus.Publish(events.Event{
+			Type: events.EventRefresh, AccountID: acct.ID,
+			Message: "auth failed, background refresh triggered",
+		})
+		if p.onAuthFailure != nil {
+			go p.onAuthFailure(acct.ID)
 		}
 	}
-	return 0
+
+	// Update provider state JSON if provided
+	if len(effect.UpdatedState) > 0 {
+		acct.ProviderStateJSON = string(effect.UpdatedState)
+	}
+
+	p.persistLocked(acct)
 }
 
-// parseCodexResetsIn extracts resets_in_seconds from a Codex 429 JSON body:
-// {"error":{"type":"usage_limit_reached","resets_in_seconds":1125}}
-func parseCodexResetsIn(body []byte) time.Duration {
-	var envelope struct {
-		Error struct {
-			ResetsInSeconds int `json:"resets_in_seconds"`
-		} `json:"error"`
+// FindBySubject returns an account matching provider+subject, or nil.
+func (p *Pool) FindBySubject(provider domain.Provider, subject string) *domain.Account {
+	if subject == "" {
+		return nil
 	}
-	if json.Unmarshal(body, &envelope) == nil && envelope.Error.ResetsInSeconds > 0 {
-		return time.Duration(envelope.Error.ResetsInSeconds) * time.Second
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+	for _, acct := range p.accounts {
+		if acct.Provider == provider && acct.Subject == subject {
+			copy := *acct
+			return &copy
+		}
 	}
-	return 0
+	return nil
 }
 
-func truncate(s string, maxLen int) string {
-	if len(s) <= maxLen {
-		return s
+// FindByExtInfoKey returns an account matching provider + ExtInfo[key]==value, or nil.
+// Used as fallback dedup for pre-migration accounts that have subject=''.
+func (p *Pool) FindByExtInfoKey(provider domain.Provider, key, value string) *domain.Account {
+	if value == "" {
+		return nil
 	}
-	return s[:maxLen] + "..."
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+	for _, acct := range p.accounts {
+		if acct.Provider != provider {
+			continue
+		}
+		if v, ok := acct.ExtInfo[key].(string); ok && v == value {
+			copy := *acct
+			return &copy
+		}
+	}
+	return nil
 }
 
-// BanSignalPattern is exported for use by the relay package.
-func IsBanSignal(body string) bool {
-	return banSignalPattern.MatchString(body)
+// Pick selects the best available account using the driver's AutoPriority.
+func (p *Pool) Pick(drv driver.Driver, excludeIDs []string, isOpus bool, boundAccountID string) (*domain.Account, error) {
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+
+	provider := drv.Provider()
+
+	// 1. Bound account — highest priority
+	if boundAccountID != "" {
+		acct, ok := p.accounts[boundAccountID]
+		if ok && p.isAvailable(acct, isOpus) {
+			copy := *acct
+			return &copy, nil
+		}
+		if ok {
+			return nil, fmt.Errorf("bound account %s unavailable (status=%s, schedulable=%v)",
+				boundAccountID, acct.Status, acct.Schedulable)
+		}
+	}
+
+	// 2. Pool selection
+	type scored struct {
+		acct     *domain.Account
+		priority int
+	}
+	var candidates []scored
+	for _, acct := range p.accounts {
+		if slices.Contains(excludeIDs, acct.ID) {
+			continue
+		}
+		if !p.matchesProvider(acct, provider) {
+			continue
+		}
+		if !p.isAvailable(acct, isOpus) {
+			continue
+		}
+		pri := acct.Priority
+		if acct.PriorityMode == "auto" {
+			pri = drv.AutoPriority(json.RawMessage(acct.ProviderStateJSON))
+		}
+		candidates = append(candidates, scored{acct: acct, priority: pri})
+	}
+
+	if len(candidates) == 0 {
+		return nil, fmt.Errorf("no available accounts")
+	}
+
+	sort.Slice(candidates, func(i, j int) bool {
+		if candidates[i].priority != candidates[j].priority {
+			return candidates[i].priority > candidates[j].priority
+		}
+		ti := timeOrZero(candidates[i].acct.LastUsedAt)
+		tj := timeOrZero(candidates[j].acct.LastUsedAt)
+		return ti.Before(tj)
+	})
+
+	selected := candidates[0].acct
+	copy := *selected
+	slog.Debug("account selected (driver)", "accountId", selected.ID, "email", selected.Email,
+		"priority", candidates[0].priority, "mode", selected.PriorityMode)
+	return &copy, nil
 }
 
 // BindStainlessFromRequest captures and replays stainless headers.

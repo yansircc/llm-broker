@@ -15,6 +15,8 @@ import (
 
 	"github.com/yansir/cc-relayer/internal/auth"
 	"github.com/yansir/cc-relayer/internal/config"
+	"github.com/yansir/cc-relayer/internal/domain"
+	"github.com/yansir/cc-relayer/internal/driver"
 	"github.com/yansir/cc-relayer/internal/events"
 	"github.com/yansir/cc-relayer/internal/oauth"
 	"github.com/yansir/cc-relayer/internal/pool"
@@ -37,6 +39,7 @@ type Server struct {
 	httpServer   *http.Server
 	version      string
 	startTime    time.Time
+	drivers      map[domain.Provider]driver.Driver
 }
 
 func New(
@@ -49,6 +52,7 @@ func New(
 	authMw *auth.Middleware,
 	bus *events.Bus,
 	version string,
+	drivers map[domain.Provider]driver.Driver,
 ) *Server {
 	srv := &Server{
 		cfg:          cfg,
@@ -61,6 +65,7 @@ func New(
 		bus:          bus,
 		version:      version,
 		startTime:    time.Now(),
+		drivers:      drivers,
 	}
 
 	mux := http.NewServeMux()
@@ -89,10 +94,10 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 	// Models endpoint (no auth — public metadata)
 	mux.HandleFunc("GET /v1/models", s.handleListModels)
 
-	// Relay endpoints
+	// Relay endpoints (unified handler via Driver interface)
 	mux.Handle("POST /v1/messages", auth(http.HandlerFunc(s.relay.Handle)))
-	mux.Handle("POST /v1/messages/count_tokens", auth(http.HandlerFunc(s.relay.HandleCountTokens)))
-	mux.Handle("POST /openai/responses", auth(http.HandlerFunc(s.relay.HandleCodex)))
+	mux.Handle("POST /v1/messages/count_tokens", auth(http.HandlerFunc(s.relay.Handle)))
+	mux.Handle("POST /openai/responses", auth(http.HandlerFunc(s.relay.Handle)))
 
 	// Telemetry sink
 	mux.HandleFunc("POST /api/event_logging/batch", func(w http.ResponseWriter, r *http.Request) {

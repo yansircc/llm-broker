@@ -9,6 +9,8 @@ import (
 	"github.com/yansir/cc-relayer/internal/auth"
 	"github.com/yansir/cc-relayer/internal/config"
 	"github.com/yansir/cc-relayer/internal/crypto"
+	"github.com/yansir/cc-relayer/internal/domain"
+	"github.com/yansir/cc-relayer/internal/driver"
 	"github.com/yansir/cc-relayer/internal/events"
 	"github.com/yansir/cc-relayer/internal/identity"
 	"github.com/yansir/cc-relayer/internal/oauth"
@@ -98,20 +100,38 @@ func main() {
 	// Initialize identity transformer
 	trans := identity.NewTransformer(p, cfg.MaxCacheControls)
 
+	// Initialize drivers
+	pauses := driver.ErrorPauses{
+		Pause401:        cfg.ErrorPause401,
+		Pause401Refresh: cfg.ErrorPause401Refresh,
+		Pause403:        cfg.ErrorPause403,
+		Pause429:        cfg.ErrorPause429,
+		Pause529:        cfg.ErrorPause529,
+	}
+	drivers := map[domain.Provider]driver.Driver{
+		domain.ProviderClaude: driver.NewClaudeDriver(driver.ClaudeConfig{
+			APIURL:     cfg.ClaudeAPIURL,
+			APIVersion: cfg.ClaudeAPIVersion,
+			BetaHeader: cfg.ClaudeBetaHeader,
+			Pauses:     pauses,
+		}, trans),
+		domain.ProviderCodex: driver.NewCodexDriver(driver.CodexConfig{
+			APIURL: cfg.CodexAPIURL,
+			Pauses: pauses,
+		}),
+	}
+	p.SetDrivers(drivers)
+
 	// Initialize relay
-	r := relay.New(p, tokMgr, trans, s, relay.Config{
-		ClaudeAPIURL:      cfg.ClaudeAPIURL,
-		ClaudeAPIVersion:  cfg.ClaudeAPIVersion,
-		ClaudeBetaHeader:  cfg.ClaudeBetaHeader,
-		CodexAPIURL:       cfg.CodexAPIURL,
+	r := relay.New(p, tokMgr, s, relay.Config{
 		MaxRequestBodyMB:  cfg.MaxRequestBodyMB,
 		MaxRetryAccounts:  cfg.MaxRetryAccounts,
 		SessionBindingTTL: cfg.SessionBindingTTL,
-	}, tm, bus)
+	}, tm, bus, drivers)
 
 	// Start server
 	ctx := context.Background()
-	srv := server.New(cfg, s, p, tokMgr, r, tm, authMw, bus, version)
+	srv := server.New(cfg, s, p, tokMgr, r, tm, authMw, bus, version, drivers)
 	if err := srv.Run(ctx); err != nil {
 		slog.Error("server error", "error", err)
 		os.Exit(1)

@@ -1,15 +1,71 @@
 package pool
 
 import (
+	"context"
+	"encoding/json"
 	"net/http"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/yansir/cc-relayer/internal/domain"
+	"github.com/yansir/cc-relayer/internal/driver"
 	"github.com/yansir/cc-relayer/internal/events"
 	"github.com/yansir/cc-relayer/internal/store"
 )
+
+// mockDriver is a minimal Driver implementation for pool tests.
+type mockDriver struct {
+	provider domain.Provider
+}
+
+func (m *mockDriver) Provider() domain.Provider { return m.provider }
+func (m *mockDriver) AutoPriority(state json.RawMessage) int {
+	return 50 // default
+}
+func (m *mockDriver) BuildRequest(_ context.Context, _ *driver.RelayInput, _ *domain.Account, _ string) (*http.Request, error) {
+	return nil, nil
+}
+func (m *mockDriver) Interpret(_ int, _ http.Header, _ []byte, _ string) driver.Effect {
+	return driver.Effect{}
+}
+func (m *mockDriver) StreamResponse(_ context.Context, _ http.ResponseWriter, _ *http.Response) (bool, *driver.Usage) {
+	return false, nil
+}
+func (m *mockDriver) ForwardResponse(_ http.ResponseWriter, _ *http.Response) {}
+func (m *mockDriver) ParseJSONUsage(_ []byte) *driver.Usage                   { return nil }
+func (m *mockDriver) ShouldRetry(_ int) bool                                  { return false }
+func (m *mockDriver) RetrySameAccount(_ int, _ []byte, _ int) bool            { return false }
+func (m *mockDriver) ParseNonRetriable(_ int, _ []byte) bool                  { return false }
+func (m *mockDriver) WriteError(_ http.ResponseWriter, _ int, _ string)       {}
+func (m *mockDriver) WriteUpstreamError(_ http.ResponseWriter, _ int, _ []byte, _ bool) {
+}
+func (m *mockDriver) InterceptRequest(_ http.ResponseWriter, _ map[string]interface{}, _ string) bool {
+	return false
+}
+func (m *mockDriver) ExtractSessionUUID(_ map[string]interface{}) string { return "" }
+func (m *mockDriver) GenerateAuthURL() (string, driver.OAuthSession, error) {
+	return "", driver.OAuthSession{}, nil
+}
+func (m *mockDriver) ExchangeCode(_ context.Context, _, _, _ string) (*driver.ExchangeResult, error) {
+	return nil, nil
+}
+func (m *mockDriver) RefreshToken(_ context.Context, _ *http.Client, _ string) (*driver.TokenResponse, error) {
+	return nil, nil
+}
+func (m *mockDriver) BuildProbeRequest(_ context.Context, _ *domain.Account, _ string) (*http.Request, error) {
+	return nil, nil
+}
+func (m *mockDriver) IsStale(_ json.RawMessage, _ time.Time) bool { return false }
+func (m *mockDriver) ComputeExhaustedCooldown(_ json.RawMessage, _ time.Time) time.Time {
+	return time.Time{}
+}
+func (m *mockDriver) CalcCost(_ string, _ *driver.Usage) float64 { return 0 }
+func (m *mockDriver) GetUtilization(_ json.RawMessage) (*driver.UtilWindow, *driver.UtilWindow) {
+	return nil, nil
+}
+
+var testDriver = &mockDriver{provider: domain.ProviderClaude}
 
 func newTestPool(t *testing.T, accounts ...*domain.Account) *Pool {
 	t.Helper()
@@ -58,7 +114,7 @@ func TestPick_NeverReturnsUnavailable(t *testing.T) {
 	p := newTestPool(t, blocked, unschedulable, overloaded, opusLimited, good)
 
 	// Pick should return "good" (highest priority, others filtered)
-	acct, err := p.Pick(domain.ProviderClaude, nil, false, "")
+	acct, err := p.Pick(testDriver, nil, false, "")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -67,7 +123,7 @@ func TestPick_NeverReturnsUnavailable(t *testing.T) {
 	}
 
 	// With opus, opusLimited should also be excluded, still get "good"
-	acct, err = p.Pick(domain.ProviderClaude, nil, true, "")
+	acct, err = p.Pick(testDriver, nil, true, "")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -76,7 +132,7 @@ func TestPick_NeverReturnsUnavailable(t *testing.T) {
 	}
 
 	// Exclude "good" with opus → no accounts available (opusLimited blocked by opus check)
-	_, err = p.Pick(domain.ProviderClaude, []string{"g"}, true, "")
+	_, err = p.Pick(testDriver, []string{"g"}, true, "")
 	if err == nil {
 		t.Fatal("expected error when all accounts unavailable for opus")
 	}
@@ -116,10 +172,9 @@ func TestObserve_ConcurrentCooldown(t *testing.T) {
 		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()
-			p.Observe(UpstreamResult{
-				AccountID:  "a",
-				StatusCode: 529,
-				Model:      "sonnet",
+			p.Observe("a", driver.Effect{
+				Kind:          driver.EffectOverload,
+				CooldownUntil: time.Now().Add(5 * time.Minute),
 			})
 		}(i)
 	}
@@ -146,10 +201,9 @@ func TestObserve401_BackgroundRefresh(t *testing.T) {
 		called <- accountID
 	})
 
-	p.Observe(UpstreamResult{
-		AccountID:  "a",
-		StatusCode: 401,
-		Model:      "sonnet",
+	p.Observe("a", driver.Effect{
+		Kind:          driver.EffectAuthFail,
+		CooldownUntil: time.Now().Add(30 * time.Second),
 	})
 
 	// Verify account is NOT set to StatusError (key change from old behavior)
@@ -177,12 +231,15 @@ func TestObserve401_BackgroundRefresh(t *testing.T) {
 	}
 }
 
-// Test 5: Status transitions for various codes
+// Test 5: Status transitions for various effect kinds
 func TestObserve_StatusTransitions(t *testing.T) {
 	t.Run("529_cooldown", func(t *testing.T) {
 		acct := activeAccount("a", "a@x")
 		p := newTestPool(t, acct)
-		p.Observe(UpstreamResult{AccountID: "a", StatusCode: 529})
+		p.Observe("a", driver.Effect{
+			Kind:          driver.EffectOverload,
+			CooldownUntil: time.Now().Add(5 * time.Minute),
+		})
 		p.mu.RLock()
 		a := p.accounts["a"]
 		if a.Schedulable {
@@ -197,9 +254,13 @@ func TestObserve_StatusTransitions(t *testing.T) {
 	t.Run("429_cooldown_and_opus", func(t *testing.T) {
 		acct := activeAccount("a", "a@x")
 		p := newTestPool(t, acct)
-		h := http.Header{}
-		h.Set("anthropic-ratelimit-unified-reset", time.Now().Add(10*time.Minute).Format(time.RFC3339))
-		p.Observe(UpstreamResult{AccountID: "a", StatusCode: 429, Headers: h, IsOpus: true})
+		opusReset := time.Now().Add(10 * time.Minute)
+		p.Observe("a", driver.Effect{
+			Kind:          driver.EffectCooldown,
+			CooldownUntil: time.Now().Add(1 * time.Minute),
+			IsOpusLimit:   true,
+			OpusResetAt:   opusReset,
+		})
 		p.mu.RLock()
 		a := p.accounts["a"]
 		if a.Schedulable {
@@ -214,7 +275,11 @@ func TestObserve_StatusTransitions(t *testing.T) {
 	t.Run("403_ban_blocked", func(t *testing.T) {
 		acct := activeAccount("a", "a@x")
 		p := newTestPool(t, acct)
-		p.Observe(UpstreamResult{AccountID: "a", StatusCode: 403, ErrBody: []byte("organization has been disabled")})
+		p.Observe("a", driver.Effect{
+			Kind:          driver.EffectBlock,
+			CooldownUntil: time.Now().Add(30 * time.Minute),
+			ErrorMessage:  "organization has been disabled",
+		})
 		p.mu.RLock()
 		a := p.accounts["a"]
 		if a.Status != domain.StatusBlocked {
@@ -226,7 +291,10 @@ func TestObserve_StatusTransitions(t *testing.T) {
 	t.Run("403_nonban_cooldown", func(t *testing.T) {
 		acct := activeAccount("a", "a@x")
 		p := newTestPool(t, acct)
-		p.Observe(UpstreamResult{AccountID: "a", StatusCode: 403, ErrBody: []byte("some other error")})
+		p.Observe("a", driver.Effect{
+			Kind:          driver.EffectCooldown,
+			CooldownUntil: time.Now().Add(10 * time.Minute),
+		})
 		p.mu.RLock()
 		a := p.accounts["a"]
 		if a.Status != domain.StatusActive {
@@ -319,7 +387,7 @@ func TestPick_PrioritySort(t *testing.T) {
 	p := newTestPool(t, a1, a2, a3)
 
 	// a3 should win (highest priority)
-	acct, err := p.Pick(domain.ProviderClaude, nil, false, "")
+	acct, err := p.Pick(testDriver, nil, false, "")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -328,7 +396,7 @@ func TestPick_PrioritySort(t *testing.T) {
 	}
 
 	// Exclude a3, then a2 should win (same priority, older lastUsedAt)
-	acct, err = p.Pick(domain.ProviderClaude, []string{"a3"}, false, "")
+	acct, err = p.Pick(testDriver, []string{"a3"}, false, "")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
