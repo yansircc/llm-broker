@@ -287,6 +287,12 @@ func TestConvertRequest_ToolChoiceMapping(t *testing.T) {
 			if tc != nil {
 				t.Errorf("input=%s: tool_choice = %v, want nil", tt.input, tc)
 			}
+			// "none" must also strip tools from the body
+			if tt.input == `"none"` {
+				if body["tools"] != nil {
+					t.Errorf("input=%s: tools should be stripped, got %v", tt.input, body["tools"])
+				}
+			}
 			continue
 		}
 

@@ -237,10 +237,7 @@ func (r *Relay) chatJSONResponse(w http.ResponseWriter, resp *http.Response) *co
 	data, usage, err := compat.ConvertResponse(body)
 	if err != nil {
 		slog.Error("chat: response conversion failed", "error", err)
-		// Fall through — return the raw Anthropic response as-is
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusOK)
-		w.Write(body)
+		writeChatError(w, http.StatusInternalServerError, "server_error", "failed to process upstream response")
 		return nil
 	}
 

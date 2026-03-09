@@ -144,10 +144,12 @@ func (sc *StreamConverter) onContentBlockStart(data []byte) {
 
 	if ev.ContentBlock.Type == "tool_use" {
 		sc.toolIndex++
+		idx := sc.toolIndex
 		sc.emitChunk(&ChatRespMessage{
 			ToolCalls: []ToolCall{{
-				ID:   ev.ContentBlock.ID,
-				Type: "function",
+				Index: &idx,
+				ID:    ev.ContentBlock.ID,
+				Type:  "function",
 				Function: ToolCallFunction{
 					Name:      ev.ContentBlock.Name,
 					Arguments: "",
@@ -176,9 +178,11 @@ func (sc *StreamConverter) onContentBlockDelta(data []byte) {
 		sc.emitChunk(&ChatRespMessage{Content: &ev.Delta.Text}, nil)
 
 	case "input_json_delta":
-		// Tool arguments chunk — use the same index
+		// Tool arguments chunk — index only, no id/type/name (omitempty drops them)
+		idx := sc.toolIndex
 		sc.emitChunk(&ChatRespMessage{
 			ToolCalls: []ToolCall{{
+				Index: &idx,
 				Function: ToolCallFunction{
 					Arguments: ev.Delta.PartialJSON,
 				},

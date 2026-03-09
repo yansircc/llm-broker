@@ -97,24 +97,26 @@ func ConvertRequest(req *ChatCompletionRequest) (map[string]any, error) {
 		}
 	}
 
-	// Tools
-	if len(req.Tools) > 0 {
+	// Tool choice — resolve first so "none" can suppress tools
+	var toolChoiceNone bool
+	if req.ToolChoice != nil {
+		tc, none, err := convertToolChoice(req.ToolChoice)
+		if err != nil {
+			return nil, fmt.Errorf("tool_choice: %w", err)
+		}
+		toolChoiceNone = none
+		if tc != nil {
+			body["tool_choice"] = tc
+		}
+	}
+
+	// Tools — skip entirely when tool_choice is "none"
+	if len(req.Tools) > 0 && !toolChoiceNone {
 		tools, err := convertTools(req.Tools)
 		if err != nil {
 			return nil, fmt.Errorf("tools: %w", err)
 		}
 		body["tools"] = tools
-	}
-
-	// Tool choice
-	if req.ToolChoice != nil {
-		tc, err := convertToolChoice(req.ToolChoice)
-		if err != nil {
-			return nil, fmt.Errorf("tool_choice: %w", err)
-		}
-		if tc != nil {
-			body["tool_choice"] = tc
-		}
 	}
 
 	// User → metadata.user_id
@@ -306,9 +308,9 @@ func convertTools(tools []ChatTool) ([]any, error) {
 	return out, nil
 }
 
-func convertToolChoice(raw json.RawMessage) (any, error) {
+func convertToolChoice(raw json.RawMessage) (any, bool, error) {
 	if len(raw) == 0 || string(raw) == "null" {
-		return nil, nil
+		return nil, false, nil
 	}
 
 	// Try as string first: "auto", "none", "required"
@@ -316,13 +318,13 @@ func convertToolChoice(raw json.RawMessage) (any, error) {
 	if json.Unmarshal(raw, &s) == nil {
 		switch s {
 		case "auto":
-			return map[string]any{"type": "auto"}, nil
+			return map[string]any{"type": "auto"}, false, nil
 		case "none":
-			return nil, nil // Anthropic: just don't send tools
+			return nil, true, nil // strip tools entirely
 		case "required":
-			return map[string]any{"type": "any"}, nil
+			return map[string]any{"type": "any"}, false, nil
 		default:
-			return map[string]any{"type": "auto"}, nil
+			return map[string]any{"type": "auto"}, false, nil
 		}
 	}
 
@@ -334,15 +336,15 @@ func convertToolChoice(raw json.RawMessage) (any, error) {
 		} `json:"function"`
 	}
 	if err := json.Unmarshal(raw, &obj); err != nil {
-		return map[string]any{"type": "auto"}, nil
+		return map[string]any{"type": "auto"}, false, nil
 	}
 	if obj.Type == "function" && obj.Function.Name != "" {
 		return map[string]any{
 			"type": "tool",
 			"name": obj.Function.Name,
-		}, nil
+		}, false, nil
 	}
-	return map[string]any{"type": "auto"}, nil
+	return map[string]any{"type": "auto"}, false, nil
 }
 
 // ---------------------------------------------------------------------------

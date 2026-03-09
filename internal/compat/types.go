@@ -60,15 +60,17 @@ type ChatFunction struct {
 }
 
 // ToolCall is an assistant's invocation of a tool.
+// For streaming deltas, only Index + partial Function are sent.
 type ToolCall struct {
-	ID       string           `json:"id"`
-	Type     string           `json:"type"`
+	Index    *int             `json:"index,omitempty"`
+	ID       string           `json:"id,omitempty"`
+	Type     string           `json:"type,omitempty"`
 	Function ToolCallFunction `json:"function"`
 }
 
 // ToolCallFunction holds the name and serialised arguments for a tool call.
 type ToolCallFunction struct {
-	Name      string `json:"name"`
+	Name      string `json:"name,omitempty"`
 	Arguments string `json:"arguments"`
 }
 
