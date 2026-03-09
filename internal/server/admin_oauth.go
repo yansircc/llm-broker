@@ -1,17 +1,14 @@
 package server
 
 import (
-	"context"
 	"encoding/json"
-	"io"
 	"log/slog"
 	"net/http"
-	"strings"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/yansir/cc-relayer/internal/domain"
-	"github.com/yansir/cc-relayer/internal/identity"
+	"github.com/yansir/cc-relayer/internal/driver"
 	"github.com/yansir/cc-relayer/internal/oauth"
 )
 
@@ -22,16 +19,8 @@ func (s *Server) handleGenerateAuthURL(w http.ResponseWriter, r *http.Request) {
 		provider = "claude"
 	}
 
-	var authURL string
-	var session oauth.OAuthSession
-	var err error
-
-	switch provider {
-	case "codex":
-		authURL, session, err = oauth.GenerateCodexAuthURL()
-	default:
-		authURL, session, err = oauth.GenerateAuthURL()
-	}
+	drv := s.drivers[resolveProvider(provider)]
+	authURL, session, err := drv.GenerateAuthURL()
 	if err != nil {
 		writeAdminError(w, http.StatusInternalServerError, "internal_error", err.Error())
 		return
@@ -39,7 +28,7 @@ func (s *Server) handleGenerateAuthURL(w http.ResponseWriter, r *http.Request) {
 
 	sessionID := uuid.New().String()
 	sessionData := struct {
-		oauth.OAuthSession
+		driver.OAuthSession
 		Provider string `json:"provider"`
 	}{session, provider}
 	sessionJSON, _ := json.Marshal(sessionData)
@@ -76,7 +65,7 @@ func (s *Server) handleExchangeCode(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		var session struct {
-			oauth.OAuthSession
+			driver.OAuthSession
 			Provider string `json:"provider"`
 		}
 		if err := json.Unmarshal([]byte(sessionJSON), &session); err != nil {
@@ -101,39 +90,35 @@ func (s *Server) handleExchangeCode(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if provider == "codex" {
-		s.exchangeCodexCode(w, r, req.Code, req.CodeVerifier)
-		return
-	}
-
-	if req.State == "" {
+	if provider != "codex" && req.State == "" {
 		writeAdminError(w, http.StatusBadRequest, "invalid_request", "state is required for Claude OAuth")
 		return
 	}
-	s.exchangeClaudeCode(w, r, req.Code, req.CodeVerifier, req.State)
-}
 
-func (s *Server) exchangeClaudeCode(w http.ResponseWriter, r *http.Request, code, verifier, state string) {
-	result, err := oauth.ExchangeCode(r.Context(), code, verifier, state)
+	// Unified exchange via driver
+	drv := s.drivers[resolveProvider(provider)]
+	result, err := drv.ExchangeCode(r.Context(), req.Code, req.CodeVerifier, req.State)
 	if err != nil {
-		slog.Error("exchange code failed", "error", err)
+		slog.Error("exchange code failed", "provider", provider, "error", err)
 		writeAdminError(w, http.StatusBadGateway, "oauth_error", err.Error())
 		return
 	}
-
-	orgUUID, email, orgName, err := oauth.FetchOrgWithToken(r.Context(), result.AccessToken)
-	if err != nil {
-		slog.Warn("fetch org info via claude.ai failed, trying API header", "error", err)
-		orgUUID = fetchOrgUUIDFromAPIHeader(r.Context(), s.cfg.ClaudeAPIURL, result.AccessToken, s.cfg.ClaudeAPIVersion, s.cfg.ClaudeBetaHeader)
-		email = "account-" + time.Now().Format("0102-1504")
+	if result.Subject == "" {
+		writeAdminError(w, http.StatusInternalServerError, "internal_error", "exchange returned empty subject")
+		return
 	}
 
-	existing := s.findAccountByExtInfoKey("orgUUID", orgUUID)
+	// Dedup by provider + subject
+	existing := s.pool.FindBySubject(drv.Provider(), result.Subject)
 
-	extInfo := map[string]interface{}{
-		"orgUUID": orgUUID,
-		"orgName": orgName,
-		"email":   email,
+	// Fallback: pre-migration accounts have subject='' — search by ExtInfo key
+	if existing == nil {
+		switch drv.Provider() {
+		case domain.ProviderClaude:
+			existing = s.pool.FindByExtInfoKey(drv.Provider(), "orgUUID", result.Subject)
+		case domain.ProviderCodex:
+			existing = s.pool.FindByExtInfoKey(drv.Provider(), "chatgptAccountId", result.Subject)
+		}
 	}
 
 	if existing != nil {
@@ -153,13 +138,14 @@ func (s *Server) exchangeClaudeCode(w http.ResponseWriter, r *http.Request, code
 			return
 		}
 		_ = s.pool.Update(existing.ID, func(a *domain.Account) {
-			a.Email = email
+			a.Email = result.Email
 			a.Status = domain.StatusActive
-			a.ExtInfo = extInfo
+			a.ExtInfo = result.ExtInfo
+			a.Subject = result.Subject
 		})
 
-		slog.Info("account updated via code exchange", "id", existing.ID, "email", email)
-		writeJSON(w, http.StatusOK, map[string]string{"id": existing.ID, "email": email, "status": "active"})
+		slog.Info("account updated via code exchange", "id", existing.ID, "email", result.Email, "provider", provider)
+		writeJSON(w, http.StatusOK, map[string]string{"id": existing.ID, "email": result.Email, "status": "active"})
 		return
 	}
 
@@ -178,8 +164,9 @@ func (s *Server) exchangeClaudeCode(w http.ResponseWriter, r *http.Request, code
 
 	acct := &domain.Account{
 		ID:              uuid.New().String(),
-		Email:           email,
-		Provider:        domain.ProviderClaude,
+		Email:           result.Email,
+		Provider:        drv.Provider(),
+		Subject:         result.Subject,
 		Status:          domain.StatusActive,
 		Schedulable:     true,
 		Priority:        50,
@@ -188,7 +175,7 @@ func (s *Server) exchangeClaudeCode(w http.ResponseWriter, r *http.Request, code
 		AccessTokenEnc:  encAccess,
 		ExpiresAt:       expiresAt,
 		CreatedAt:       time.Now().UTC(),
-		ExtInfo:         extInfo,
+		ExtInfo:         result.ExtInfo,
 	}
 	now := time.Now().UTC()
 	acct.LastRefreshAt = &now
@@ -198,127 +185,14 @@ func (s *Server) exchangeClaudeCode(w http.ResponseWriter, r *http.Request, code
 		return
 	}
 
-	slog.Info("account created via code exchange", "id", acct.ID, "email", email)
-	writeJSON(w, http.StatusOK, map[string]string{"id": acct.ID, "email": email, "status": "active"})
+	slog.Info("account created via code exchange", "id", acct.ID, "email", result.Email, "provider", provider)
+	writeJSON(w, http.StatusOK, map[string]string{"id": acct.ID, "email": result.Email, "status": "active"})
 }
 
-func (s *Server) exchangeCodexCode(w http.ResponseWriter, r *http.Request, code, verifier string) {
-	result, err := oauth.ExchangeCodexCode(r.Context(), code, verifier)
-	if err != nil {
-		slog.Error("codex exchange code failed", "error", err)
-		writeAdminError(w, http.StatusBadGateway, "oauth_error", err.Error())
-		return
+// resolveProvider maps a string to a domain.Provider.
+func resolveProvider(s string) domain.Provider {
+	if s == "codex" {
+		return domain.ProviderCodex
 	}
-
-	email := "codex-" + time.Now().Format("0102-1504")
-	extInfo := map[string]interface{}{}
-	if result.CodexInfo != nil {
-		if result.CodexInfo.Email != "" {
-			email = result.CodexInfo.Email
-		}
-		extInfo["chatgptAccountId"] = result.CodexInfo.ChatGPTAccountID
-		extInfo["email"] = result.CodexInfo.Email
-		extInfo["orgTitle"] = result.CodexInfo.OrgTitle
-	}
-
-	var existing *domain.Account
-	if email != "" {
-		existing = s.findAccountByExtInfoKey("email", email)
-	}
-
-	if existing != nil {
-		encAccess, err := s.tokens.EncryptToken(result.AccessToken)
-		if err != nil {
-			writeAdminError(w, http.StatusInternalServerError, "internal_error", "failed to encrypt token")
-			return
-		}
-		encRefresh, err := s.tokens.EncryptToken(result.RefreshToken)
-		if err != nil {
-			writeAdminError(w, http.StatusInternalServerError, "internal_error", "failed to encrypt token")
-			return
-		}
-		expiresAt := time.Now().Add(time.Duration(result.ExpiresIn) * time.Second).UnixMilli()
-		if err := s.pool.StoreTokens(existing.ID, encAccess, encRefresh, expiresAt); err != nil {
-			writeAdminError(w, http.StatusInternalServerError, "internal_error", "failed to store tokens")
-			return
-		}
-		_ = s.pool.Update(existing.ID, func(a *domain.Account) {
-			a.Email = email
-			a.Status = domain.StatusActive
-			a.ExtInfo = extInfo
-		})
-
-		slog.Info("codex account updated via code exchange", "id", existing.ID, "email", email)
-		writeJSON(w, http.StatusOK, map[string]string{"id": existing.ID, "email": email, "status": "active"})
-		return
-	}
-
-	encRefresh, err := s.tokens.EncryptToken(result.RefreshToken)
-	if err != nil {
-		writeAdminError(w, http.StatusInternalServerError, "internal_error", "failed to encrypt token")
-		return
-	}
-	encAccess, err := s.tokens.EncryptToken(result.AccessToken)
-	if err != nil {
-		writeAdminError(w, http.StatusInternalServerError, "internal_error", "failed to encrypt token")
-		return
-	}
-	expiresAt := time.Now().Add(time.Duration(result.ExpiresIn) * time.Second).UnixMilli()
-
-	acct := &domain.Account{
-		ID:              uuid.New().String(),
-		Email:           email,
-		Provider:        domain.ProviderCodex,
-		Status:          domain.StatusActive,
-		Schedulable:     true,
-		Priority:        50,
-		PriorityMode:    "auto",
-		RefreshTokenEnc: encRefresh,
-		AccessTokenEnc:  encAccess,
-		ExpiresAt:       expiresAt,
-		CreatedAt:       time.Now().UTC(),
-		ExtInfo:         extInfo,
-	}
-	now := time.Now().UTC()
-	acct.LastRefreshAt = &now
-
-	if err := s.pool.Add(acct); err != nil {
-		writeAdminError(w, http.StatusInternalServerError, "internal_error", "failed to create account")
-		return
-	}
-
-	slog.Info("codex account created via code exchange", "id", acct.ID, "email", email)
-	writeJSON(w, http.StatusOK, map[string]string{"id": acct.ID, "email": email, "status": "active"})
-}
-
-func (s *Server) findAccountByExtInfoKey(key, value string) *domain.Account {
-	if value == "" {
-		return nil
-	}
-	for _, a := range s.pool.List() {
-		if a.ExtInfo != nil {
-			if v, ok := a.ExtInfo[key].(string); ok && v == value {
-				return a
-			}
-		}
-	}
-	return nil
-}
-
-func fetchOrgUUIDFromAPIHeader(ctx context.Context, apiURL, accessToken, apiVersion, betaHeader string) string {
-	body := `{"model":"claude-haiku-4-5-20251001","max_tokens":1,"messages":[{"role":"user","content":"hi"}]}`
-	req, err := http.NewRequestWithContext(ctx, "POST", apiURL, strings.NewReader(body))
-	if err != nil {
-		return ""
-	}
-	req.Header.Set("Content-Type", "application/json")
-	identity.SetRequiredHeaders(req.Header, accessToken, apiVersion, betaHeader)
-
-	resp, err := (&http.Client{Timeout: 15 * time.Second}).Do(req)
-	if err != nil {
-		return ""
-	}
-	defer resp.Body.Close()
-	io.ReadAll(resp.Body)
-	return resp.Header.Get("Anthropic-Organization-Id")
+	return domain.ProviderClaude
 }

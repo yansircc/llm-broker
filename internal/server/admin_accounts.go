@@ -11,8 +11,6 @@ import (
 	"time"
 
 	"github.com/yansir/cc-relayer/internal/domain"
-	"github.com/yansir/cc-relayer/internal/identity"
-	"github.com/yansir/cc-relayer/internal/pool"
 )
 
 // handleListAccounts returns all accounts (without tokens).
@@ -75,7 +73,9 @@ func (s *Server) handleGetAccount(w http.ResponseWriter, r *http.Request) {
 
 	var autoScore int
 	if acct.PriorityMode == "auto" {
-		autoScore = pool.AutoPriority(acct)
+		if drv, ok := s.drivers[acct.Provider]; ok {
+			autoScore = drv.AutoPriority(json.RawMessage(acct.ProviderStateJSON))
+		}
 	}
 
 	writeJSON(w, http.StatusOK, AccountDetailResponse{
@@ -203,8 +203,35 @@ func (s *Server) handleRefreshAccount(w http.ResponseWriter, r *http.Request) {
 	}
 	slog.Info("account token force refreshed", "id", id)
 
-	// Back-fill org UUID if missing (Claude accounts only)
-	if acct.Provider != domain.ProviderCodex && (acct.ExtInfo == nil || acct.ExtInfo["orgUUID"] == nil || acct.ExtInfo["orgUUID"] == "") {
+	// Back-fill Subject if empty (pre-migration accounts)
+	if acct.Subject == "" {
+		switch acct.Provider {
+		case domain.ProviderClaude:
+			// Claude: fetch orgUUID via API probe
+			orgUUID := s.fetchOrgUUIDViaAPI(r.Context(), acct, accessToken)
+			if orgUUID != "" {
+				_ = s.pool.Update(id, func(a *domain.Account) {
+					a.Subject = orgUUID
+					if a.ExtInfo == nil {
+						a.ExtInfo = make(map[string]interface{})
+					}
+					a.ExtInfo["orgUUID"] = orgUUID
+				})
+				slog.Info("account subject back-filled", "id", id, "subject", orgUUID)
+			}
+		case domain.ProviderCodex:
+			// Codex: extract chatgptAccountId from existing ExtInfo
+			if acct.ExtInfo != nil {
+				if chatgptID, ok := acct.ExtInfo["chatgptAccountId"].(string); ok && chatgptID != "" {
+					_ = s.pool.Update(id, func(a *domain.Account) {
+						a.Subject = chatgptID
+					})
+					slog.Info("account subject back-filled", "id", id, "subject", chatgptID)
+				}
+			}
+		}
+	} else if acct.Provider != domain.ProviderCodex && (acct.ExtInfo == nil || acct.ExtInfo["orgUUID"] == nil || acct.ExtInfo["orgUUID"] == "") {
+		// Back-fill org UUID in ExtInfo if missing (Claude accounts with Subject already set)
 		orgUUID := s.fetchOrgUUIDViaAPI(r.Context(), acct, accessToken)
 		if orgUUID != "" {
 			_ = s.pool.Update(id, func(a *domain.Account) {
@@ -234,24 +261,21 @@ func (s *Server) handleTestAccount(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if acct.Provider == domain.ProviderCodex {
-		s.testCodexAccount(w, r, acct, accessToken)
+	drv, ok := s.drivers[acct.Provider]
+	if !ok {
+		writeJSON(w, http.StatusOK, TestAccountResult{Error: "unknown provider"})
 		return
 	}
 
-	// Claude test request
-	testBody := `{"model":"claude-haiku-4-5-20251001","max_tokens":1,"messages":[{"role":"user","content":"hi"}]}`
-	testReq, err := http.NewRequestWithContext(r.Context(), "POST", s.cfg.ClaudeAPIURL, strings.NewReader(testBody))
+	probeReq, err := drv.BuildProbeRequest(r.Context(), acct, accessToken)
 	if err != nil {
 		writeJSON(w, http.StatusOK, TestAccountResult{Error: "failed to create request"})
 		return
 	}
-	testReq.Header.Set("Content-Type", "application/json")
-	identity.SetRequiredHeaders(testReq.Header, accessToken, s.cfg.ClaudeAPIVersion, s.cfg.ClaudeBetaHeader)
 
 	client := s.transportMgr.GetClient(acct)
 	start := time.Now()
-	resp, err := client.Do(testReq)
+	resp, err := client.Do(probeReq)
 	latencyMs := time.Since(start).Milliseconds()
 
 	if err != nil {
@@ -262,100 +286,45 @@ func (s *Server) handleTestAccount(w http.ResponseWriter, r *http.Request) {
 	body, _ := io.ReadAll(resp.Body)
 
 	if resp.StatusCode >= 400 {
-		s.pool.Observe(pool.UpstreamResult{
-			AccountID:  acct.ID,
-			StatusCode: resp.StatusCode,
-			Headers:    resp.Header,
-			ErrBody:    body,
-		})
+		effect := drv.Interpret(resp.StatusCode, resp.Header, body, "")
+		s.pool.Observe(acct.ID, effect)
 		writeJSON(w, http.StatusOK, TestAccountResult{LatencyMs: latencyMs, Error: fmt.Sprintf("upstream returned %d", resp.StatusCode)})
 		return
 	}
 
-	s.pool.ObserveSuccess(acct.ID, resp.Header)
-	// Admin test proved account is healthy — clear overload via explicit admin reset
-	s.pool.ClearOverload(acct.ID)
-	writeJSON(w, http.StatusOK, TestAccountResult{OK: true, LatencyMs: latencyMs})
-}
+	// Success — capture rate-limit headers
+	effect := drv.Interpret(http.StatusOK, resp.Header, nil, "")
+	s.pool.Observe(acct.ID, effect)
 
-func (s *Server) testCodexAccount(w http.ResponseWriter, r *http.Request, acct *domain.Account, accessToken string) {
-	testBody := `{"model":"gpt-5-codex","stream":true,"store":false,"instructions":"Reply with only: ok","input":[{"role":"user","content":"test"}]}`
-	testReq, err := http.NewRequestWithContext(r.Context(), "POST", s.cfg.CodexAPIURL, strings.NewReader(testBody))
-	if err != nil {
-		writeJSON(w, http.StatusOK, TestAccountResult{Error: "failed to create request"})
-		return
-	}
-	testReq.Header.Set("Content-Type", "application/json")
-	testReq.Header.Set("Authorization", "Bearer "+accessToken)
-	testReq.Header.Set("Host", "chatgpt.com")
-	testReq.Header.Set("Accept", "text/event-stream")
-	if acct.ExtInfo != nil {
-		if accountID, ok := acct.ExtInfo["chatgptAccountId"].(string); ok && accountID != "" {
-			testReq.Header.Set("Chatgpt-Account-Id", accountID)
+	// For Codex streaming probes, verify we got output before clearing overload
+	if acct.Provider == domain.ProviderCodex {
+		scanner := bufio.NewScanner(strings.NewReader(string(body)))
+		scanner.Buffer(make([]byte, 0, 64*1024), 256*1024)
+		gotOutput := false
+		for scanner.Scan() {
+			line := scanner.Text()
+			if strings.HasPrefix(line, "event: response.output_text.delta") {
+				gotOutput = true
+				break
+			}
+			if strings.HasPrefix(line, "data: ") && strings.Contains(line, `"error":{`) {
+				writeJSON(w, http.StatusOK, TestAccountResult{
+					LatencyMs: time.Since(start).Milliseconds(),
+					Error:     "upstream error in stream",
+				})
+				return
+			}
 		}
-	}
-
-	client := s.transportMgr.GetClient(acct)
-	start := time.Now()
-	resp, err := client.Do(testReq)
-	latencyMs := time.Since(start).Milliseconds()
-
-	if err != nil {
-		writeJSON(w, http.StatusOK, TestAccountResult{LatencyMs: latencyMs, Error: err.Error()})
-		return
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode >= 400 {
-		body, _ := io.ReadAll(resp.Body)
-		s.pool.Observe(pool.UpstreamResult{
-			AccountID:  acct.ID,
-			StatusCode: resp.StatusCode,
-			Headers:    resp.Header,
-			ErrBody:    body,
-		})
-		writeJSON(w, http.StatusOK, TestAccountResult{
-			LatencyMs: latencyMs,
-			Error:     fmt.Sprintf("codex upstream returned %d: %s", resp.StatusCode, truncateStr(string(body), 200)),
-		})
-		return
-	}
-
-	s.pool.ObserveSuccess(acct.ID, resp.Header)
-
-	scanner := bufio.NewScanner(resp.Body)
-	scanner.Buffer(make([]byte, 0, 64*1024), 256*1024)
-	gotOutput := false
-	for scanner.Scan() {
-		line := scanner.Text()
-		if strings.HasPrefix(line, "event: response.output_text.delta") {
-			gotOutput = true
-			break
-		}
-		if strings.HasPrefix(line, "data: ") && strings.Contains(line, `"error":{`) {
-			writeJSON(w, http.StatusOK, TestAccountResult{
-				LatencyMs: time.Since(start).Milliseconds(),
-				Error:     "upstream error in stream",
-			})
+		if !gotOutput {
+			writeJSON(w, http.StatusOK, TestAccountResult{LatencyMs: time.Since(start).Milliseconds(), Error: "stream ended without output"})
 			return
 		}
 	}
 
-	latencyMs = time.Since(start).Milliseconds()
-	if gotOutput {
-		// Admin test proved account is healthy — clear overload via explicit admin reset
-		s.pool.ClearOverload(acct.ID)
-		writeJSON(w, http.StatusOK, TestAccountResult{OK: true, LatencyMs: latencyMs})
-	} else {
-		writeJSON(w, http.StatusOK, TestAccountResult{LatencyMs: latencyMs, Error: "stream ended without output"})
-	}
-}
+	// All validation passed — clear overload
+	s.pool.ClearOverload(acct.ID)
 
-func truncateStr(s string, maxLen int) string {
-	if len(s) <= maxLen {
-		return s
-	}
-	return s[:maxLen] + "..."
+	writeJSON(w, http.StatusOK, TestAccountResult{OK: true, LatencyMs: latencyMs})
 }
 
 func (s *Server) handleUnbindSession(w http.ResponseWriter, r *http.Request) {

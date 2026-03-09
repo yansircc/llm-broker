@@ -9,7 +9,6 @@ import (
 
 	"github.com/yansir/cc-relayer/internal/auth"
 	"github.com/yansir/cc-relayer/internal/domain"
-	"github.com/yansir/cc-relayer/internal/pool"
 )
 
 // ---------------------------------------------------------------------------
@@ -95,7 +94,9 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 	for _, a := range acctList {
 		pri := a.Priority
 		if a.PriorityMode == "auto" {
-			pri = pool.AutoPriority(a)
+			if drv, ok := s.drivers[a.Provider]; ok {
+				pri = drv.AutoPriority(json.RawMessage(a.ProviderStateJSON))
+			}
 		}
 		av := DashboardAccount{
 			ID:              a.ID,
@@ -107,34 +108,18 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 			OverloadedUntil: a.OverloadedUntil,
 			LastUsedAt:      a.LastUsedAt,
 		}
-		if a.Provider == "codex" {
-			if a.CodexPrimaryUtil > 0 || a.CodexPrimaryReset > 0 {
-				pct := int(a.CodexPrimaryUtil * 100)
-				av.FiveHourUtil = &pct
-				if a.CodexPrimaryReset > 0 {
-					av.FiveHourReset = &a.CodexPrimaryReset
+		if drv, ok := s.drivers[a.Provider]; ok {
+			primary, secondary := drv.GetUtilization(json.RawMessage(a.ProviderStateJSON))
+			if primary != nil {
+				av.FiveHourUtil = &primary.Pct
+				if primary.Reset > 0 {
+					av.FiveHourReset = &primary.Reset
 				}
 			}
-			if a.CodexSecondaryUtil > 0 || a.CodexSecondaryReset > 0 {
-				pct := int(a.CodexSecondaryUtil * 100)
-				av.SevenDayUtil = &pct
-				if a.CodexSecondaryReset > 0 {
-					av.SevenDayReset = &a.CodexSecondaryReset
-				}
-			}
-		} else {
-			if a.FiveHourUtil > 0 || a.FiveHourReset > 0 {
-				pct := int(a.FiveHourUtil * 100)
-				av.FiveHourUtil = &pct
-				if a.FiveHourReset > 0 {
-					av.FiveHourReset = &a.FiveHourReset
-				}
-			}
-			if a.SevenDayUtil > 0 || a.SevenDayReset > 0 {
-				pct := int(a.SevenDayUtil * 100)
-				av.SevenDayUtil = &pct
-				if a.SevenDayReset > 0 {
-					av.SevenDayReset = &a.SevenDayReset
+			if secondary != nil {
+				av.SevenDayUtil = &secondary.Pct
+				if secondary.Reset > 0 {
+					av.SevenDayReset = &secondary.Reset
 				}
 			}
 		}
