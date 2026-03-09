@@ -34,8 +34,6 @@ type Effect struct {
 	CooldownUntil time.Time
 	ErrorMessage  string
 	UpdatedState  json.RawMessage // opaque provider state blob
-	IsOpusLimit   bool
-	OpusResetAt   time.Time
 }
 
 // RelayInput carries the parsed client request.
@@ -69,9 +67,9 @@ type ExchangeResult struct {
 	AccessToken  string
 	RefreshToken string
 	ExpiresIn    int
-	Subject      string                 // REQUIRED: orgUUID (Claude), chatgptAccountId (Codex)
+	Subject      string // REQUIRED: orgUUID (Claude), chatgptAccountId (Codex)
 	Email        string
-	ExtInfo      map[string]interface{}
+	Identity     map[string]interface{}
 }
 
 // OAuthSession holds PKCE parameters for a pending OAuth flow.
@@ -82,6 +80,40 @@ type OAuthSession struct {
 
 // UtilWindow represents a rate-limit utilization window.
 type UtilWindow struct {
-	Pct   int   // 0-100
-	Reset int64 // unix seconds
+	Label string // provider-defined display label
+	Pct   int    // 0-100
+	Reset int64  // unix seconds
+}
+
+type AccountField struct {
+	Label string
+	Value string
+}
+
+type ProbeResult struct {
+	Effect        Effect
+	Observe       bool
+	ClearCooldown bool
+}
+
+type ProviderInfo struct {
+	Label               string
+	RelayPaths          []string
+	OAuthStateRequired  bool
+	CallbackPlaceholder string
+	CallbackHint        string
+	ProbeLabel          string
+}
+
+type Model struct {
+	ID            string `json:"id"`
+	Object        string `json:"object"`
+	Created       int64  `json:"created"`
+	OwnedBy       string `json:"owned_by"`
+	ContextWindow int    `json:"context_window"`
+}
+
+func mustMarshalJSON(v any) json.RawMessage {
+	data, _ := json.Marshal(v)
+	return data
 }

@@ -13,6 +13,8 @@ import (
 // Core code (pool, relay, admin) only interacts with this interface.
 type Driver interface {
 	Provider() domain.Provider
+	Info() ProviderInfo
+	Models() []Model
 
 	// --- Relay ---
 
@@ -20,7 +22,7 @@ type Driver interface {
 	BuildRequest(ctx context.Context, input *RelayInput, acct *domain.Account, token string) (*http.Request, error)
 
 	// Interpret classifies an upstream response into a provider-agnostic Effect.
-	Interpret(statusCode int, headers http.Header, body []byte, model string) Effect
+	Interpret(statusCode int, headers http.Header, body []byte, model string, state json.RawMessage) Effect
 
 	// StreamResponse streams an SSE response to the client, returning completion status and usage.
 	StreamResponse(ctx context.Context, w http.ResponseWriter, resp *http.Response) (completed bool, usage *Usage)
@@ -73,8 +75,11 @@ type Driver interface {
 
 	// --- Admin ---
 
-	// BuildProbeRequest creates a minimal request for health checking an account.
-	BuildProbeRequest(ctx context.Context, acct *domain.Account, token string) (*http.Request, error)
+	// Probe performs a minimal health check and returns the resulting account effect.
+	Probe(ctx context.Context, acct *domain.Account, token string, client *http.Client) (ProbeResult, error)
+
+	// DescribeAccount returns provider-specific fields suitable for admin display.
+	DescribeAccount(acct *domain.Account) []AccountField
 
 	// AutoPriority computes the effective priority for an auto-mode account.
 	AutoPriority(state json.RawMessage) int
@@ -86,10 +91,12 @@ type Driver interface {
 	// Returns zero time if no cooldown needed.
 	ComputeExhaustedCooldown(state json.RawMessage, now time.Time) time.Time
 
+	// CanServe reports whether the provider state allows serving the given model now.
+	CanServe(state json.RawMessage, model string, now time.Time) bool
+
 	// CalcCost computes the estimated cost in USD.
 	CalcCost(model string, usage *Usage) float64
 
 	// GetUtilization extracts utilization windows from provider state.
-	// Returns primary and secondary windows (nil if not applicable).
-	GetUtilization(state json.RawMessage) (primary, secondary *UtilWindow)
+	GetUtilization(state json.RawMessage) []UtilWindow
 }
