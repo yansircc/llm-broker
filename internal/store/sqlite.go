@@ -5,6 +5,8 @@ import (
 	"database/sql"
 	_ "embed"
 	"fmt"
+	"slices"
+	"strings"
 	"time"
 
 	_ "modernc.org/sqlite"
@@ -19,7 +21,7 @@ type SQLiteStore struct {
 	cleanupCancel context.CancelFunc
 }
 
-// New creates a SQLiteStore, initializes the schema, and runs migrations.
+// New creates a SQLiteStore and initializes the current schema.
 func New(dbPath string) (*SQLiteStore, error) {
 	db, err := sql.Open("sqlite", dbPath)
 	if err != nil {
@@ -48,78 +50,17 @@ func New(dbPath string) (*SQLiteStore, error) {
 		db:            db,
 		cleanupCancel: cancel,
 	}
-
-	if err := s.migrate(context.Background()); err != nil {
+	if err := s.migrateAccountsTable(context.Background()); err != nil {
 		db.Close()
 		cancel()
-		return nil, fmt.Errorf("migrate: %w", err)
+		return nil, err
 	}
 
 	return s, nil
 }
 
-// migrate adds columns that may not exist in older databases.
-func (s *SQLiteStore) migrate(ctx context.Context) error {
-	migrations := []struct {
-		table, column, ddl string
-	}{
-		{"request_log", "cost_usd", "ALTER TABLE request_log ADD COLUMN cost_usd REAL NOT NULL DEFAULT 0"},
-		{"accounts", "priority_mode", "ALTER TABLE accounts ADD COLUMN priority_mode TEXT NOT NULL DEFAULT 'auto'"},
-		{"accounts", "email", "ALTER TABLE accounts RENAME COLUMN name TO email"},
-		{"accounts", "five_hour_util", "ALTER TABLE accounts ADD COLUMN five_hour_util REAL NOT NULL DEFAULT 0"},
-		{"accounts", "five_hour_reset", "ALTER TABLE accounts ADD COLUMN five_hour_reset INTEGER NOT NULL DEFAULT 0"},
-		{"accounts", "seven_day_util", "ALTER TABLE accounts ADD COLUMN seven_day_util REAL NOT NULL DEFAULT 0"},
-		{"accounts", "seven_day_reset", "ALTER TABLE accounts ADD COLUMN seven_day_reset INTEGER NOT NULL DEFAULT 0"},
-		{"accounts", "provider", "ALTER TABLE accounts ADD COLUMN provider TEXT NOT NULL DEFAULT 'claude'"},
-		{"accounts", "codex_primary_util", "ALTER TABLE accounts ADD COLUMN codex_primary_util REAL NOT NULL DEFAULT 0"},
-		{"accounts", "codex_primary_reset", "ALTER TABLE accounts ADD COLUMN codex_primary_reset INTEGER NOT NULL DEFAULT 0"},
-		{"accounts", "codex_secondary_util", "ALTER TABLE accounts ADD COLUMN codex_secondary_util REAL NOT NULL DEFAULT 0"},
-		{"accounts", "codex_secondary_reset", "ALTER TABLE accounts ADD COLUMN codex_secondary_reset INTEGER NOT NULL DEFAULT 0"},
-		{"accounts", "subject", "ALTER TABLE accounts ADD COLUMN subject TEXT NOT NULL DEFAULT ''"},
-		{"accounts", "provider_state_json", "ALTER TABLE accounts ADD COLUMN provider_state_json TEXT NOT NULL DEFAULT '{}'"},
-	}
-	for _, m := range migrations {
-		if !s.columnExists(ctx, m.table, m.column) {
-			if _, err := s.db.ExecContext(ctx, m.ddl); err != nil {
-				return fmt.Errorf("add %s.%s: %w", m.table, m.column, err)
-			}
-		}
-	}
-	// Ensure unique index on provider+subject (idempotent)
-	_, _ = s.db.ExecContext(ctx, `CREATE UNIQUE INDEX IF NOT EXISTS idx_accounts_provider_subject ON accounts(provider, subject) WHERE subject != ''`)
-	return nil
-}
-
-func (s *SQLiteStore) columnExists(ctx context.Context, table, column string) bool {
-	rows, err := s.db.QueryContext(ctx, fmt.Sprintf("PRAGMA table_info(%s)", table))
-	if err != nil {
-		return false
-	}
-	defer rows.Close()
-	for rows.Next() {
-		var cid int
-		var name, typeName string
-		var notNull, pk int
-		var dflt sql.NullString
-		if err := rows.Scan(&cid, &name, &typeName, &notNull, &dflt, &pk); err != nil {
-			return false
-		}
-		if name == column {
-			return true
-		}
-	}
-	return false
-}
-
 func (s *SQLiteStore) Ping(ctx context.Context) error { return s.db.PingContext(ctx) }
-func (s *SQLiteStore) Close() error                    { s.cleanupCancel(); return s.db.Close() }
-
-func boolInt(b bool) int {
-	if b {
-		return 1
-	}
-	return 0
-}
+func (s *SQLiteStore) Close() error                   { s.cleanupCancel(); return s.db.Close() }
 
 func nullableUnix(t *time.Time) interface{} {
 	if t == nil {
@@ -134,4 +75,168 @@ func scanNullableTime(v sql.NullInt64) *time.Time {
 	}
 	t := time.Unix(v.Int64, 0).UTC()
 	return &t
+}
+
+var desiredAccountColumns = []string{
+	"id",
+	"email",
+	"provider",
+	"status",
+	"priority",
+	"priority_mode",
+	"error_message",
+	"refresh_token_enc",
+	"access_token_enc",
+	"expires_at",
+	"created_at",
+	"last_used_at",
+	"last_refresh_at",
+	"proxy_json",
+	"identity_json",
+	"cooldown_until",
+	"subject",
+	"provider_state_json",
+}
+
+func (s *SQLiteStore) migrateAccountsTable(ctx context.Context) error {
+	cols, err := s.tableColumns(ctx, "accounts")
+	if err != nil {
+		return fmt.Errorf("inspect accounts schema: %w", err)
+	}
+	if slices.Equal(cols, desiredAccountColumns) {
+		return nil
+	}
+	if !hasColumns(cols, "subject", "provider_state_json") {
+		return fmt.Errorf("accounts migration: unsupported legacy schema %v", cols)
+	}
+
+	identitySource := firstPresent(cols, "identity_json", "meta_json", "ext_info_json")
+	if identitySource == "" {
+		return fmt.Errorf("accounts migration: missing identity column in %v", cols)
+	}
+
+	cooldownSource := "cooldown_until"
+	if !slices.Contains(cols, cooldownSource) {
+		cooldownSource = "overloaded_until"
+	}
+	if !slices.Contains(cols, cooldownSource) {
+		return fmt.Errorf("accounts migration: missing cooldown source column in %v", cols)
+	}
+
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin accounts migration: %w", err)
+	}
+	defer tx.Rollback()
+
+	if _, err := tx.ExecContext(ctx, `
+		CREATE TABLE accounts_new (
+			id TEXT PRIMARY KEY,
+			email TEXT NOT NULL,
+			provider TEXT NOT NULL,
+			status TEXT NOT NULL DEFAULT 'created',
+			priority INTEGER NOT NULL DEFAULT 50,
+			priority_mode TEXT NOT NULL DEFAULT 'auto',
+			error_message TEXT NOT NULL DEFAULT '',
+			refresh_token_enc TEXT NOT NULL DEFAULT '',
+			access_token_enc TEXT NOT NULL DEFAULT '',
+			expires_at INTEGER NOT NULL DEFAULT 0,
+			created_at INTEGER NOT NULL,
+			last_used_at INTEGER,
+			last_refresh_at INTEGER,
+			proxy_json TEXT NOT NULL DEFAULT '',
+			identity_json TEXT NOT NULL DEFAULT '',
+			cooldown_until INTEGER,
+			subject TEXT NOT NULL,
+			provider_state_json TEXT NOT NULL DEFAULT '{}',
+			UNIQUE(provider, subject)
+		)
+	`); err != nil {
+		return fmt.Errorf("create accounts_new: %w", err)
+	}
+
+	insertSQL := fmt.Sprintf(`
+		INSERT INTO accounts_new (
+			id, email, provider, status, priority, priority_mode, error_message,
+			refresh_token_enc, access_token_enc, expires_at, created_at,
+			last_used_at, last_refresh_at, proxy_json, identity_json,
+			cooldown_until, subject, provider_state_json
+		)
+		SELECT
+			id,
+			email,
+			provider,
+			status,
+			priority,
+			COALESCE(NULLIF(priority_mode, ''), 'auto'),
+			error_message,
+			refresh_token_enc,
+			access_token_enc,
+			expires_at,
+			created_at,
+			last_used_at,
+			last_refresh_at,
+			proxy_json,
+			%s,
+			%s,
+			subject,
+			COALESCE(NULLIF(provider_state_json, ''), '{}')
+		FROM accounts
+	`, identitySource, cooldownSource)
+	if _, err := tx.ExecContext(ctx, insertSQL); err != nil {
+		return fmt.Errorf("copy accounts: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, `DROP TABLE accounts`); err != nil {
+		return fmt.Errorf("drop old accounts: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, `ALTER TABLE accounts_new RENAME TO accounts`); err != nil {
+		return fmt.Errorf("rename accounts_new: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit accounts migration: %w", err)
+	}
+	return nil
+}
+
+func (s *SQLiteStore) tableColumns(ctx context.Context, table string) ([]string, error) {
+	rows, err := s.db.QueryContext(ctx, "PRAGMA table_info("+table+")")
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var cols []string
+	for rows.Next() {
+		var (
+			cid       int
+			name      string
+			ctype     string
+			notNull   int
+			dfltValue sql.NullString
+			pk        int
+		)
+		if err := rows.Scan(&cid, &name, &ctype, &notNull, &dfltValue, &pk); err != nil {
+			return nil, err
+		}
+		cols = append(cols, strings.ToLower(name))
+	}
+	return cols, rows.Err()
+}
+
+func hasColumns(cols []string, want ...string) bool {
+	for _, col := range want {
+		if !slices.Contains(cols, col) {
+			return false
+		}
+	}
+	return true
+}
+
+func firstPresent(cols []string, names ...string) string {
+	for _, name := range names {
+		if slices.Contains(cols, name) {
+			return name
+		}
+	}
+	return ""
 }

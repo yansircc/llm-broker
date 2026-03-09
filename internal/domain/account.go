@@ -31,7 +31,6 @@ type Account struct {
 	Email        string   `db:"email"         json:"email"`
 	Provider     Provider `db:"provider"      json:"provider"`
 	Status       Status   `db:"status"        json:"status"`
-	Schedulable  bool     `db:"schedulable"   json:"schedulable"`
 	Priority     int      `db:"priority"      json:"priority"`
 	PriorityMode string   `db:"priority_mode" json:"priority_mode"`
 	ErrorMessage string   `db:"error_message" json:"error_message,omitempty"`
@@ -46,34 +45,18 @@ type Account struct {
 	LastUsedAt    *time.Time `db:"last_used_at"     json:"last_used_at,omitempty"`
 	LastRefreshAt *time.Time `db:"last_refresh_at"  json:"last_refresh_at,omitempty"`
 
-	// Proxy & extra info (stored as JSON strings in DB)
-	ProxyJSON   string `db:"proxy_json"    json:"-"`
-	ExtInfoJSON string `db:"ext_info_json" json:"-"`
+	// Proxy & persisted identity (stored as JSON strings in DB)
+	ProxyJSON    string `db:"proxy_json"    json:"-"`
+	IdentityJSON string `db:"identity_json" json:"-"`
 
-	// Claude rate limits
-	FiveHourStatus     string     `db:"five_hour_status"       json:"five_hour_status,omitempty"`
-	FiveHourUtil       float64    `db:"five_hour_util"         json:"five_hour_util"`
-	FiveHourReset      int64      `db:"five_hour_reset"        json:"five_hour_reset"`
-	SevenDayUtil       float64    `db:"seven_day_util"         json:"seven_day_util"`
-	SevenDayReset      int64      `db:"seven_day_reset"        json:"seven_day_reset"`
-	OpusRateLimitEndAt *time.Time `db:"opus_rate_limit_end_at" json:"opus_rate_limit_end_at,omitempty"`
-	OverloadedAt       *time.Time `db:"overloaded_at"          json:"overloaded_at,omitempty"`
-	OverloadedUntil    *time.Time `db:"overloaded_until"       json:"overloaded_until,omitempty"`
-	RateLimitedAt      *time.Time `db:"rate_limited_at"        json:"rate_limited_at,omitempty"`
-
-	// Codex rate limits
-	CodexPrimaryUtil    float64 `db:"codex_primary_util"    json:"codex_primary_util"`
-	CodexPrimaryReset   int64   `db:"codex_primary_reset"   json:"codex_primary_reset"`
-	CodexSecondaryUtil  float64 `db:"codex_secondary_util"  json:"codex_secondary_util"`
-	CodexSecondaryReset int64   `db:"codex_secondary_reset" json:"codex_secondary_reset"`
-
-	// Driver-based fields (Phase 1 additive)
-	Subject            string `db:"subject"              json:"subject,omitempty"`
-	ProviderStateJSON  string `db:"provider_state_json"  json:"-"`
+	// Core availability state.
+	CooldownUntil     *time.Time `db:"cooldown_until"      json:"cooldown_until,omitempty"`
+	Subject           string     `db:"subject"             json:"subject,omitempty"`
+	ProviderStateJSON string     `db:"provider_state_json" json:"-"`
 
 	// Runtime only (not stored in DB)
-	Proxy   *ProxyConfig           `db:"-" json:"proxy,omitempty"`
-	ExtInfo map[string]interface{} `db:"-" json:"ext_info,omitempty"`
+	Proxy    *ProxyConfig           `db:"-" json:"-"`
+	Identity map[string]interface{} `db:"-" json:"-"`
 }
 
 // ProxyConfig holds per-account proxy settings.
@@ -85,7 +68,7 @@ type ProxyConfig struct {
 	Password string `json:"password,omitempty"`
 }
 
-// HydrateRuntime populates the transient Proxy and ExtInfo fields from their
+// HydrateRuntime populates the transient Proxy and Identity fields from their
 // JSON column counterparts. Called after loading from the database.
 func (a *Account) HydrateRuntime() {
 	if a.ProxyJSON != "" {
@@ -94,15 +77,15 @@ func (a *Account) HydrateRuntime() {
 			a.Proxy = &p
 		}
 	}
-	if a.ExtInfoJSON != "" {
-		var ext map[string]interface{}
-		if json.Unmarshal([]byte(a.ExtInfoJSON), &ext) == nil {
-			a.ExtInfo = ext
+	if a.IdentityJSON != "" {
+		var identity map[string]interface{}
+		if json.Unmarshal([]byte(a.IdentityJSON), &identity) == nil {
+			a.Identity = identity
 		}
 	}
 }
 
-// PersistRuntime serialises the transient Proxy and ExtInfo fields into their
+// PersistRuntime serialises the transient Proxy and Identity fields into their
 // JSON column counterparts. Called before saving to the database.
 func (a *Account) PersistRuntime() {
 	if a.Proxy != nil {
@@ -111,20 +94,23 @@ func (a *Account) PersistRuntime() {
 	} else {
 		a.ProxyJSON = ""
 	}
-	if a.ExtInfo != nil {
-		data, _ := json.Marshal(a.ExtInfo)
-		a.ExtInfoJSON = string(data)
+	if a.Identity != nil {
+		data, _ := json.Marshal(a.Identity)
+		a.IdentityJSON = string(data)
 	} else {
-		a.ExtInfoJSON = ""
+		a.IdentityJSON = ""
+	}
+	if a.ProviderStateJSON == "" {
+		a.ProviderStateJSON = "{}"
 	}
 }
 
-// GetAccountUUID extracts account_uuid from ExtInfo.
-func (a *Account) GetAccountUUID() string {
-	if a.ExtInfo == nil {
+// IdentityString returns a string value from persisted account identity data.
+func (a *Account) IdentityString(key string) string {
+	if a.Identity == nil {
 		return ""
 	}
-	if v, ok := a.ExtInfo["account_uuid"]; ok {
+	if v, ok := a.Identity[key]; ok {
 		if s, ok := v.(string); ok {
 			return s
 		}
