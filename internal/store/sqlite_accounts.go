@@ -101,7 +101,7 @@ func (s *SQLiteStore) SaveAccount(ctx context.Context, acct *domain.Account) err
 			refresh_token_enc, access_token_enc, expires_at, created_at,
 			last_used_at, last_refresh_at, proxy_json, identity_json,
 			cooldown_until, subject, provider_state_json
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(id) DO UPDATE SET
 			email=excluded.email, provider=excluded.provider, status=excluded.status,
 			priority=excluded.priority, priority_mode=excluded.priority_mode,

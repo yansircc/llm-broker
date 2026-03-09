@@ -21,8 +21,53 @@ type SQLiteStore struct {
 	cleanupCancel context.CancelFunc
 }
 
-// New creates a SQLiteStore and initializes the current schema.
+// New opens a SQLiteStore and requires the current schema to already exist.
 func New(dbPath string) (*SQLiteStore, error) {
+	db, err := openSQLite(dbPath)
+	if err != nil {
+		return nil, err
+	}
+
+	_, cancel := context.WithCancel(context.Background())
+	s := &SQLiteStore{
+		db:            db,
+		cleanupCancel: cancel,
+	}
+	if err := s.validateCurrentSchema(context.Background()); err != nil {
+		db.Close()
+		cancel()
+		return nil, err
+	}
+
+	return s, nil
+}
+
+// Migrate creates or upgrades the database to the current schema.
+func Migrate(dbPath string) error {
+	db, err := openSQLite(dbPath)
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+
+	if _, err := db.ExecContext(context.Background(), schemaSQL); err != nil {
+		return fmt.Errorf("create schema: %w", err)
+	}
+
+	s := &SQLiteStore{db: db}
+	if err := s.migrateAccountsTable(context.Background()); err != nil {
+		return err
+	}
+	if err := s.validateCurrentSchema(context.Background()); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (s *SQLiteStore) Ping(ctx context.Context) error { return s.db.PingContext(ctx) }
+func (s *SQLiteStore) Close() error                   { s.cleanupCancel(); return s.db.Close() }
+
+func openSQLite(dbPath string) (*sql.DB, error) {
 	db, err := sql.Open("sqlite", dbPath)
 	if err != nil {
 		return nil, fmt.Errorf("open sqlite: %w", err)
@@ -40,27 +85,8 @@ func New(dbPath string) (*SQLiteStore, error) {
 		}
 	}
 
-	if _, err := db.ExecContext(context.Background(), schemaSQL); err != nil {
-		db.Close()
-		return nil, fmt.Errorf("create schema: %w", err)
-	}
-
-	_, cancel := context.WithCancel(context.Background())
-	s := &SQLiteStore{
-		db:            db,
-		cleanupCancel: cancel,
-	}
-	if err := s.migrateAccountsTable(context.Background()); err != nil {
-		db.Close()
-		cancel()
-		return nil, err
-	}
-
-	return s, nil
+	return db, nil
 }
-
-func (s *SQLiteStore) Ping(ctx context.Context) error { return s.db.PingContext(ctx) }
-func (s *SQLiteStore) Close() error                   { s.cleanupCancel(); return s.db.Close() }
 
 func nullableUnix(t *time.Time) interface{} {
 	if t == nil {
@@ -98,12 +124,64 @@ var desiredAccountColumns = []string{
 	"provider_state_json",
 }
 
+var desiredUserColumns = []string{
+	"id",
+	"name",
+	"token_hash",
+	"token_prefix",
+	"status",
+	"created_at",
+	"last_active_at",
+}
+
+var desiredRequestLogColumns = []string{
+	"id",
+	"user_id",
+	"account_id",
+	"model",
+	"input_tokens",
+	"output_tokens",
+	"cache_read_tokens",
+	"cache_create_tokens",
+	"cost_usd",
+	"status",
+	"duration_ms",
+	"created_at",
+}
+
+func (s *SQLiteStore) validateCurrentSchema(ctx context.Context) error {
+	checks := []struct {
+		table string
+		want  []string
+	}{
+		{table: "accounts", want: desiredAccountColumns},
+		{table: "users", want: desiredUserColumns},
+		{table: "request_log", want: desiredRequestLogColumns},
+	}
+
+	for _, check := range checks {
+		cols, err := s.tableColumns(ctx, check.table)
+		if err != nil {
+			return fmt.Errorf("inspect %s schema: %w", check.table, err)
+		}
+		if sameColumns(cols, check.want) {
+			continue
+		}
+		if len(cols) == 0 {
+			return fmt.Errorf("database schema missing table %q; run `cc-relayer migrate`", check.table)
+		}
+		return fmt.Errorf("database schema for %q is not current; run `cc-relayer migrate`", check.table)
+	}
+
+	return nil
+}
+
 func (s *SQLiteStore) migrateAccountsTable(ctx context.Context) error {
 	cols, err := s.tableColumns(ctx, "accounts")
 	if err != nil {
 		return fmt.Errorf("inspect accounts schema: %w", err)
 	}
-	if slices.Equal(cols, desiredAccountColumns) {
+	if sameColumns(cols, desiredAccountColumns) {
 		return nil
 	}
 	if !hasColumns(cols, "subject", "provider_state_json") {
@@ -230,6 +308,10 @@ func hasColumns(cols []string, want ...string) bool {
 		}
 	}
 	return true
+}
+
+func sameColumns(cols, want []string) bool {
+	return len(cols) == len(want) && hasColumns(cols, want...)
 }
 
 func firstPresent(cols []string, names ...string) string {
