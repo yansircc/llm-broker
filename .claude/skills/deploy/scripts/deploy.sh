@@ -59,10 +59,15 @@ echo "==> uploading to $REMOTE..."
 scp -q "$TMP_LOCAL" "$REMOTE:$TMP_REMOTE"
 echo "    done"
 
-# ── 5. Atomic replace + restart ────────────────────────
-echo "==> replacing binary and restarting..."
+# ── 5. Stop + migrate + replace + restart ─────────────
+echo "==> stopping, migrating, and restarting..."
 ssh "$REMOTE" "
+    systemctl stop $SERVICE || true
+    set -a
+    . $REMOTE_ENV
+    set +a
     chmod +x $TMP_REMOTE
+    $TMP_REMOTE migrate
     mv $TMP_REMOTE $REMOTE_BIN
     systemctl restart $SERVICE
 "
@@ -106,10 +111,11 @@ smoke() {
 
 # Public endpoints
 smoke "GET /health" "$SITE/health"
-smoke "GET /v1/models" "$SITE/v1/models"
+smoke "GET /v1/models" "$SITE/v1/models" "" 401
 
 # Admin API (needs token)
 if [[ -n "$API_TOKEN" ]]; then
+    smoke "GET /v1/models (auth)" "$SITE/v1/models" "$API_TOKEN"
     smoke "GET /admin/dashboard" "$SITE/admin/dashboard" "$API_TOKEN"
     smoke "GET /admin/accounts"  "$SITE/admin/accounts"  "$API_TOKEN"
     smoke "GET /admin/users"     "$SITE/admin/users"      "$API_TOKEN"
