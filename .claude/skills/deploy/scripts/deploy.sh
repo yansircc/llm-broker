@@ -1,42 +1,37 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# ── Config ──────────────────────────────────────────────
-REMOTE="root@DEPLOY_HOST"
-REMOTE_BIN="/usr/local/bin/cc-relayer"
-REMOTE_BAK="/usr/local/bin/cc-relayer.bak"
-SERVICE="cc-relayer"
-TMP_LOCAL="/tmp/cc-relayer-new"
-TMP_REMOTE="/tmp/cc-relayer-new"
+SCRIPT_DIR="$(cd -- "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$SCRIPT_DIR/common.sh"
 
-# ── Rollback mode ──────────────────────────────────────
 if [[ "${1:-}" == "rollback" ]]; then
-    echo "==> rolling back to previous version..."
-    HAS_BAK=$(ssh "$REMOTE" "test -f $REMOTE_BAK && echo yes || echo no")
-    if [[ "$HAS_BAK" != "yes" ]]; then
-        echo "    FAIL: no backup found at $REMOTE_BAK"
-        exit 1
-    fi
-    ssh "$REMOTE" "
-        mv $REMOTE_BAK $REMOTE_BIN
-        systemctl restart $SERVICE
-    "
-    sleep 2
-    STATUS=$(ssh "$REMOTE" "systemctl is-active $SERVICE 2>/dev/null || true")
-    if [[ "$STATUS" != "active" ]]; then
-        echo "    FAIL: rollback service is $STATUS"
-        ssh "$REMOTE" "journalctl -u $SERVICE -n 15 --no-pager"
-        exit 1
-    fi
-    echo "==> rollback successful (service: $STATUS)"
+    snapshot_ref="${2:-latest}"
+    echo "==> rolling back via snapshot: $snapshot_ref"
+    restored_id="$(restore_snapshot "$snapshot_ref")"
+    echo "==> rollback successful: $restored_id"
     exit 0
 fi
 
-# Find repo root (works from worktrees too)
-REPO_ROOT="$(git rev-parse --show-toplevel)"
 cd "$REPO_ROOT"
 
 echo "==> repo: $REPO_ROOT"
+
+SNAPSHOT_ID=""
+RESTORE_ON_ERROR=0
+RESTORING=0
+
+on_error() {
+    local exit_code=$?
+    if [[ "$RESTORE_ON_ERROR" -eq 1 && "$RESTORING" -eq 0 && -n "$SNAPSHOT_ID" ]]; then
+        RESTORING=1
+        echo ""
+        echo "==> deploy failed, auto-restoring snapshot $SNAPSHOT_ID..."
+        restore_snapshot "$SNAPSHOT_ID" || true
+    fi
+    exit "$exit_code"
+}
+
+trap on_error ERR
 
 # ── 1. Frontend build ──────────────────────────────────
 if [[ "${SKIP_FRONTEND:-}" != "1" ]]; then
@@ -53,22 +48,18 @@ GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -o "$TMP_LOCAL" ./cmd/relay/
 SIZE=$(du -h "$TMP_LOCAL" | cut -f1 | xargs)
 echo "    done ($SIZE)"
 
-# ── 3. Upload ──────────────────────────────────────────
+# ── 3. Snapshot current remote state ───────────────────
+echo "==> snapshotting current remote state..."
+SNAPSHOT_ID="$(create_snapshot deploy)"
+RESTORE_ON_ERROR=1
+echo "    snapshot: $SNAPSHOT_ID"
+
+# ── 4. Upload ──────────────────────────────────────────
 echo "==> uploading to $REMOTE..."
 scp -q "$TMP_LOCAL" "$REMOTE:$TMP_REMOTE"
 echo "    done"
 
-# ── 4. Backup + Atomic replace + restart ───────────────
-echo "==> backing up current binary..."
-ssh "$REMOTE" "
-    if [ -f $REMOTE_BIN ]; then
-        cp $REMOTE_BIN $REMOTE_BAK
-        echo '    backup saved to $REMOTE_BAK'
-    else
-        echo '    no existing binary, skip backup'
-    fi
-"
-
+# ── 5. Atomic replace + restart ────────────────────────
 echo "==> replacing binary and restarting..."
 ssh "$REMOTE" "
     chmod +x $TMP_REMOTE
@@ -77,33 +68,13 @@ ssh "$REMOTE" "
 "
 echo "    done"
 
-# ── 5. Verify (auto-rollback on failure) ──────────────
+# ── 6. Verify ──────────────────────────────────────────
 echo "==> verifying..."
 sleep 2
 STATUS=$(ssh "$REMOTE" "systemctl is-active $SERVICE 2>/dev/null || true")
 if [[ "$STATUS" != "active" ]]; then
     echo "    FAIL: service is $STATUS"
     ssh "$REMOTE" "journalctl -u $SERVICE -n 15 --no-pager"
-
-    # Auto-rollback
-    HAS_BAK=$(ssh "$REMOTE" "test -f $REMOTE_BAK && echo yes || echo no")
-    if [[ "$HAS_BAK" == "yes" ]]; then
-        echo ""
-        echo "==> auto-rolling back to previous version..."
-        ssh "$REMOTE" "
-            mv $REMOTE_BAK $REMOTE_BIN
-            systemctl restart $SERVICE
-        "
-        sleep 2
-        RB_STATUS=$(ssh "$REMOTE" "systemctl is-active $SERVICE 2>/dev/null || true")
-        if [[ "$RB_STATUS" == "active" ]]; then
-            echo "==> auto-rollback successful, service restored"
-        else
-            echo "==> auto-rollback FAILED, service is $RB_STATUS — manual intervention needed"
-        fi
-    else
-        echo "==> no backup available for auto-rollback — manual intervention needed"
-    fi
     exit 1
 fi
 
@@ -111,13 +82,12 @@ fi
 ssh "$REMOTE" "journalctl -u $SERVICE --since '2 minutes ago' --no-pager -o short-precise" \
     | grep -E '(Stopping|Stopped|Started|server starting)' || true
 
-# ── 6. Smoke test (HTTP endpoints) ───────────────────
+# ── 7. Smoke test (HTTP endpoints) ─────────────────────
 echo ""
 echo "==> smoke testing endpoints..."
 
-SITE="https://DEPLOY_HOST"
 # Read API_TOKEN from remote EnvironmentFile
-API_TOKEN=$(ssh "$REMOTE" "grep -oP '^API_TOKEN=\K.*' /etc/cc-relayer.env 2>/dev/null || echo ''")
+API_TOKEN="$(remote_env_value API_TOKEN)"
 
 SMOKE_FAIL=0
 smoke() {
@@ -136,6 +106,7 @@ smoke() {
 
 # Public endpoints
 smoke "GET /health" "$SITE/health"
+smoke "GET /v1/models" "$SITE/v1/models"
 
 # Admin API (needs token)
 if [[ -n "$API_TOKEN" ]]; then
@@ -148,18 +119,22 @@ else
 fi
 
 # Frontend pages (static assets, should return 200)
-smoke "GET /ui/"              "$SITE/ui/"
-smoke "GET /ui/dashboard"     "$SITE/ui/dashboard"
+smoke "GET /"                 "$SITE/"
+smoke "GET /dashboard"        "$SITE/dashboard"
+smoke "GET /add-account/claude" "$SITE/add-account/claude"
+smoke "GET /add-account"      "$SITE/add-account" "" 404
+smoke "GET /ui/"              "$SITE/ui/" "" 404
+smoke "GET /ui/add-account"   "$SITE/ui/add-account" "" 404
 
 if [[ "$SMOKE_FAIL" -eq 1 ]]; then
     echo ""
-    echo "==> ⚠ smoke test failures detected — consider rollback:"
-    echo "    bash .claude/skills/deploy/scripts/deploy.sh rollback"
+    echo "==> ⚠ smoke test failures detected — restore with:"
+    echo "    bash $SCRIPT_DIR/restore.sh $SNAPSHOT_ID"
 else
     echo "    all endpoints OK"
 fi
 
-# ── 7. Browser smoke test (Playwright) ────────────────
+# ── 8. Browser smoke test (Playwright) ────────────────
 if [[ -d "$REPO_ROOT/web/node_modules/playwright-core" ]]; then
     echo ""
     echo "==> browser smoke test..."
@@ -172,8 +147,13 @@ else
     echo "    ⚠ skipping browser smoke (run: cd web && npm i && npx playwright install chromium)"
 fi
 
+RESTORE_ON_ERROR=0
+trap - ERR
+
 echo ""
-echo "==> deployed successfully (backup at $REMOTE_BAK)"
+echo "==> deployed successfully"
+echo "    snapshot: $SNAPSHOT_ID"
+echo "    restore: bash $SCRIPT_DIR/restore.sh $SNAPSHOT_ID"
 
 # Clean up local temp
 rm -f "$TMP_LOCAL"
