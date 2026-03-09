@@ -1,4 +1,4 @@
-package oauth
+package tokens
 
 import (
 	"context"
@@ -10,11 +10,12 @@ import (
 	"github.com/google/uuid"
 	"github.com/yansir/cc-relayer/internal/crypto"
 	"github.com/yansir/cc-relayer/internal/domain"
+	"github.com/yansir/cc-relayer/internal/driver"
 )
 
-const claudeSalt = "salt"
+const tokenSalt = "salt"
 
-// PoolAccess provides the methods TokenManager needs from Pool.
+// PoolAccess provides the methods Manager needs from Pool.
 type PoolAccess interface {
 	Get(accountID string) *domain.Account
 	StoreTokens(accountID, accessTokenEnc, refreshTokenEnc string, expiresAt int64) error
@@ -23,29 +24,24 @@ type PoolAccess interface {
 	ReleaseRefreshLock(accountID, lockID string)
 }
 
-// TransportProvider returns per-account HTTP transports for proxy support.
+// TransportProvider supplies plain proxy transports for refresh flows.
 type TransportProvider interface {
-	GetHTTPTransport(proxy *domain.ProxyConfig) *http.Transport
+	TransportForProxy(proxy *domain.ProxyConfig) *http.Transport
 }
 
-// RefreshDriver performs provider-specific token refresh.
-type RefreshDriver interface {
-	RefreshToken(ctx context.Context, client *http.Client, refreshToken string) (*TokenResponse, error)
-}
-
-// TokenManager handles OAuth token refresh with locking.
-type TokenManager struct {
+// Manager handles OAuth token refresh with locking.
+type Manager struct {
 	pool                PoolAccess
 	crypto              *crypto.Crypto
 	transport           TransportProvider
-	drivers             map[domain.Provider]RefreshDriver
+	drivers             map[domain.Provider]driver.Driver
 	client              *http.Client
 	tokenRefreshAdvance time.Duration
 }
 
-// NewTokenManager creates a token manager.
-func NewTokenManager(pool PoolAccess, c *crypto.Crypto, tp TransportProvider, refreshAdvance time.Duration, drivers map[domain.Provider]RefreshDriver) *TokenManager {
-	return &TokenManager{
+// NewManager creates a token manager.
+func NewManager(pool PoolAccess, c *crypto.Crypto, tp TransportProvider, refreshAdvance time.Duration, drivers map[domain.Provider]driver.Driver) *Manager {
+	return &Manager{
 		pool:                pool,
 		crypto:              c,
 		transport:           tp,
@@ -58,7 +54,7 @@ func NewTokenManager(pool PoolAccess, c *crypto.Crypto, tp TransportProvider, re
 // EnsureValidToken checks if the account's access token is valid.
 // If expired (within advance window), triggers a refresh.
 // Returns the decrypted access token.
-func (tm *TokenManager) EnsureValidToken(ctx context.Context, accountID string) (string, error) {
+func (tm *Manager) EnsureValidToken(ctx context.Context, accountID string) (string, error) {
 	acct := tm.pool.Get(accountID)
 	if acct == nil {
 		return "", fmt.Errorf("account %s not found", accountID)
@@ -66,10 +62,9 @@ func (tm *TokenManager) EnsureValidToken(ctx context.Context, accountID string) 
 
 	now := time.Now().UnixMilli()
 
-	// Token still valid
 	if acct.ExpiresAt > 0 && now < acct.ExpiresAt-tm.tokenRefreshAdvance.Milliseconds() {
 		if acct.AccessTokenEnc != "" {
-			token, err := tm.crypto.Decrypt(acct.AccessTokenEnc, claudeSalt)
+			token, err := tm.crypto.Decrypt(acct.AccessTokenEnc, tokenSalt)
 			if err != nil {
 				return "", fmt.Errorf("decrypt access token: %w", err)
 			}
@@ -79,17 +74,14 @@ func (tm *TokenManager) EnsureValidToken(ctx context.Context, accountID string) 
 		}
 	}
 
-	// Token expired or about to expire — refresh
 	return tm.refresh(ctx, accountID)
 }
 
-// refresh performs the OAuth token refresh with locking.
-func (tm *TokenManager) refresh(ctx context.Context, accountID string) (string, error) {
+func (tm *Manager) refresh(ctx context.Context, accountID string) (string, error) {
 	lockID := uuid.New().String()
 
 	acquired := tm.pool.AcquireRefreshLock(accountID, lockID)
 	if !acquired {
-		// Another goroutine is refreshing — wait and re-read
 		slog.Info("token refresh locked, waiting", "accountId", accountID)
 		time.Sleep(2 * time.Second)
 
@@ -98,7 +90,7 @@ func (tm *TokenManager) refresh(ctx context.Context, accountID string) (string, 
 			return "", fmt.Errorf("account not found after wait")
 		}
 		if acct.AccessTokenEnc != "" && acct.ExpiresAt > time.Now().UnixMilli() {
-			token, err := tm.crypto.Decrypt(acct.AccessTokenEnc, claudeSalt)
+			token, err := tm.crypto.Decrypt(acct.AccessTokenEnc, tokenSalt)
 			if err == nil && token != "" {
 				return token, nil
 			}
@@ -113,7 +105,7 @@ func (tm *TokenManager) refresh(ctx context.Context, accountID string) (string, 
 		return "", fmt.Errorf("account %s not found", accountID)
 	}
 
-	refreshToken, err := tm.crypto.Decrypt(acct.RefreshTokenEnc, claudeSalt)
+	refreshToken, err := tm.crypto.Decrypt(acct.RefreshTokenEnc, tokenSalt)
 	if err != nil {
 		tm.markError(accountID, "decrypt refresh token: "+err.Error())
 		return "", fmt.Errorf("decrypt refresh token: %w", err)
@@ -139,7 +131,7 @@ func (tm *TokenManager) refresh(ctx context.Context, accountID string) (string, 
 	client := tm.client
 	if tm.transport != nil && acct.Proxy != nil {
 		client = &http.Client{
-			Transport: tm.transport.GetHTTPTransport(acct.Proxy),
+			Transport: tm.transport.TransportForProxy(acct.Proxy),
 			Timeout:   30 * time.Second,
 		}
 	}
@@ -150,18 +142,16 @@ func (tm *TokenManager) refresh(ctx context.Context, accountID string) (string, 
 		return "", fmt.Errorf("oauth refresh: %w", err)
 	}
 
-	// Encrypt new tokens
-	encAccess, err := tm.crypto.Encrypt(tokenResp.AccessToken, claudeSalt)
+	encAccess, err := tm.crypto.Encrypt(tokenResp.AccessToken, tokenSalt)
 	if err != nil {
 		return "", fmt.Errorf("encrypt access token: %w", err)
 	}
-	encRefresh, err := tm.crypto.Encrypt(tokenResp.RefreshToken, claudeSalt)
+	encRefresh, err := tm.crypto.Encrypt(tokenResp.RefreshToken, tokenSalt)
 	if err != nil {
 		return "", fmt.Errorf("encrypt refresh token: %w", err)
 	}
 
 	expiresAt := time.Now().Add(time.Duration(tokenResp.ExpiresIn) * time.Second).UnixMilli()
-
 	if err := tm.pool.StoreTokens(accountID, encAccess, encRefresh, expiresAt); err != nil {
 		return "", fmt.Errorf("store tokens: %w", err)
 	}
@@ -170,17 +160,17 @@ func (tm *TokenManager) refresh(ctx context.Context, accountID string) (string, 
 	return tokenResp.AccessToken, nil
 }
 
-func (tm *TokenManager) markError(accountID, msg string) {
+func (tm *Manager) markError(accountID, msg string) {
 	slog.Error("token refresh failed", "accountId", accountID, "error", msg)
 	tm.pool.MarkError(accountID, msg)
 }
 
 // ForceRefresh triggers an immediate token refresh, ignoring expiry.
-func (tm *TokenManager) ForceRefresh(ctx context.Context, accountID string) (string, error) {
+func (tm *Manager) ForceRefresh(ctx context.Context, accountID string) (string, error) {
 	return tm.refresh(ctx, accountID)
 }
 
 // EncryptToken encrypts a token for storage (used during account creation).
-func (tm *TokenManager) EncryptToken(token string) (string, error) {
-	return tm.crypto.Encrypt(token, claudeSalt)
+func (tm *Manager) EncryptToken(token string) (string, error) {
+	return tm.crypto.Encrypt(token, tokenSalt)
 }
