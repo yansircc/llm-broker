@@ -16,20 +16,17 @@ func (s *Server) handleListAccounts(w http.ResponseWriter, r *http.Request) {
 
 	views := make([]AccountListItem, 0, len(accounts))
 	for _, a := range accounts {
-		windows := []UtilizationWindowResponse{}
-		if drv, ok := s.drivers[a.Provider]; ok {
-			windows = toWindowResponses(drv.GetUtilization(json.RawMessage(a.ProviderStateJSON)))
-		}
+		proj := s.projectAccount(a)
 		views = append(views, AccountListItem{
 			ID:            a.ID,
 			Email:         a.Email,
 			Provider:      string(a.Provider),
 			Status:        string(a.Status),
-			Priority:      a.Priority,
+			Priority:      proj.effectivePriority,
 			PriorityMode:  a.PriorityMode,
 			LastUsedAt:    a.LastUsedAt,
 			CooldownUntil: a.CooldownUntil,
-			Windows:       windows,
+			Windows:       proj.windows,
 		})
 	}
 	writeJSON(w, http.StatusOK, views)
@@ -69,29 +66,7 @@ func (s *Server) handleGetAccount(w http.ResponseWriter, r *http.Request) {
 		sessions = []domain.SessionBindingInfo{}
 	}
 
-	var autoScore int
-	windows := []UtilizationWindowResponse{}
-	probeLabel := string(acct.Provider)
-	providerFields := []AccountFieldResponse{}
-	if acct.PriorityMode == "auto" {
-		if drv, ok := s.drivers[acct.Provider]; ok {
-			autoScore = drv.AutoPriority(json.RawMessage(acct.ProviderStateJSON))
-			windows = toWindowResponses(drv.GetUtilization(json.RawMessage(acct.ProviderStateJSON)))
-			probeLabel = drv.Info().ProbeLabel
-			providerFields = toFieldResponses(drv.DescribeAccount(acct))
-		}
-	}
-	if len(windows) == 0 {
-		if drv, ok := s.drivers[acct.Provider]; ok {
-			windows = toWindowResponses(drv.GetUtilization(json.RawMessage(acct.ProviderStateJSON)))
-			if probeLabel == string(acct.Provider) {
-				probeLabel = drv.Info().ProbeLabel
-			}
-			if len(providerFields) == 0 {
-				providerFields = toFieldResponses(drv.DescribeAccount(acct))
-			}
-		}
-	}
+	proj := s.projectAccount(acct)
 
 	writeJSON(w, http.StatusOK, AccountDetailResponse{
 		ID:             acct.ID,
@@ -99,18 +74,18 @@ func (s *Server) handleGetAccount(w http.ResponseWriter, r *http.Request) {
 		Provider:       acct.Provider,
 		Subject:        acct.Subject,
 		Status:         acct.Status,
-		ProbeLabel:     probeLabel,
+		ProbeLabel:     proj.probeLabel,
 		Priority:       acct.Priority,
 		PriorityMode:   acct.PriorityMode,
-		AutoScore:      autoScore,
+		AutoScore:      proj.autoScore,
 		ErrorMessage:   acct.ErrorMessage,
-		ProviderFields: providerFields,
+		ProviderFields: proj.providerFields,
 		CreatedAt:      acct.CreatedAt,
 		LastUsedAt:     acct.LastUsedAt,
 		LastRefreshAt:  acct.LastRefreshAt,
 		ExpiresAt:      acct.ExpiresAt,
 		CooldownUntil:  acct.CooldownUntil,
-		Windows:        windows,
+		Windows:        proj.windows,
 		Stainless:      stainless,
 		Sessions:       sessions,
 	})

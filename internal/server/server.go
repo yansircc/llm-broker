@@ -18,54 +18,54 @@ import (
 	"github.com/yansir/cc-relayer/internal/domain"
 	"github.com/yansir/cc-relayer/internal/driver"
 	"github.com/yansir/cc-relayer/internal/events"
-	"github.com/yansir/cc-relayer/internal/oauth"
 	"github.com/yansir/cc-relayer/internal/pool"
 	"github.com/yansir/cc-relayer/internal/relay"
 	"github.com/yansir/cc-relayer/internal/store"
+	"github.com/yansir/cc-relayer/internal/tokens"
 	"github.com/yansir/cc-relayer/internal/transport"
 	"github.com/yansir/cc-relayer/internal/ui"
 )
 
 // Server is the main HTTP server.
 type Server struct {
-	cfg          *config.Config
-	store        store.Store
-	pool         *pool.Pool
-	tokens       *oauth.TokenManager
-	authMw       *auth.Middleware
-	relay        *relay.Relay
-	transportMgr *transport.Manager
-	bus          *events.Bus
-	httpServer   *http.Server
-	version      string
-	startTime    time.Time
-	drivers      map[domain.Provider]driver.Driver
+	cfg           *config.Config
+	store         store.Store
+	pool          *pool.Pool
+	tokens        *tokens.Manager
+	authMw        *auth.Middleware
+	relay         *relay.Relay
+	transportPool *transport.Pool
+	bus           *events.Bus
+	httpServer    *http.Server
+	version       string
+	startTime     time.Time
+	drivers       map[domain.Provider]driver.Driver
 }
 
 func New(
 	cfg *config.Config,
 	s store.Store,
 	p *pool.Pool,
-	tm *oauth.TokenManager,
+	tm *tokens.Manager,
 	r *relay.Relay,
-	transportMgr *transport.Manager,
+	transportPool *transport.Pool,
 	authMw *auth.Middleware,
 	bus *events.Bus,
 	version string,
 	drivers map[domain.Provider]driver.Driver,
 ) *Server {
 	srv := &Server{
-		cfg:          cfg,
-		store:        s,
-		pool:         p,
-		tokens:       tm,
-		authMw:       authMw,
-		relay:        r,
-		transportMgr: transportMgr,
-		bus:          bus,
-		version:      version,
-		startTime:    time.Now(),
-		drivers:      drivers,
+		cfg:           cfg,
+		store:         s,
+		pool:          p,
+		tokens:        tm,
+		authMw:        authMw,
+		relay:         r,
+		transportPool: transportPool,
+		bus:           bus,
+		version:       version,
+		startTime:     time.Now(),
+		drivers:       drivers,
 	}
 
 	mux := http.NewServeMux()
@@ -86,8 +86,8 @@ func New(
 func (s *Server) registerRoutes(mux *http.ServeMux) {
 	auth := s.authMw.Authenticate
 
-	// Models endpoint (no auth — public metadata)
-	mux.HandleFunc("GET /v1/models", s.handleListModels)
+	// Models endpoint (authenticated relay metadata)
+	mux.Handle("GET /v1/models", auth(http.HandlerFunc(s.handleListModels)))
 
 	// Relay endpoints (registered explicitly from driver info)
 	for _, provider := range sortedDriverProviders(s.drivers) {
@@ -171,7 +171,7 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 func (s *Server) Run(ctx context.Context) error {
 	// Background goroutines
 	go s.pool.RunCleanup(ctx, 5*time.Minute)
-	go s.transportMgr.RunCleanup(ctx)
+	go s.transportPool.RunCleanup(ctx)
 	go s.runLogPurge(ctx)
 	go s.runRateLimitRefresh(ctx)
 
@@ -288,7 +288,7 @@ func (s *Server) probeAccount(ctx context.Context, acct *domain.Account) (driver
 		return driver.ProbeResult{}, fmt.Errorf("unknown provider")
 	}
 
-	result, err := drv.Probe(ctx, acct, accessToken, s.transportMgr.GetClient(acct))
+	result, err := drv.Probe(ctx, acct, accessToken, s.transportPool.ClientForAccount(acct))
 	if result.Observe {
 		s.pool.Observe(acct.ID, result.Effect)
 	}

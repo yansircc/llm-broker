@@ -4,13 +4,14 @@ import (
 	"encoding/json"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"slices"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/yansir/cc-relayer/internal/domain"
 	"github.com/yansir/cc-relayer/internal/driver"
-	"github.com/yansir/cc-relayer/internal/oauth"
 )
 
 func (s *Server) handleListProviders(w http.ResponseWriter, r *http.Request) {
@@ -99,11 +100,11 @@ func (s *Server) handleExchangeCode(w http.ResponseWriter, r *http.Request) {
 			provider = session.Provider
 		}
 		if req.CallbackURL != "" && req.Code == "" {
-			req.Code = oauth.ExtractCodeFromCallback(req.CallbackURL)
+			req.Code = extractCodeFromCallback(req.CallbackURL)
 		}
 	}
 	if req.Code != "" {
-		req.Code = oauth.ExtractCodeFromCallback(req.Code)
+		req.Code = extractCodeFromCallback(req.Code)
 	}
 
 	if req.Code == "" || req.CodeVerifier == "" {
@@ -219,4 +220,30 @@ func sortedDriverProviders(drivers map[domain.Provider]driver.Driver) []domain.P
 func (s *Server) driverByID(id string) (driver.Driver, bool) {
 	drv, ok := s.drivers[domain.Provider(id)]
 	return drv, ok
+}
+
+func extractCodeFromCallback(callbackURL string) string {
+	s := strings.TrimSpace(callbackURL)
+	if s == "" {
+		return ""
+	}
+
+	parsed, err := url.Parse(s)
+	if err != nil || parsed.Scheme == "" {
+		if i := strings.Index(s, "#"); i >= 0 {
+			s = s[:i]
+		}
+		if i := strings.Index(s, "&"); i >= 0 {
+			s = s[:i]
+		}
+		if i := strings.Index(s, "?"); i >= 0 {
+			s = s[:i]
+		}
+		s = strings.TrimPrefix(s, "code=")
+		return strings.TrimSpace(s)
+	}
+	if code := parsed.Query().Get("code"); code != "" {
+		return code
+	}
+	return strings.TrimSpace(s)
 }

@@ -93,25 +93,17 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 
 	acctViews := make([]DashboardAccount, 0, len(acctList))
 	for _, a := range acctList {
-		pri := a.Priority
-		if a.PriorityMode == "auto" {
-			if drv, ok := s.drivers[a.Provider]; ok {
-				pri = drv.AutoPriority(json.RawMessage(a.ProviderStateJSON))
-			}
-		}
+		proj := s.projectAccount(a)
 		av := DashboardAccount{
 			ID:            a.ID,
 			Email:         a.Email,
 			Provider:      string(a.Provider),
 			Status:        string(a.Status),
 			PriorityMode:  a.PriorityMode,
-			Priority:      pri,
+			Priority:      proj.effectivePriority,
 			CooldownUntil: a.CooldownUntil,
 			LastUsedAt:    a.LastUsedAt,
-			Windows:       []UtilizationWindowResponse{},
-		}
-		if drv, ok := s.drivers[a.Provider]; ok {
-			av.Windows = toWindowResponses(drv.GetUtilization(json.RawMessage(a.ProviderStateJSON)))
+			Windows:       proj.windows,
 		}
 		acctViews = append(acctViews, av)
 	}
