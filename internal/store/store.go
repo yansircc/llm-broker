@@ -2,10 +2,13 @@ package store
 
 import (
 	"context"
+	"errors"
 	"time"
 
 	"github.com/yansircc/llm-broker/internal/domain"
 )
+
+var ErrNotFound = errors.New("not found")
 
 // Store is the persistence interface for broker.
 // Account operations use typed structs instead of map[string]string.
@@ -19,6 +22,10 @@ type Store interface {
 	ListAccounts(ctx context.Context) ([]*domain.Account, error)
 	SaveAccount(ctx context.Context, acct *domain.Account) error // UPSERT
 	DeleteAccount(ctx context.Context, id string) error
+	GetQuotaBucket(ctx context.Context, bucketKey string) (*domain.QuotaBucket, error)
+	ListQuotaBuckets(ctx context.Context) ([]*domain.QuotaBucket, error)
+	SaveQuotaBucket(ctx context.Context, bucket *domain.QuotaBucket) error
+	DeleteQuotaBucket(ctx context.Context, bucketKey string) error
 
 	// Users
 	CreateUser(ctx context.Context, u *domain.User) error

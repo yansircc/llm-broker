@@ -2,6 +2,8 @@ package server
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -12,7 +14,6 @@ import (
 	"github.com/yansircc/llm-broker/internal/auth"
 	"github.com/yansircc/llm-broker/internal/config"
 	"github.com/yansircc/llm-broker/internal/domain"
-	"github.com/yansircc/llm-broker/internal/driver"
 	"github.com/yansircc/llm-broker/internal/events"
 	"github.com/yansircc/llm-broker/internal/pool"
 	"github.com/yansircc/llm-broker/internal/store"
@@ -26,13 +27,7 @@ func newTestServer(t *testing.T) *Server {
 	t.Helper()
 	ms := store.NewMockStore()
 	bus := events.NewBus(100)
-	p, err := pool.New(ms, bus, driver.ErrorPauses{
-		Pause401:        30 * time.Minute,
-		Pause401Refresh: 30 * time.Second,
-		Pause403:        10 * time.Minute,
-		Pause429:        60 * time.Second,
-		Pause529:        5 * time.Minute,
-	})
+	p, err := pool.New(ms, bus)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -52,6 +47,11 @@ func adminRequest(method, path string) *http.Request {
 		ID: "admin", Name: "admin", IsAdmin: true,
 	})
 	return r.WithContext(ctx)
+}
+
+func tokenHash(token string) string {
+	sum := sha256.Sum256([]byte(token))
+	return hex.EncodeToString(sum[:])
 }
 
 // assertJSONArray checks that the JSON value at the given dot-separated path
@@ -148,10 +148,7 @@ func TestGetAccount_EmptySessions(t *testing.T) {
 	}
 	srv.store.SaveAccount(context.Background(), acct)
 	// Reload pool
-	srv.pool, _ = pool.New(srv.store, srv.bus, driver.ErrorPauses{
-		Pause401: 30 * time.Minute, Pause401Refresh: 30 * time.Second,
-		Pause403: 10 * time.Minute, Pause429: 60 * time.Second, Pause529: 5 * time.Minute,
-	})
+	srv.pool, _ = pool.New(srv.store, srv.bus)
 
 	w := httptest.NewRecorder()
 	r := adminRequest("GET", "/admin/accounts/test-1")
@@ -177,10 +174,7 @@ func TestGetAccount_NullableFields(t *testing.T) {
 		Status:   domain.StatusActive,
 	}
 	srv.store.SaveAccount(context.Background(), acct)
-	srv.pool, _ = pool.New(srv.store, srv.bus, driver.ErrorPauses{
-		Pause401: 30 * time.Minute, Pause401Refresh: 30 * time.Second,
-		Pause403: 10 * time.Minute, Pause429: 60 * time.Second, Pause529: 5 * time.Minute,
-	})
+	srv.pool, _ = pool.New(srv.store, srv.bus)
 
 	w := httptest.NewRecorder()
 	r := adminRequest("GET", "/admin/accounts/test-2")
@@ -207,10 +201,7 @@ func TestGetAccount_WithIdentity(t *testing.T) {
 		IdentityJSON: `{"orgUUID":"abc-123"}`,
 	}
 	srv.store.SaveAccount(context.Background(), acct)
-	srv.pool, _ = pool.New(srv.store, srv.bus, driver.ErrorPauses{
-		Pause401: 30 * time.Minute, Pause401Refresh: 30 * time.Second,
-		Pause403: 10 * time.Minute, Pause429: 60 * time.Second, Pause529: 5 * time.Minute,
-	})
+	srv.pool, _ = pool.New(srv.store, srv.bus)
 
 	w := httptest.NewRecorder()
 	r := adminRequest("GET", "/admin/accounts/test-3")
@@ -287,5 +278,61 @@ func TestListUsers_Empty(t *testing.T) {
 	}
 	if len(arr) != 0 {
 		t.Errorf("expected empty array, got %d elements", len(arr))
+	}
+}
+
+func TestAdminAccountsRoute_RequiresAdmin(t *testing.T) {
+	srv := newTestServer(t)
+	srv.authMw = auth.NewMiddleware("admin-secret", srv.store)
+
+	user := &domain.User{
+		ID:          "u-1",
+		Name:        "alice",
+		TokenHash:   tokenHash("user-token"),
+		TokenPrefix: "tk_alice_abcd...",
+		Status:      "active",
+		CreatedAt:   time.Now().UTC(),
+	}
+	if err := srv.store.CreateUser(context.Background(), user); err != nil {
+		t.Fatal(err)
+	}
+
+	mux := http.NewServeMux()
+	srv.registerAdminRoutes(mux)
+
+	req := httptest.NewRequest(http.MethodGet, "/admin/accounts", nil)
+	req.Header.Set("Authorization", "Bearer user-token")
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+
+	if w.Code != http.StatusForbidden {
+		t.Fatalf("status %d, want %d, body: %s", w.Code, http.StatusForbidden, w.Body.String())
+	}
+}
+
+func TestDeleteUser_NotFound(t *testing.T) {
+	srv := newTestServer(t)
+
+	w := httptest.NewRecorder()
+	req := adminRequest(http.MethodDelete, "/admin/users/missing")
+	req.SetPathValue("id", "missing")
+	srv.handleDeleteUser(w, req)
+
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("status %d, want %d, body: %s", w.Code, http.StatusNotFound, w.Body.String())
+	}
+}
+
+func TestUpdateUserStatus_NotFound(t *testing.T) {
+	srv := newTestServer(t)
+
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/admin/users/missing/status", strings.NewReader(`{"status":"disabled"}`))
+	req.SetPathValue("id", "missing")
+	req = req.WithContext(adminRequest(http.MethodPost, "/admin/users/missing/status").Context())
+	srv.handleUpdateUserStatus(w, req)
+
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("status %d, want %d, body: %s", w.Code, http.StatusNotFound, w.Body.String())
 	}
 }

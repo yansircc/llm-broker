@@ -12,6 +12,7 @@ import (
 type MockStore struct {
 	mu       sync.Mutex
 	accounts map[string]*domain.Account
+	buckets  map[string]*domain.QuotaBucket
 	users    map[string]*domain.User
 	logs     []*domain.RequestLog
 
@@ -27,6 +28,7 @@ type MockStore struct {
 func NewMockStore() *MockStore {
 	return &MockStore{
 		accounts: make(map[string]*domain.Account),
+		buckets:  make(map[string]*domain.QuotaBucket),
 		users:    make(map[string]*domain.User),
 	}
 }
@@ -83,6 +85,43 @@ func (m *MockStore) DeleteAccount(_ context.Context, id string) error {
 	return nil
 }
 
+func (m *MockStore) GetQuotaBucket(_ context.Context, bucketKey string) (*domain.QuotaBucket, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	b, ok := m.buckets[bucketKey]
+	if !ok {
+		return nil, nil
+	}
+	copy := *b
+	return &copy, nil
+}
+
+func (m *MockStore) ListQuotaBuckets(_ context.Context) ([]*domain.QuotaBucket, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	result := make([]*domain.QuotaBucket, 0, len(m.buckets))
+	for _, b := range m.buckets {
+		copy := *b
+		result = append(result, &copy)
+	}
+	return result, nil
+}
+
+func (m *MockStore) SaveQuotaBucket(_ context.Context, bucket *domain.QuotaBucket) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	copy := *bucket
+	m.buckets[bucket.BucketKey] = &copy
+	return nil
+}
+
+func (m *MockStore) DeleteQuotaBucket(_ context.Context, bucketKey string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	delete(m.buckets, bucketKey)
+	return nil
+}
+
 func (m *MockStore) CreateUser(_ context.Context, u *domain.User) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -120,6 +159,9 @@ func (m *MockStore) ListUsers(_ context.Context) ([]*domain.User, error) {
 func (m *MockStore) DeleteUser(_ context.Context, id string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if _, ok := m.users[id]; !ok {
+		return ErrNotFound
+	}
 	delete(m.users, id)
 	return nil
 }
@@ -127,19 +169,23 @@ func (m *MockStore) DeleteUser(_ context.Context, id string) error {
 func (m *MockStore) UpdateUserStatus(_ context.Context, id, status string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if u, ok := m.users[id]; ok {
-		u.Status = status
+	u, ok := m.users[id]
+	if !ok {
+		return ErrNotFound
 	}
+	u.Status = status
 	return nil
 }
 
 func (m *MockStore) UpdateUserToken(_ context.Context, id, tokenHash, tokenPrefix string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if u, ok := m.users[id]; ok {
-		u.TokenHash = tokenHash
-		u.TokenPrefix = tokenPrefix
+	u, ok := m.users[id]
+	if !ok {
+		return ErrNotFound
 	}
+	u.TokenHash = tokenHash
+	u.TokenPrefix = tokenPrefix
 	return nil
 }
 

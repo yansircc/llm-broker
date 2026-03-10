@@ -55,6 +55,7 @@
 
 	interface AccountGroup {
 		provider: string;
+		label: string;
 		accounts: AccountView[];
 		window_labels: string[];
 	}
@@ -80,15 +81,15 @@
 		error = '';
 		providerError = '';
 		try {
-			data = await api<DashboardData>('/dashboard');
-			providers = [];
-			if (data.accounts.length === 0) {
-				try {
-					providers = await api<ProviderOption[]>('/providers');
-				} catch (e: any) {
+			const [dashboard, availableProviders] = await Promise.all([
+				api<DashboardData>('/dashboard'),
+				api<ProviderOption[]>('/providers').catch((e: any) => {
 					providerError = e.message;
-				}
-			}
+					return [];
+				})
+			]);
+			data = dashboard;
+			providers = availableProviders;
 			lastRefresh = new Date().toLocaleTimeString('en-GB', { hour12: false });
 		} catch (e: any) {
 			error = e.message;
@@ -161,6 +162,7 @@ curl -fsS "$BASE_URL/v1/models" \\
 			if (!group) {
 				group = {
 					provider: account.provider,
+					label: account.provider,
 					accounts: [],
 					window_labels: []
 				};
@@ -174,6 +176,33 @@ curl -fsS "$BASE_URL/v1/models" \\
 			});
 		}
 		return [...groups.values()].sort((a, b) => a.provider.localeCompare(b.provider));
+	}
+
+	function displayGroups(accounts: AccountView[], availableProviders: ProviderOption[]): AccountGroup[] {
+		const grouped = new Map(groupAccounts(accounts).map((group) => [group.provider, group]));
+		const ordered: AccountGroup[] = [];
+
+		for (const provider of availableProviders) {
+			const existing = grouped.get(provider.id);
+			if (existing) {
+				existing.label = provider.label;
+				ordered.push(existing);
+				grouped.delete(provider.id);
+				continue;
+			}
+			ordered.push({
+				provider: provider.id,
+				label: provider.label,
+				accounts: [],
+				window_labels: []
+			});
+		}
+
+		for (const leftover of [...grouped.values()].sort((a, b) => a.provider.localeCompare(b.provider))) {
+			ordered.push(leftover);
+		}
+
+		return ordered;
 	}
 
 </script>
@@ -213,49 +242,46 @@ curl -fsS "$BASE_URL/v1/models" \\
 		</tbody></table>
 	{/if}
 
-	{@const accountGroups = groupAccounts(data.accounts)}
+	{@const accountGroups = displayGroups(data.accounts, providers)}
 	{#if accountGroups.length === 0}
 		<h2>accounts</h2>
-		<p class="muted">no accounts</p>
-		{#if providerError}
-			<p class="error-msg">{providerError}</p>
-		{:else if providers.length > 0}
-			<div class="bar">
-				{#each providers as provider (provider.id)}
-					<div style="margin-bottom:8px">
-						<a href={addAccountPath(base, provider.id)}>[+ {provider.label}]</a>
-					</div>
-				{/each}
-			</div>
-		{/if}
+		<p class="muted">no providers available</p>
 	{:else}
 		{#each accountGroups as group (group.provider)}
 			<h2>{group.provider} accounts <a href={addAccountPath(base, group.provider)} class="add-link">[+ add]</a></h2>
-			<table><thead>
-				<tr>
-					<th>email</th>
-					<th>status</th>
-					<th>pri</th>
-					<th>cooldown</th>
-					<th>last used</th>
-					<th class="num">{group.window_labels[0] || 'window 1'}</th>
-					<th class="num">{group.window_labels[1] || 'window 2'}</th>
-				</tr></thead><tbody>
-				{#each group.accounts as a (a.id)}
-					{@const primary = windowAt(a, 0)}
-					{@const secondary = windowAt(a, 1)}
+			{#if group.accounts.length === 0}
+				<p class="muted">no {group.label} accounts</p>
+			{:else}
+				<table><thead>
 					<tr>
-						<td><a href="{base}/accounts/{a.id}">{a.email}</a></td>
-						<td><span class={dotClass(a.status)}>{a.status}</span></td>
-						<td>{a.priority}{#if a.priority_mode === 'auto'} <span class="muted">(a)</span>{/if}</td>
-						<Countdown until={a.cooldown_until} tag="td" variant="cooldown" />
-						<td>{timeAgo(a.last_used_at ?? '')}</td>
-						<td class="num">{#if a.status === 'blocked' || a.status === 'disabled'}<span class="muted">&ndash;</span>{:else if primary}{@const remain = 100 - primary.pct}<span class={remainClass(remain)}>{remain}%</span> <span class="muted">{remainTime(primary.reset ?? null)}</span>{:else}<span class="muted">&ndash;</span>{/if}</td>
-						<td class="num">{#if a.status === 'blocked' || a.status === 'disabled'}<span class="muted">&ndash;</span>{:else if secondary}{@const remain = 100 - secondary.pct}<span class={remainClass(remain)}>{remain}%</span> <span class="muted">{remainTime(secondary.reset ?? null)}</span>{:else}<span class="muted">&ndash;</span>{/if}</td>
-					</tr>
-				{/each}
-			</tbody></table>
+						<th>email</th>
+						<th>status</th>
+						<th>pri</th>
+						<th>cooldown</th>
+						<th>last used</th>
+						{#each group.window_labels as label, index (`${group.provider}:${label}:${index}`)}
+							<th class="num">{label}</th>
+						{/each}
+					</tr></thead><tbody>
+					{#each group.accounts as a (a.id)}
+						<tr>
+							<td><a href="{base}/accounts/{a.id}">{a.email}</a></td>
+							<td><span class={dotClass(a.status)}>{a.status}</span></td>
+							<td>{a.priority}{#if a.priority_mode === 'auto'} <span class="muted">(a)</span>{/if}</td>
+							<Countdown until={a.cooldown_until} tag="td" variant="cooldown" />
+							<td>{timeAgo(a.last_used_at ?? '')}</td>
+							{#each group.window_labels as label, index (`${a.id}:${label}:${index}`)}
+								{@const window = windowAt(a, index)}
+								<td class="num">{#if a.status === 'blocked' || a.status === 'disabled'}<span class="muted">&ndash;</span>{:else if window}{@const remain = 100 - window.pct}<span class={remainClass(remain)}>{remain}%</span> <span class="muted">{remainTime(window.reset ?? null)}</span>{:else}<span class="muted">&ndash;</span>{/if}</td>
+							{/each}
+						</tr>
+					{/each}
+				</tbody></table>
+			{/if}
 		{/each}
+	{/if}
+	{#if providerError}
+		<p class="error-msg">{providerError}</p>
 	{/if}
 
 	<!-- Users -->

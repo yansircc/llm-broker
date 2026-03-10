@@ -41,19 +41,28 @@ func (s *SQLiteStore) ListUsers(ctx context.Context) ([]*domain.User, error) {
 }
 
 func (s *SQLiteStore) DeleteUser(ctx context.Context, id string) error {
-	_, err := s.db.ExecContext(ctx, "DELETE FROM users WHERE id = ?", id)
-	return err
+	result, err := s.db.ExecContext(ctx, "DELETE FROM users WHERE id = ?", id)
+	if err != nil {
+		return err
+	}
+	return ensureRowsAffected(result)
 }
 
 func (s *SQLiteStore) UpdateUserStatus(ctx context.Context, id, status string) error {
-	_, err := s.db.ExecContext(ctx, "UPDATE users SET status = ? WHERE id = ?", status, id)
-	return err
+	result, err := s.db.ExecContext(ctx, "UPDATE users SET status = ? WHERE id = ?", status, id)
+	if err != nil {
+		return err
+	}
+	return ensureRowsAffected(result)
 }
 
 func (s *SQLiteStore) UpdateUserToken(ctx context.Context, id, tokenHash, tokenPrefix string) error {
-	_, err := s.db.ExecContext(ctx,
+	result, err := s.db.ExecContext(ctx,
 		"UPDATE users SET token_hash = ?, token_prefix = ? WHERE id = ?", tokenHash, tokenPrefix, id)
-	return err
+	if err != nil {
+		return err
+	}
+	return ensureRowsAffected(result)
 }
 
 func (s *SQLiteStore) UpdateUserLastActive(ctx context.Context, id string) error {
@@ -88,4 +97,15 @@ func scanUser(scanner interface{ Scan(...any) error }) (*domain.User, error) {
 		u.LastActiveAt = &t
 	}
 	return u, nil
+}
+
+func ensureRowsAffected(result sql.Result) error {
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if rows == 0 {
+		return ErrNotFound
+	}
+	return nil
 }

@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -12,6 +13,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/yansircc/llm-broker/internal/domain"
+	"github.com/yansircc/llm-broker/internal/store"
 )
 
 // ---------------------------------------------------------------------------
@@ -19,9 +21,6 @@ import (
 // ---------------------------------------------------------------------------
 
 func (s *Server) handleCreateUser(w http.ResponseWriter, r *http.Request) {
-	if !requireAdmin(w, r) {
-		return
-	}
 	var req struct {
 		Name string `json:"name"`
 	}
@@ -30,7 +29,11 @@ func (s *Server) handleCreateUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	plaintext, hashStr, prefix := generateUserToken(req.Name)
+	plaintext, hashStr, prefix, err := generateUserToken(req.Name)
+	if err != nil {
+		writeAdminError(w, http.StatusInternalServerError, "internal_error", "failed to generate token")
+		return
+	}
 	u := &domain.User{
 		ID:          uuid.New().String(),
 		Name:        req.Name,
@@ -54,9 +57,6 @@ func (s *Server) handleCreateUser(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleListUsers(w http.ResponseWriter, r *http.Request) {
-	if !requireAdmin(w, r) {
-		return
-	}
 	users, err := s.store.ListUsers(r.Context())
 	if err != nil {
 		writeAdminError(w, http.StatusInternalServerError, "internal_error", "failed to list users")
@@ -69,11 +69,12 @@ func (s *Server) handleListUsers(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleDeleteUser(w http.ResponseWriter, r *http.Request) {
-	if !requireAdmin(w, r) {
-		return
-	}
 	id := r.PathValue("id")
 	if err := s.store.DeleteUser(r.Context(), id); err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			writeAdminError(w, http.StatusNotFound, "not_found", "user not found")
+			return
+		}
 		writeAdminError(w, http.StatusInternalServerError, "internal_error", "failed to delete user")
 		return
 	}
@@ -82,9 +83,6 @@ func (s *Server) handleDeleteUser(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleRegenerateUserToken(w http.ResponseWriter, r *http.Request) {
-	if !requireAdmin(w, r) {
-		return
-	}
 	id := r.PathValue("id")
 
 	users, err := s.store.ListUsers(r.Context())
@@ -104,8 +102,16 @@ func (s *Server) handleRegenerateUserToken(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	plaintext, hashStr, prefix := generateUserToken(userName)
+	plaintext, hashStr, prefix, err := generateUserToken(userName)
+	if err != nil {
+		writeAdminError(w, http.StatusInternalServerError, "internal_error", "failed to generate token")
+		return
+	}
 	if err := s.store.UpdateUserToken(r.Context(), id, hashStr, prefix); err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			writeAdminError(w, http.StatusNotFound, "not_found", "user not found")
+			return
+		}
 		writeAdminError(w, http.StatusInternalServerError, "internal_error", "failed to update token")
 		return
 	}
@@ -118,9 +124,6 @@ func (s *Server) handleRegenerateUserToken(w http.ResponseWriter, r *http.Reques
 }
 
 func (s *Server) handleUpdateUserStatus(w http.ResponseWriter, r *http.Request) {
-	if !requireAdmin(w, r) {
-		return
-	}
 	id := r.PathValue("id")
 	var req struct {
 		Status string `json:"status"`
@@ -130,6 +133,10 @@ func (s *Server) handleUpdateUserStatus(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	if err := s.store.UpdateUserStatus(r.Context(), id, req.Status); err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			writeAdminError(w, http.StatusNotFound, "not_found", "user not found")
+			return
+		}
 		writeAdminError(w, http.StatusInternalServerError, "internal_error", "failed to update user status")
 		return
 	}
@@ -137,15 +144,17 @@ func (s *Server) handleUpdateUserStatus(w http.ResponseWriter, r *http.Request) 
 	writeJSON(w, http.StatusOK, map[string]string{"id": id, "status": req.Status})
 }
 
-func generateUserToken(name string) (plaintext, hashStr, prefix string) {
+func generateUserToken(name string) (plaintext, hashStr, prefix string, err error) {
 	b := make([]byte, 8)
-	_, _ = rand.Read(b)
+	if _, err = rand.Read(b); err != nil {
+		return "", "", "", err
+	}
 	hexStr := hex.EncodeToString(b)
 	plaintext = fmt.Sprintf("tk_%s_%s", name, hexStr)
 	h := sha256.Sum256([]byte(plaintext))
 	hashStr = hex.EncodeToString(h[:])
 	prefix = fmt.Sprintf("tk_%s_%s...", name, hexStr[:4])
-	return
+	return plaintext, hashStr, prefix, nil
 }
 
 // ---------------------------------------------------------------------------
@@ -153,9 +162,6 @@ func generateUserToken(name string) (plaintext, hashStr, prefix string) {
 // ---------------------------------------------------------------------------
 
 func (s *Server) handleGetUser(w http.ResponseWriter, r *http.Request) {
-	if !requireAdmin(w, r) {
-		return
-	}
 	id := r.PathValue("id")
 	ctx := r.Context()
 
