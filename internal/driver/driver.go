@@ -9,14 +9,19 @@ import (
 	"github.com/yansircc/llm-broker/internal/domain"
 )
 
-// Driver encapsulates all provider-specific behavior.
-// Core code (pool, relay, admin) only interacts with this interface.
-type Driver interface {
+type Descriptor interface {
 	Provider() domain.Provider
 	Info() ProviderInfo
 	Models() []Model
+}
+
+type RelayDriver interface {
+	Provider() domain.Provider
 
 	// --- Relay ---
+
+	// Plan returns provider-owned execution semantics for this request.
+	Plan(input *RelayInput) RelayPlan
 
 	// BuildRequest creates the upstream HTTP request.
 	BuildRequest(ctx context.Context, input *RelayInput, acct *domain.Account, token string) (*http.Request, error)
@@ -56,9 +61,14 @@ type Driver interface {
 	// Returns true if the request was handled and should not continue.
 	InterceptRequest(w http.ResponseWriter, body map[string]interface{}, model string) bool
 
-	// ExtractSessionUUID extracts a session UUID from the request body (Claude: metadata.user_id).
-	// Returns "" for providers without session binding.
-	ExtractSessionUUID(body map[string]interface{}) string
+	// CalcCost computes the estimated cost in USD.
+	CalcCost(model string, usage *Usage) float64
+}
+
+type OAuthDriver interface {
+	Provider() domain.Provider
+	Info() ProviderInfo
+	BucketKey(acct *domain.Account) string
 
 	// --- Lifecycle (OAuth) ---
 
@@ -68,18 +78,19 @@ type Driver interface {
 	// ExchangeCode exchanges an authorization code for tokens and identity.
 	// Must return a non-empty Subject or error.
 	ExchangeCode(ctx context.Context, code, verifier, state string) (*ExchangeResult, error)
+}
+
+type RefreshDriver interface {
+	Provider() domain.Provider
 
 	// RefreshToken refreshes an OAuth access token.
 	// Receives a pre-configured *http.Client (caller selects based on account proxy).
 	RefreshToken(ctx context.Context, client *http.Client, refreshToken string) (*TokenResponse, error)
+}
 
-	// --- Admin ---
-
-	// Probe performs a minimal health check and returns the resulting account effect.
-	Probe(ctx context.Context, acct *domain.Account, token string, client *http.Client) (ProbeResult, error)
-
-	// DescribeAccount returns provider-specific fields suitable for admin display.
-	DescribeAccount(acct *domain.Account) []AccountField
+type SchedulerDriver interface {
+	Provider() domain.Provider
+	BucketKey(acct *domain.Account) string
 
 	// AutoPriority computes the effective priority for an auto-mode account.
 	AutoPriority(state json.RawMessage) int
@@ -93,10 +104,40 @@ type Driver interface {
 
 	// CanServe reports whether the provider state allows serving the given model now.
 	CanServe(state json.RawMessage, model string, now time.Time) bool
+}
 
-	// CalcCost computes the estimated cost in USD.
-	CalcCost(model string, usage *Usage) float64
+type ExecutionDriver interface {
+	RelayDriver
+	SchedulerDriver
+}
+
+type AdminDriver interface {
+	Provider() domain.Provider
+	Info() ProviderInfo
+
+	// Probe performs a minimal health check and returns the resulting account effect.
+	Probe(ctx context.Context, acct *domain.Account, token string, client *http.Client) (ProbeResult, error)
+
+	// DescribeAccount returns provider-specific fields suitable for admin display.
+	DescribeAccount(acct *domain.Account) []AccountField
+
+	// AutoPriority computes the effective priority for an auto-mode account.
+	AutoPriority(state json.RawMessage) int
+
+	// IsStale returns true if the account's rate-limit data needs refreshing.
+	IsStale(state json.RawMessage, now time.Time) bool
 
 	// GetUtilization extracts utilization windows from provider state.
 	GetUtilization(state json.RawMessage) []UtilWindow
+}
+
+// Driver is the full provider contract implemented by concrete drivers.
+// Consumers should prefer the narrower role-specific interfaces above.
+type Driver interface {
+	Descriptor
+	RelayDriver
+	OAuthDriver
+	RefreshDriver
+	SchedulerDriver
+	AdminDriver
 }

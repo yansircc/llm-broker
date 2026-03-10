@@ -10,26 +10,28 @@ import (
 )
 
 const accountCols = `id, email, provider, status, priority, priority_mode, error_message,
+	bucket_key,
 	refresh_token_enc, access_token_enc, expires_at, created_at,
 	last_used_at, last_refresh_at, proxy_json, identity_json,
-	cooldown_until, subject, provider_state_json`
+	subject`
 
 func scanAccount(scanner interface{ Scan(...any) error }) (*domain.Account, error) {
 	var (
 		id, email, provider, status, priMode, errMsg string
+		bucketKey                                    string
 		refreshEnc, accessEnc                        string
 		proxyJSON, identityJSON                      string
 		prio                                         int
 		expiresAt, createdAt                         int64
 		lastUsedAt, lastRefreshAt                    sql.NullInt64
-		cooldownUntil                                sql.NullInt64
-		subject, providerStateJSON                   string
+		subject                                      string
 	)
 	err := scanner.Scan(
 		&id, &email, &provider, &status, &prio, &priMode, &errMsg,
+		&bucketKey,
 		&refreshEnc, &accessEnc, &expiresAt, &createdAt,
 		&lastUsedAt, &lastRefreshAt, &proxyJSON, &identityJSON,
-		&cooldownUntil, &subject, &providerStateJSON,
+		&subject,
 	)
 	if err != nil {
 		return nil, err
@@ -43,24 +45,23 @@ func scanAccount(scanner interface{ Scan(...any) error }) (*domain.Account, erro
 	}
 
 	a := &domain.Account{
-		ID:                id,
-		Email:             email,
-		Provider:          domain.Provider(provider),
-		Status:            domain.Status(status),
-		Priority:          prio,
-		PriorityMode:      priMode,
-		ErrorMessage:      errMsg,
-		RefreshTokenEnc:   refreshEnc,
-		AccessTokenEnc:    accessEnc,
-		ExpiresAt:         expiresAt,
-		CreatedAt:         time.Unix(createdAt, 0).UTC(),
-		LastUsedAt:        scanNullableTime(lastUsedAt),
-		LastRefreshAt:     scanNullableTime(lastRefreshAt),
-		ProxyJSON:         proxyJSON,
-		IdentityJSON:      identityJSON,
-		CooldownUntil:     scanNullableTime(cooldownUntil),
-		Subject:           subject,
-		ProviderStateJSON: providerStateJSON,
+		ID:              id,
+		Email:           email,
+		Provider:        domain.Provider(provider),
+		Status:          domain.Status(status),
+		Priority:        prio,
+		PriorityMode:    priMode,
+		ErrorMessage:    errMsg,
+		BucketKey:       bucketKey,
+		RefreshTokenEnc: refreshEnc,
+		AccessTokenEnc:  accessEnc,
+		ExpiresAt:       expiresAt,
+		CreatedAt:       time.Unix(createdAt, 0).UTC(),
+		LastUsedAt:      scanNullableTime(lastUsedAt),
+		LastRefreshAt:   scanNullableTime(lastRefreshAt),
+		ProxyJSON:       proxyJSON,
+		IdentityJSON:    identityJSON,
+		Subject:         subject,
 	}
 	a.HydrateRuntime()
 	return a, nil
@@ -98,27 +99,26 @@ func (s *SQLiteStore) SaveAccount(ctx context.Context, acct *domain.Account) err
 	_, err := s.db.ExecContext(ctx, `
 		INSERT INTO accounts (
 			id, email, provider, status, priority, priority_mode, error_message,
+			bucket_key,
 			refresh_token_enc, access_token_enc, expires_at, created_at,
 			last_used_at, last_refresh_at, proxy_json, identity_json,
-			cooldown_until, subject, provider_state_json
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			subject
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(id) DO UPDATE SET
 			email=excluded.email, provider=excluded.provider, status=excluded.status,
 			priority=excluded.priority, priority_mode=excluded.priority_mode,
 			error_message=excluded.error_message,
+			bucket_key=excluded.bucket_key,
 			refresh_token_enc=excluded.refresh_token_enc, access_token_enc=excluded.access_token_enc,
 			expires_at=excluded.expires_at,
 			last_used_at=excluded.last_used_at, last_refresh_at=excluded.last_refresh_at,
 			proxy_json=excluded.proxy_json, identity_json=excluded.identity_json,
-			cooldown_until=excluded.cooldown_until,
-			subject=excluded.subject, provider_state_json=excluded.provider_state_json`,
+			subject=excluded.subject`,
 		acct.ID, acct.Email, string(acct.Provider), string(acct.Status),
-		acct.Priority, acct.PriorityMode, acct.ErrorMessage,
+		acct.Priority, acct.PriorityMode, acct.ErrorMessage, acct.BucketKey,
 		acct.RefreshTokenEnc, acct.AccessTokenEnc, acct.ExpiresAt, acct.CreatedAt.Unix(),
 		nullableUnix(acct.LastUsedAt), nullableUnix(acct.LastRefreshAt),
-		acct.ProxyJSON, acct.IdentityJSON,
-		nullableUnix(acct.CooldownUntil),
-		acct.Subject, acct.ProviderStateJSON,
+		acct.ProxyJSON, acct.IdentityJSON, acct.Subject,
 	)
 	return err
 }

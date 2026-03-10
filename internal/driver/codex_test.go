@@ -25,7 +25,7 @@ func TestCodexBuildRequestUsesSubjectForAccountHeader(t *testing.T) {
 	acct := &domain.Account{
 		Provider: domain.ProviderCodex,
 		Subject:  "acct-subject-123",
-		Identity: map[string]interface{}{"chatgptAccountId": "stale-identity"},
+		Identity: map[string]string{"chatgptAccountId": "stale-identity"},
 	}
 
 	req, err := d.BuildRequest(context.Background(), input, acct, "tok")

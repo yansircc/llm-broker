@@ -1,23 +1,14 @@
 package server
 
 import (
-	"encoding/json"
 	"log/slog"
 	"net/http"
-	"net/url"
-	"slices"
-	"strings"
-	"time"
-
-	"github.com/google/uuid"
-	"github.com/yansircc/llm-broker/internal/domain"
-	"github.com/yansircc/llm-broker/internal/driver"
 )
 
 func (s *Server) handleListProviders(w http.ResponseWriter, r *http.Request) {
-	options := make([]ProviderOptionResponse, 0, len(s.drivers))
-	for _, provider := range sortedDriverProviders(s.drivers) {
-		info := s.drivers[provider].Info()
+	options := make([]ProviderOptionResponse, 0, len(s.oauthDrivers))
+	for _, provider := range sortedProviders(s.oauthDrivers) {
+		info := s.oauthDrivers[provider].Info()
 		options = append(options, ProviderOptionResponse{
 			ID:                  string(provider),
 			Label:               info.Label,
@@ -36,7 +27,7 @@ func (s *Server) handleGenerateAuthURL(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	drv, ok := s.driverByID(provider)
+	drv, ok := s.oauthDriverByID(provider)
 	if !ok {
 		writeAdminError(w, http.StatusBadRequest, "invalid_request", "unknown provider")
 		return
@@ -47,14 +38,11 @@ func (s *Server) handleGenerateAuthURL(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	sessionID := uuid.New().String()
-	sessionData := struct {
-		driver.OAuthSession
-		Provider string `json:"provider"`
-	}{session, provider}
-	sessionJSON, _ := json.Marshal(sessionData)
-
-	s.pool.SetOAuthSession(sessionID, string(sessionJSON), 10*time.Minute)
+	sessionID, err := s.storeOAuthSession(provider, session)
+	if err != nil {
+		writeAdminError(w, http.StatusInternalServerError, "internal_error", "failed to store oauth session")
+		return
+	}
 
 	slog.Info("oauth auth URL generated", "sessionId", sessionID, "provider", provider)
 	writeJSON(w, http.StatusOK, map[string]string{
@@ -65,46 +53,20 @@ func (s *Server) handleGenerateAuthURL(w http.ResponseWriter, r *http.Request) {
 
 // handleExchangeCode accepts an auth code and exchanges it for tokens.
 func (s *Server) handleExchangeCode(w http.ResponseWriter, r *http.Request) {
-	var req struct {
-		Provider     string `json:"provider"`
-		SessionID    string `json:"session_id"`
-		CallbackURL  string `json:"callback_url"`
-		Code         string `json:"code"`
-		CodeVerifier string `json:"code_verifier"`
-		State        string `json:"state"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	req, err := decodeExchangeCodeRequest(r)
+	if err != nil {
 		writeAdminError(w, http.StatusBadRequest, "invalid_request", "invalid JSON body")
 		return
 	}
 
-	provider := req.Provider
-
-	if req.SessionID != "" {
-		sessionJSON, ok := s.pool.GetDelOAuthSession(req.SessionID)
-		if !ok {
+	if err := s.hydrateExchangeCodeRequest(req); err != nil {
+		switch err {
+		case errInvalidOAuthSession:
 			writeAdminError(w, http.StatusBadRequest, "invalid_request", "invalid or expired session_id")
-			return
-		}
-		var session struct {
-			driver.OAuthSession
-			Provider string `json:"provider"`
-		}
-		if err := json.Unmarshal([]byte(sessionJSON), &session); err != nil {
+		case errCorruptOAuthSession:
 			writeAdminError(w, http.StatusInternalServerError, "internal_error", "corrupt session data")
-			return
 		}
-		req.CodeVerifier = session.CodeVerifier
-		req.State = session.State
-		if session.Provider != "" {
-			provider = session.Provider
-		}
-		if req.CallbackURL != "" && req.Code == "" {
-			req.Code = extractCodeFromCallback(req.CallbackURL)
-		}
-	}
-	if req.Code != "" {
-		req.Code = extractCodeFromCallback(req.Code)
+		return
 	}
 
 	if req.Code == "" || req.CodeVerifier == "" {
@@ -112,12 +74,12 @@ func (s *Server) handleExchangeCode(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if provider == "" {
+	if req.Provider == "" {
 		writeAdminError(w, http.StatusBadRequest, "invalid_request", "provider is required")
 		return
 	}
 
-	drv, ok := s.driverByID(provider)
+	drv, ok := s.oauthDriverByID(req.Provider)
 	if !ok {
 		writeAdminError(w, http.StatusBadRequest, "invalid_request", "unknown provider")
 		return
@@ -129,7 +91,7 @@ func (s *Server) handleExchangeCode(w http.ResponseWriter, r *http.Request) {
 
 	result, err := drv.ExchangeCode(r.Context(), req.Code, req.CodeVerifier, req.State)
 	if err != nil {
-		slog.Error("exchange code failed", "provider", provider, "error", err)
+		slog.Error("exchange code failed", "provider", req.Provider, "error", err)
 		writeAdminError(w, http.StatusBadGateway, "oauth_error", err.Error())
 		return
 	}
@@ -138,112 +100,11 @@ func (s *Server) handleExchangeCode(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Dedup by provider + subject
-	existing := s.pool.FindBySubject(drv.Provider(), result.Subject)
-
-	if existing != nil {
-		encAccess, err := s.tokens.EncryptToken(result.AccessToken)
-		if err != nil {
-			writeAdminError(w, http.StatusInternalServerError, "internal_error", "failed to encrypt token")
-			return
-		}
-		encRefresh, err := s.tokens.EncryptToken(result.RefreshToken)
-		if err != nil {
-			writeAdminError(w, http.StatusInternalServerError, "internal_error", "failed to encrypt token")
-			return
-		}
-		expiresAt := time.Now().Add(time.Duration(result.ExpiresIn) * time.Second).UnixMilli()
-		if err := s.pool.StoreTokens(existing.ID, encAccess, encRefresh, expiresAt); err != nil {
-			writeAdminError(w, http.StatusInternalServerError, "internal_error", "failed to store tokens")
-			return
-		}
-		_ = s.pool.Update(existing.ID, func(a *domain.Account) {
-			a.Email = result.Email
-			a.Status = domain.StatusActive
-			a.Identity = result.Identity
-			a.Subject = result.Subject
-		})
-
-		slog.Info("account updated via code exchange", "id", existing.ID, "email", result.Email, "provider", provider)
-		writeJSON(w, http.StatusOK, map[string]string{"id": existing.ID, "email": result.Email, "status": "active"})
-		return
-	}
-
-	// Create new account
-	encRefresh, err := s.tokens.EncryptToken(result.RefreshToken)
+	resp, err := s.upsertExchangedAccount(drv, result)
 	if err != nil {
-		writeAdminError(w, http.StatusInternalServerError, "internal_error", "failed to encrypt token")
+		writeAdminError(w, http.StatusInternalServerError, "internal_error", "failed to persist exchanged account")
 		return
 	}
-	encAccess, err := s.tokens.EncryptToken(result.AccessToken)
-	if err != nil {
-		writeAdminError(w, http.StatusInternalServerError, "internal_error", "failed to encrypt token")
-		return
-	}
-	expiresAt := time.Now().Add(time.Duration(result.ExpiresIn) * time.Second).UnixMilli()
-
-	acct := &domain.Account{
-		ID:              uuid.New().String(),
-		Email:           result.Email,
-		Provider:        drv.Provider(),
-		Subject:         result.Subject,
-		Status:          domain.StatusActive,
-		Priority:        50,
-		PriorityMode:    "auto",
-		RefreshTokenEnc: encRefresh,
-		AccessTokenEnc:  encAccess,
-		ExpiresAt:       expiresAt,
-		CreatedAt:       time.Now().UTC(),
-		Identity:        result.Identity,
-	}
-	now := time.Now().UTC()
-	acct.LastRefreshAt = &now
-
-	if err := s.pool.Add(acct); err != nil {
-		writeAdminError(w, http.StatusInternalServerError, "internal_error", "failed to create account")
-		return
-	}
-
-	slog.Info("account created via code exchange", "id", acct.ID, "email", result.Email, "provider", provider)
-	writeJSON(w, http.StatusOK, map[string]string{"id": acct.ID, "email": result.Email, "status": "active"})
-}
-
-func sortedDriverProviders(drivers map[domain.Provider]driver.Driver) []domain.Provider {
-	providers := make([]domain.Provider, 0, len(drivers))
-	for provider := range drivers {
-		providers = append(providers, provider)
-	}
-	slices.Sort(providers)
-	return providers
-}
-
-func (s *Server) driverByID(id string) (driver.Driver, bool) {
-	drv, ok := s.drivers[domain.Provider(id)]
-	return drv, ok
-}
-
-func extractCodeFromCallback(callbackURL string) string {
-	s := strings.TrimSpace(callbackURL)
-	if s == "" {
-		return ""
-	}
-
-	parsed, err := url.Parse(s)
-	if err != nil || parsed.Scheme == "" {
-		if i := strings.Index(s, "#"); i >= 0 {
-			s = s[:i]
-		}
-		if i := strings.Index(s, "&"); i >= 0 {
-			s = s[:i]
-		}
-		if i := strings.Index(s, "?"); i >= 0 {
-			s = s[:i]
-		}
-		s = strings.TrimPrefix(s, "code=")
-		return strings.TrimSpace(s)
-	}
-	if code := parsed.Query().Get("code"); code != "" {
-		return code
-	}
-	return strings.TrimSpace(s)
+	slog.Info("account persisted via code exchange", "id", resp.ID, "email", resp.Email, "provider", req.Provider)
+	writeJSON(w, http.StatusOK, resp)
 }

@@ -33,7 +33,7 @@ func (s *Server) refreshStaleAccounts(ctx context.Context) {
 			continue
 		}
 
-		drv, ok := s.drivers[acct.Provider]
+		drv, ok := s.adminDrivers[acct.Provider]
 		if !ok {
 			continue
 		}

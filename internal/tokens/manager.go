@@ -34,13 +34,13 @@ type Manager struct {
 	pool                PoolAccess
 	crypto              *crypto.Crypto
 	transport           TransportProvider
-	drivers             map[domain.Provider]driver.Driver
+	drivers             map[domain.Provider]driver.RefreshDriver
 	client              *http.Client
 	tokenRefreshAdvance time.Duration
 }
 
 // NewManager creates a token manager.
-func NewManager(pool PoolAccess, c *crypto.Crypto, tp TransportProvider, refreshAdvance time.Duration, drivers map[domain.Provider]driver.Driver) *Manager {
+func NewManager(pool PoolAccess, c *crypto.Crypto, tp TransportProvider, refreshAdvance time.Duration, drivers map[domain.Provider]driver.RefreshDriver) *Manager {
 	return &Manager{
 		pool:                pool,
 		crypto:              c,
@@ -146,9 +146,12 @@ func (tm *Manager) refresh(ctx context.Context, accountID string) (string, error
 	if err != nil {
 		return "", fmt.Errorf("encrypt access token: %w", err)
 	}
-	encRefresh, err := tm.crypto.Encrypt(tokenResp.RefreshToken, tokenSalt)
-	if err != nil {
-		return "", fmt.Errorf("encrypt refresh token: %w", err)
+	encRefresh := acct.RefreshTokenEnc
+	if tokenResp.RefreshToken != "" {
+		encRefresh, err = tm.crypto.Encrypt(tokenResp.RefreshToken, tokenSalt)
+		if err != nil {
+			return "", fmt.Errorf("encrypt refresh token: %w", err)
+		}
 	}
 
 	expiresAt := time.Now().Add(time.Duration(tokenResp.ExpiresIn) * time.Second).UnixMilli()

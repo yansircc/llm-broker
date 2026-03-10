@@ -11,6 +11,7 @@ type Provider string
 const (
 	ProviderClaude Provider = "claude"
 	ProviderCodex  Provider = "codex"
+	ProviderGemini Provider = "gemini"
 )
 
 // Status represents the lifecycle state of an account.
@@ -24,7 +25,7 @@ const (
 	StatusBlocked  Status = "blocked"
 )
 
-// Account represents an OAuth account (Claude or Codex).
+// Account represents an OAuth account.
 // All fields are persisted via db tags; json tags use snake_case.
 type Account struct {
 	ID           string   `db:"id"            json:"id"`
@@ -34,6 +35,7 @@ type Account struct {
 	Priority     int      `db:"priority"      json:"priority"`
 	PriorityMode string   `db:"priority_mode" json:"priority_mode"`
 	ErrorMessage string   `db:"error_message" json:"error_message,omitempty"`
+	BucketKey    string   `db:"bucket_key"    json:"bucket_key,omitempty"`
 
 	// Encrypted tokens (never exposed via JSON)
 	RefreshTokenEnc string `db:"refresh_token_enc" json:"-"`
@@ -49,14 +51,15 @@ type Account struct {
 	ProxyJSON    string `db:"proxy_json"    json:"-"`
 	IdentityJSON string `db:"identity_json" json:"-"`
 
-	// Core availability state.
-	CooldownUntil     *time.Time `db:"cooldown_until"      json:"cooldown_until,omitempty"`
-	Subject           string     `db:"subject"             json:"subject,omitempty"`
-	ProviderStateJSON string     `db:"provider_state_json" json:"-"`
+	Subject string `db:"subject" json:"subject,omitempty"`
+
+	// Quota state is projected from the assigned bucket at read time.
+	CooldownUntil     *time.Time `db:"-" json:"cooldown_until,omitempty"`
+	ProviderStateJSON string     `db:"-" json:"-"`
 
 	// Runtime only (not stored in DB)
-	Proxy    *ProxyConfig           `db:"-" json:"-"`
-	Identity map[string]interface{} `db:"-" json:"-"`
+	Proxy    *ProxyConfig      `db:"-" json:"-"`
+	Identity map[string]string `db:"-" json:"-"`
 }
 
 // ProxyConfig holds per-account proxy settings.
@@ -78,7 +81,7 @@ func (a *Account) HydrateRuntime() {
 		}
 	}
 	if a.IdentityJSON != "" {
-		var identity map[string]interface{}
+		var identity map[string]string
 		if json.Unmarshal([]byte(a.IdentityJSON), &identity) == nil {
 			a.Identity = identity
 		}
@@ -100,9 +103,6 @@ func (a *Account) PersistRuntime() {
 	} else {
 		a.IdentityJSON = ""
 	}
-	if a.ProviderStateJSON == "" {
-		a.ProviderStateJSON = "{}"
-	}
 }
 
 // IdentityString returns a string value from persisted account identity data.
@@ -110,10 +110,5 @@ func (a *Account) IdentityString(key string) string {
 	if a.Identity == nil {
 		return ""
 	}
-	if v, ok := a.Identity[key]; ok {
-		if s, ok := v.(string); ok {
-			return s
-		}
-	}
-	return ""
+	return a.Identity[key]
 }

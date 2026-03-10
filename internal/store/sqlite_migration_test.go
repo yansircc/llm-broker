@@ -100,13 +100,13 @@ func TestMigrate_LegacyAccountsTable(t *testing.T) {
 	if err != nil {
 		t.Fatalf("tableColumns(accounts): %v", err)
 	}
-	if !hasColumns(cols, "cooldown_until", "subject", "provider_state_json") {
+	if !hasColumns(cols, "bucket_key", "subject") {
 		t.Fatalf("migrated columns missing expected fields: %v", cols)
 	}
 	if !hasColumns(cols, "identity_json") {
 		t.Fatalf("migrated columns missing identity_json: %v", cols)
 	}
-	if hasColumns(cols, "schedulable", "overloaded_until", "five_hour_util", "codex_primary_util", "ext_info_json", "meta_json") {
+	if hasColumns(cols, "schedulable", "overloaded_until", "five_hour_util", "codex_primary_util", "ext_info_json", "meta_json", "cooldown_until", "provider_state_json") {
 		t.Fatalf("legacy columns still present after migration: %v", cols)
 	}
 
@@ -120,11 +120,22 @@ func TestMigrate_LegacyAccountsTable(t *testing.T) {
 	if acct.Subject != "org-1" {
 		t.Fatalf("Subject = %q, want org-1", acct.Subject)
 	}
-	if acct.CooldownUntil == nil || acct.CooldownUntil.Unix() != cooldownUntil {
-		t.Fatalf("CooldownUntil = %v, want unix %d", acct.CooldownUntil, cooldownUntil)
+	if acct.BucketKey != "claude:org-1" {
+		t.Fatalf("BucketKey = %q, want claude:org-1", acct.BucketKey)
 	}
-	if acct.ProviderStateJSON == "" || acct.ProviderStateJSON == "{}" {
-		t.Fatalf("ProviderStateJSON = %q, want preserved state", acct.ProviderStateJSON)
+
+	bucket, err := store.GetQuotaBucket(context.Background(), "claude:org-1")
+	if err != nil {
+		t.Fatalf("GetQuotaBucket(): %v", err)
+	}
+	if bucket == nil {
+		t.Fatal("GetQuotaBucket() returned nil")
+	}
+	if bucket.CooldownUntil == nil || bucket.CooldownUntil.Unix() != cooldownUntil {
+		t.Fatalf("bucket CooldownUntil = %v, want unix %d", bucket.CooldownUntil, cooldownUntil)
+	}
+	if bucket.StateJSON == "" || bucket.StateJSON == "{}" {
+		t.Fatalf("bucket StateJSON = %q, want preserved state", bucket.StateJSON)
 	}
 }
 
@@ -146,6 +157,7 @@ func TestNew_AllowsRequestLogColumnOrderDrift(t *testing.T) {
 			priority INTEGER NOT NULL DEFAULT 50,
 			priority_mode TEXT NOT NULL DEFAULT 'auto',
 			error_message TEXT NOT NULL DEFAULT '',
+			bucket_key TEXT NOT NULL DEFAULT '',
 			refresh_token_enc TEXT NOT NULL DEFAULT '',
 			access_token_enc TEXT NOT NULL DEFAULT '',
 			expires_at INTEGER NOT NULL DEFAULT 0,
@@ -154,9 +166,7 @@ func TestNew_AllowsRequestLogColumnOrderDrift(t *testing.T) {
 			last_refresh_at INTEGER,
 			proxy_json TEXT NOT NULL DEFAULT '',
 			identity_json TEXT NOT NULL DEFAULT '',
-			cooldown_until INTEGER,
-			subject TEXT NOT NULL,
-			provider_state_json TEXT NOT NULL DEFAULT '{}'
+			subject TEXT NOT NULL
 		);
 		CREATE TABLE users (
 			id TEXT PRIMARY KEY,
@@ -180,6 +190,13 @@ func TestNew_AllowsRequestLogColumnOrderDrift(t *testing.T) {
 			duration_ms INTEGER NOT NULL DEFAULT 0,
 			created_at INTEGER NOT NULL,
 			cost_usd REAL NOT NULL DEFAULT 0
+		);
+		CREATE TABLE quota_buckets (
+			bucket_key TEXT PRIMARY KEY,
+			provider TEXT NOT NULL,
+			cooldown_until INTEGER,
+			state_json TEXT NOT NULL DEFAULT '{}',
+			updated_at INTEGER NOT NULL
 		)
 	`); err != nil {
 		t.Fatalf("create schema with request_log order drift: %v", err)

@@ -1,0 +1,98 @@
+package server
+
+import (
+	"encoding/json"
+	"fmt"
+	"net/http"
+
+	"github.com/yansircc/llm-broker/internal/driver"
+)
+
+func (s *Server) registerRoutes(mux *http.ServeMux) {
+	s.registerRelayRoutes(mux)
+	s.registerAdminRoutes(mux)
+	s.registerOperationalRoutes(mux)
+	s.mountUIRoutes(mux)
+}
+
+func (s *Server) registerRelayRoutes(mux *http.ServeMux) {
+	auth := s.authMw.Authenticate
+
+	mux.Handle("GET /v1/models", auth(http.HandlerFunc(s.handleListModels)))
+
+	for _, provider := range sortedProviders(s.catalogDrivers) {
+		drv := s.catalogDrivers[provider]
+		for _, path := range drv.Info().RelayPaths {
+			mux.Handle("POST "+path, auth(http.HandlerFunc(s.relay.HandleProvider(provider))))
+		}
+	}
+}
+
+func (s *Server) registerAdminRoutes(mux *http.ServeMux) {
+	auth := s.authMw.Authenticate
+	admin := func(handler http.HandlerFunc) http.Handler {
+		return auth(requireAdminHandler(http.HandlerFunc(handler)))
+	}
+
+	mux.Handle("GET /admin/providers", admin(s.handleListProviders))
+	mux.Handle("POST /admin/accounts/generate-auth-url", admin(s.handleGenerateAuthURL))
+	mux.Handle("POST /admin/accounts/exchange-code", admin(s.handleExchangeCode))
+	mux.Handle("GET /admin/accounts", admin(s.handleListAccounts))
+	mux.Handle("GET /admin/accounts/{id}", admin(s.handleGetAccount))
+	mux.Handle("DELETE /admin/accounts/{id}", admin(s.handleDeleteAccount))
+	mux.Handle("POST /admin/accounts/{id}/email", admin(s.handleUpdateAccountEmail))
+	mux.Handle("POST /admin/accounts/{id}/status", admin(s.handleUpdateAccountStatus))
+	mux.Handle("POST /admin/accounts/{id}/priority", admin(s.handleUpdateAccountPriority))
+	mux.Handle("POST /admin/accounts/{id}/refresh", admin(s.handleRefreshAccount))
+	mux.Handle("POST /admin/accounts/{id}/test", admin(s.handleTestAccount))
+
+	mux.Handle("DELETE /admin/events", admin(s.handleClearEvents))
+	mux.HandleFunc("POST /admin/login", s.handleLogin)
+
+	mux.Handle("POST /admin/users", admin(s.handleCreateUser))
+	mux.Handle("GET /admin/users", admin(s.handleListUsers))
+	mux.Handle("GET /admin/users/{id}", admin(s.handleGetUser))
+	mux.Handle("DELETE /admin/users/{id}", admin(s.handleDeleteUser))
+	mux.Handle("POST /admin/users/{id}/regenerate", admin(s.handleRegenerateUserToken))
+	mux.Handle("POST /admin/users/{id}/status", admin(s.handleUpdateUserStatus))
+
+	mux.Handle("GET /admin/dashboard", admin(s.handleDashboard))
+	mux.Handle("GET /admin/health", admin(s.handleHealth))
+	mux.Handle("DELETE /admin/sessions/binding/{uuid}", admin(s.handleUnbindSession))
+}
+
+func (s *Server) registerOperationalRoutes(mux *http.ServeMux) {
+	mux.HandleFunc("POST /api/event_logging/batch", s.handleTelemetryBatch)
+	mux.HandleFunc("GET /health", s.handleHealthCheck)
+}
+
+func (s *Server) handleTelemetryBatch(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	w.Write([]byte(`{"success":true}`))
+}
+
+func (s *Server) handleHealthCheck(w http.ResponseWriter, r *http.Request) {
+	if err := s.store.Ping(r.Context()); err != nil {
+		w.WriteHeader(http.StatusServiceUnavailable)
+		fmt.Fprintf(w, `{"status":"error","store":"%s"}`, err.Error())
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	w.Write([]byte(`{"status":"ok"}`))
+}
+
+type modelsResponse struct {
+	Object string         `json:"object"`
+	Data   []driver.Model `json:"data"`
+}
+
+func (s *Server) handleListModels(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	data := make([]driver.Model, 0)
+	for _, provider := range sortedProviders(s.catalogDrivers) {
+		data = append(data, s.catalogDrivers[provider].Models()...)
+	}
+	json.NewEncoder(w).Encode(modelsResponse{Object: "list", Data: data})
+}

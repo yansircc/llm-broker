@@ -27,6 +27,12 @@ type Config struct {
 	CodexAPIURL         string
 	CodexRequestTimeout time.Duration
 
+	// Gemini API / OAuth
+	GeminiAPIURL            string
+	GeminiOAuthClientID     string
+	GeminiOAuthClientSecret string
+	GeminiOAuthRedirectURI  string
+
 	// Scheduling
 	SessionBindingTTL   time.Duration
 	TokenRefreshAdvance time.Duration
@@ -65,6 +71,11 @@ func Load() *Config {
 		CodexAPIURL:         envOr("CODEX_API_URL", "https://chatgpt.com/backend-api/codex/responses"),
 		CodexRequestTimeout: envDuration("CODEX_REQUEST_TIMEOUT", 10*time.Minute),
 
+		GeminiAPIURL:            envOr("GEMINI_API_URL", "https://cloudcode-pa.googleapis.com"),
+		GeminiOAuthClientID:     os.Getenv("GEMINI_OAUTH_CLIENT_ID"),
+		GeminiOAuthClientSecret: os.Getenv("GEMINI_OAUTH_CLIENT_SECRET"),
+		GeminiOAuthRedirectURI:  envOr("GEMINI_OAUTH_REDIRECT_URI", "https://codeassist.google.com/authcode"),
+
 		SessionBindingTTL:   envDuration("SESSION_BINDING_TTL", 24*time.Hour),
 		TokenRefreshAdvance: envDuration("TOKEN_REFRESH_ADVANCE", 60*time.Second),
 
@@ -90,7 +101,17 @@ func (c *Config) Validate() error {
 	if c.StaticToken == "" {
 		return errMissing("API_TOKEN")
 	}
+	if (c.GeminiOAuthClientID == "") != (c.GeminiOAuthClientSecret == "") {
+		if c.GeminiOAuthClientID == "" {
+			return errMissing("GEMINI_OAUTH_CLIENT_ID")
+		}
+		return errMissing("GEMINI_OAUTH_CLIENT_SECRET")
+	}
 	return nil
+}
+
+func (c *Config) GeminiEnabled() bool {
+	return c.GeminiOAuthClientID != "" && c.GeminiOAuthClientSecret != ""
 }
 
 type configError struct{ field string }

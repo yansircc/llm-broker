@@ -9,7 +9,7 @@ func TestHydratePersist_RoundTrip(t *testing.T) {
 		ID:       "test-1",
 		Email:    "test@example.com",
 		Proxy:    &ProxyConfig{Type: "socks5", Host: "127.0.0.1", Port: 1080},
-		Identity: map[string]interface{}{"orgName": "Test Org", "orgUUID": "uuid-123"},
+		Identity: map[string]string{"orgName": "Test Org", "orgUUID": "uuid-123"},
 	}
 
 	// Persist → serialise transient fields
@@ -37,7 +37,7 @@ func TestHydratePersist_RoundTrip(t *testing.T) {
 
 func TestIdentityString(t *testing.T) {
 	a := &Account{
-		Identity: map[string]interface{}{"account_uuid": "uuid-abc-123"},
+		Identity: map[string]string{"account_uuid": "uuid-abc-123"},
 	}
 	got := a.IdentityString("account_uuid")
 	if got != "uuid-abc-123" {

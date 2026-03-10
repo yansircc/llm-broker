@@ -130,10 +130,12 @@ func (s *Server) handleUpdateAccountStatus(w http.ResponseWriter, r *http.Reques
 			return
 		}
 		a.ErrorMessage = ""
-		a.CooldownUntil = nil
 	}); err != nil {
 		writeAdminError(w, http.StatusNotFound, "not_found", "account not found")
 		return
+	}
+	if req.Status == "active" {
+		s.pool.ClearCooldown(id)
 	}
 	slog.Info("account status updated", "id", id, "status", req.Status)
 	writeJSON(w, http.StatusOK, map[string]string{"id": id, "status": req.Status})

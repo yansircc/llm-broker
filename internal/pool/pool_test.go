@@ -21,10 +21,23 @@ type mockDriver struct {
 }
 
 func (m *mockDriver) Provider() domain.Provider { return m.provider }
+func (m *mockDriver) BucketKey(acct *domain.Account) string {
+	if acct == nil {
+		return ""
+	}
+	if acct.BucketKey != "" {
+		return acct.BucketKey
+	}
+	if acct.Subject != "" {
+		return string(m.provider) + ":" + acct.Subject
+	}
+	return string(m.provider) + ":" + acct.ID
+}
 func (m *mockDriver) Info() driver.ProviderInfo {
 	return driver.ProviderInfo{Label: string(m.provider), ProbeLabel: "mock"}
 }
-func (m *mockDriver) Models() []driver.Model { return nil }
+func (m *mockDriver) Models() []driver.Model                     { return nil }
+func (m *mockDriver) Plan(_ *driver.RelayInput) driver.RelayPlan { return driver.RelayPlan{} }
 func (m *mockDriver) AutoPriority(state json.RawMessage) int {
 	return 50 // default
 }
@@ -48,7 +61,6 @@ func (m *mockDriver) WriteUpstreamError(_ http.ResponseWriter, _ int, _ []byte, 
 func (m *mockDriver) InterceptRequest(_ http.ResponseWriter, _ map[string]interface{}, _ string) bool {
 	return false
 }
-func (m *mockDriver) ExtractSessionUUID(_ map[string]interface{}) string { return "" }
 func (m *mockDriver) GenerateAuthURL() (string, driver.OAuthSession, error) {
 	return "", driver.OAuthSession{}, nil
 }
@@ -89,9 +101,9 @@ func newTestPool(t *testing.T, accounts ...*domain.Account) *Pool {
 	bus := events.NewBus(100)
 	p := &Pool{
 		accounts:      make(map[string]*domain.Account),
+		buckets:       make(map[string]*domain.QuotaBucket),
 		store:         ms,
 		bus:           bus,
-		pauses:        driver.ErrorPauses{Pause401: 30 * time.Minute, Pause401Refresh: 30 * time.Second, Pause403: 10 * time.Minute, Pause429: 60 * time.Second, Pause529: 5 * time.Minute},
 		sessions:      store.NewTTLMap[SessionBinding](),
 		stainless:     store.NewTTLMap[string](),
 		oauthSessions: store.NewTTLMap[string](),
@@ -99,6 +111,21 @@ func newTestPool(t *testing.T, accounts ...*domain.Account) *Pool {
 	}
 	for _, a := range accounts {
 		p.accounts[a.ID] = a
+		key := a.BucketKey
+		if key == "" {
+			if a.Subject != "" {
+				key = string(a.Provider) + ":" + a.Subject
+			} else {
+				key = string(a.Provider) + ":" + a.ID
+			}
+		}
+		p.buckets[key] = &domain.QuotaBucket{
+			BucketKey:     key,
+			Provider:      a.Provider,
+			CooldownUntil: a.CooldownUntil,
+			StateJSON:     a.ProviderStateJSON,
+			UpdatedAt:     time.Now().UTC(),
+		}
 	}
 	return p
 }
@@ -148,32 +175,33 @@ func TestPick_NeverReturnsUnavailable(t *testing.T) {
 	}
 
 	// Exclude "good" with opus → no accounts available (opusLimited blocked by opus check)
-	_, err = p.Pick(testDriver, []string{"g"}, "claude-opus-4-6", "")
+	_, err = p.Pick(testDriver, []Exclusion{ExcludeAccount("g")}, "claude-opus-4-6", "")
 	if err == nil {
 		t.Fatal("expected error when all accounts unavailable for opus")
 	}
 }
 
-// Test 2: applyCooldown is monotonic
+// Test 2: applyBucketCooldown is monotonic
 func TestApplyCooldown_Monotonic(t *testing.T) {
 	acct := activeAccount("a", "a@x")
 	p := newTestPool(t, acct)
+	bucket := p.ensureBucketLocked(acct)
 
 	long := time.Now().Add(1 * time.Hour)
-	p.applyCooldown(acct, long)
-	if acct.CooldownUntil == nil || !acct.CooldownUntil.Equal(long.UTC()) {
+	p.applyBucketCooldown(bucket, long)
+	if bucket.CooldownUntil == nil || !bucket.CooldownUntil.Equal(long.UTC()) {
 		t.Fatal("long cooldown should be set")
 	}
 
 	short := time.Now().Add(5 * time.Minute)
-	p.applyCooldown(acct, short)
-	if !acct.CooldownUntil.Equal(long.UTC()) {
+	p.applyBucketCooldown(bucket, short)
+	if !bucket.CooldownUntil.Equal(long.UTC()) {
 		t.Fatal("short cooldown should not overwrite long cooldown")
 	}
 
 	longer := time.Now().Add(2 * time.Hour)
-	p.applyCooldown(acct, longer)
-	if !acct.CooldownUntil.Equal(longer.UTC()) {
+	p.applyBucketCooldown(bucket, longer)
+	if !bucket.CooldownUntil.Equal(longer.UTC()) {
 		t.Fatal("longer cooldown should overwrite existing")
 	}
 }
@@ -196,10 +224,8 @@ func TestObserve_ConcurrentCooldown(t *testing.T) {
 	}
 	wg.Wait()
 
-	p.mu.RLock()
-	defer p.mu.RUnlock()
-	a := p.accounts["a"]
-	if a.CooldownUntil == nil {
+	a := p.Get("a")
+	if a == nil || a.CooldownUntil == nil {
 		t.Fatal("cooldownUntil should be set after 529s")
 	}
 }
@@ -220,15 +246,13 @@ func TestObserve401_BackgroundRefresh(t *testing.T) {
 	})
 
 	// Verify account is NOT set to StatusError (key change from old behavior)
-	p.mu.RLock()
-	a := p.accounts["a"]
+	a := p.Get("a")
 	if a.Status == domain.StatusError {
 		t.Fatal("401 should NOT set StatusError anymore")
 	}
 	if a.CooldownUntil == nil {
 		t.Fatal("cooldownUntil should be set with Pause401Refresh")
 	}
-	p.mu.RUnlock()
 
 	// Verify callback was invoked
 	select {
@@ -250,12 +274,10 @@ func TestObserve_StatusTransitions(t *testing.T) {
 			Kind:          driver.EffectOverload,
 			CooldownUntil: time.Now().Add(5 * time.Minute),
 		})
-		p.mu.RLock()
-		a := p.accounts["a"]
-		if a.CooldownUntil == nil {
+		a := p.Get("a")
+		if a == nil || a.CooldownUntil == nil {
 			t.Fatal("cooldownUntil should be set")
 		}
-		p.mu.RUnlock()
 	})
 
 	t.Run("429_cooldown", func(t *testing.T) {
@@ -265,12 +287,10 @@ func TestObserve_StatusTransitions(t *testing.T) {
 			Kind:          driver.EffectCooldown,
 			CooldownUntil: time.Now().Add(1 * time.Minute),
 		})
-		p.mu.RLock()
-		a := p.accounts["a"]
-		if a.CooldownUntil == nil {
+		a := p.Get("a")
+		if a == nil || a.CooldownUntil == nil {
 			t.Fatal("cooldownUntil should be set")
 		}
-		p.mu.RUnlock()
 	})
 
 	t.Run("403_ban_blocked", func(t *testing.T) {
@@ -281,12 +301,10 @@ func TestObserve_StatusTransitions(t *testing.T) {
 			CooldownUntil: time.Now().Add(30 * time.Minute),
 			ErrorMessage:  "organization has been disabled",
 		})
-		p.mu.RLock()
-		a := p.accounts["a"]
+		a := p.Get("a")
 		if a.Status != domain.StatusBlocked {
 			t.Fatalf("expected blocked, got %s", a.Status)
 		}
-		p.mu.RUnlock()
 	})
 
 	t.Run("403_nonban_cooldown", func(t *testing.T) {
@@ -296,15 +314,13 @@ func TestObserve_StatusTransitions(t *testing.T) {
 			Kind:          driver.EffectCooldown,
 			CooldownUntil: time.Now().Add(10 * time.Minute),
 		})
-		p.mu.RLock()
-		a := p.accounts["a"]
+		a := p.Get("a")
 		if a.Status != domain.StatusActive {
 			t.Fatalf("non-ban 403 should keep status active, got %s", a.Status)
 		}
 		if a.CooldownUntil == nil {
 			t.Fatal("cooldownUntil should be set after non-ban 403")
 		}
-		p.mu.RUnlock()
 	})
 }
 
@@ -321,8 +337,7 @@ func TestStoreTokens_RestoresAccount(t *testing.T) {
 		t.Fatalf("StoreTokens failed: %v", err)
 	}
 
-	p.mu.RLock()
-	a := p.accounts["a"]
+	a := p.Get("a")
 	if a.Status != domain.StatusActive {
 		t.Fatalf("expected active, got %s", a.Status)
 	}
@@ -332,7 +347,6 @@ func TestStoreTokens_RestoresAccount(t *testing.T) {
 	if a.ErrorMessage != "" {
 		t.Fatal("errorMessage should be cleared")
 	}
-	p.mu.RUnlock()
 }
 
 // Test 7: Update persists under lock
@@ -393,11 +407,113 @@ func TestPick_PrioritySort(t *testing.T) {
 	}
 
 	// Exclude a3, then a2 should win (same priority, older lastUsedAt)
-	acct, err = p.Pick(testDriver, []string{"a3"}, "claude-haiku", "")
+	acct, err = p.Pick(testDriver, []Exclusion{ExcludeAccount("a3")}, "claude-haiku", "")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if acct.ID != "a2" {
 		t.Fatalf("expected a2 (older lastUsedAt), got %s", acct.ID)
+	}
+}
+
+func TestPick_ExcludeBucketSkipsSiblingAccounts(t *testing.T) {
+	g1 := &domain.Account{
+		ID:        "g1",
+		Email:     "g1@example.com",
+		Provider:  domain.ProviderGemini,
+		Subject:   "google-sub",
+		BucketKey: "gemini:google-sub:proj-1",
+		Status:    domain.StatusActive,
+		Priority:  50,
+	}
+	g2 := &domain.Account{
+		ID:        "g2",
+		Email:     "g2@example.com",
+		Provider:  domain.ProviderGemini,
+		Subject:   "google-sub",
+		BucketKey: "gemini:google-sub:proj-1",
+		Status:    domain.StatusActive,
+		Priority:  50,
+	}
+	p := newTestPool(t, g1, g2)
+	geminiDriver := &mockDriver{provider: domain.ProviderGemini}
+
+	_, err := p.Pick(geminiDriver, []Exclusion{ExcludeBucket("gemini:google-sub:proj-1")}, "gemini-2.5-flash", "")
+	if err == nil {
+		t.Fatal("expected no available accounts when bucket is excluded")
+	}
+}
+
+func TestPick_ReturnsBucketProjectedAccount(t *testing.T) {
+	g1 := &domain.Account{
+		ID:                "g1",
+		Email:             "g1@example.com",
+		Provider:          domain.ProviderGemini,
+		Subject:           "google-sub",
+		BucketKey:         "gemini:google-sub:proj-1",
+		Status:            domain.StatusActive,
+		Priority:          50,
+		ProviderStateJSON: `{}`,
+	}
+	p := newTestPool(t, g1)
+	p.buckets["gemini:google-sub:proj-1"].StateJSON = `{"project_id":"proj-1","rpm":1}`
+	p.SetDrivers(map[domain.Provider]driver.SchedulerDriver{
+		domain.ProviderGemini: &mockDriver{provider: domain.ProviderGemini},
+	})
+
+	acct, err := p.Pick(&mockDriver{provider: domain.ProviderGemini}, nil, "gemini-2.5-flash", "")
+	if err != nil {
+		t.Fatalf("Pick() error = %v", err)
+	}
+	if acct.ProviderStateJSON != `{"project_id":"proj-1","rpm":1}` {
+		t.Fatalf("Pick() ProviderStateJSON = %q, want bucket projection", acct.ProviderStateJSON)
+	}
+}
+
+func TestObserve_BucketScopeSyncsCooldownAndState(t *testing.T) {
+	g1 := &domain.Account{
+		ID:                "g1",
+		Email:             "g1@example.com",
+		Provider:          domain.ProviderGemini,
+		Subject:           "google-sub",
+		BucketKey:         "gemini:google-sub:proj-1",
+		Status:            domain.StatusActive,
+		Priority:          50,
+		ProviderStateJSON: `{"project_id":"proj-1"}`,
+	}
+	g2 := &domain.Account{
+		ID:                "g2",
+		Email:             "g2@example.com",
+		Provider:          domain.ProviderGemini,
+		Subject:           "google-sub",
+		BucketKey:         "gemini:google-sub:proj-1",
+		Status:            domain.StatusActive,
+		Priority:          50,
+		ProviderStateJSON: `{"project_id":"proj-1"}`,
+	}
+	p := newTestPool(t, g1, g2)
+	p.SetDrivers(map[domain.Provider]driver.SchedulerDriver{
+		domain.ProviderGemini: &mockDriver{provider: domain.ProviderGemini},
+	})
+
+	until := time.Now().Add(2 * time.Minute)
+	p.Observe("g1", driver.Effect{
+		Kind:          driver.EffectCooldown,
+		Scope:         driver.EffectScopeBucket,
+		CooldownUntil: until,
+		UpdatedState:  json.RawMessage(`{"project_id":"proj-1","rpm":1}`),
+	})
+
+	for _, id := range []string{"g1", "g2"} {
+		acct := p.Get(id)
+		if acct == nil {
+			t.Fatalf("account %s missing", id)
+		}
+		if acct.CooldownUntil == nil || acct.CooldownUntil.Unix() != until.UTC().Unix() {
+			t.Fatalf("account %s cooldown = %v, want %v", id, acct.CooldownUntil, until.UTC())
+		}
+		if acct.ProviderStateJSON != `{"project_id":"proj-1","rpm":1}` {
+			t.Fatalf("account %s ProviderStateJSON = %q", id, acct.ProviderStateJSON)
+		}
 	}
 }

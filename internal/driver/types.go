@@ -27,10 +27,19 @@ const (
 	EffectAuthFail            // 401
 )
 
+// EffectScope determines whether an effect applies to one credential or an entire bucket.
+type EffectScope int
+
+const (
+	EffectScopeAccount EffectScope = iota
+	EffectScopeBucket
+)
+
 // Effect is the provider-agnostic outcome of an upstream request.
 // Pool.Observe applies it without knowing any provider-specific details.
 type Effect struct {
 	Kind          EffectKind
+	Scope         EffectScope
 	CooldownUntil time.Time
 	ErrorMessage  string
 	UpdatedState  json.RawMessage // opaque provider state blob
@@ -41,10 +50,19 @@ type RelayInput struct {
 	Body          map[string]interface{}
 	RawBody       []byte
 	Headers       http.Header
+	Path          string
 	RawQuery      string
 	Model         string
 	IsStream      bool
-	IsCountTokens bool // Claude-only: /v1/messages/count_tokens
+	IsCountTokens bool
+}
+
+// RelayPlan captures provider-owned request execution decisions.
+type RelayPlan struct {
+	IsStream                 bool
+	IsCountTokens            bool
+	SessionUUID              string
+	RejectUnavailableSession bool
 }
 
 // Usage holds token counts from a completed request.
@@ -64,12 +82,13 @@ type TokenResponse struct {
 
 // ExchangeResult holds the tokens and identity from an authorization code exchange.
 type ExchangeResult struct {
-	AccessToken  string
-	RefreshToken string
-	ExpiresIn    int
-	Subject      string // REQUIRED: orgUUID (Claude), chatgptAccountId (Codex)
-	Email        string
-	Identity     map[string]interface{}
+	AccessToken   string
+	RefreshToken  string
+	ExpiresIn     int
+	Subject       string // REQUIRED: provider-stable subject (orgUUID, chatgptAccountId, Google sub)
+	Email         string
+	Identity      map[string]string
+	ProviderState json.RawMessage
 }
 
 // OAuthSession holds PKCE parameters for a pending OAuth flow.

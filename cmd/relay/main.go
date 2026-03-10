@@ -78,13 +78,7 @@ func main() {
 	defer transportPool.Close()
 
 	// Initialize pool (loads all accounts from DB)
-	p, err := pool.New(s, bus, driver.ErrorPauses{
-		Pause401:        cfg.ErrorPause401,
-		Pause401Refresh: cfg.ErrorPause401Refresh,
-		Pause403:        cfg.ErrorPause403,
-		Pause429:        cfg.ErrorPause429,
-		Pause529:        cfg.ErrorPause529,
-	})
+	p, err := pool.New(s, bus)
 	if err != nil {
 		slog.Error("pool init failed", "error", err)
 		os.Exit(1)
@@ -116,10 +110,34 @@ func main() {
 			Pauses: pauses,
 		}),
 	}
+	if cfg.GeminiEnabled() {
+		drivers[domain.ProviderGemini] = driver.NewGeminiDriver(driver.GeminiConfig{
+			APIURL:            cfg.GeminiAPIURL,
+			OAuthClientID:     cfg.GeminiOAuthClientID,
+			OAuthClientSecret: cfg.GeminiOAuthClientSecret,
+			OAuthRedirectURI:  cfg.GeminiOAuthRedirectURI,
+			Pauses:            pauses,
+		})
+	}
+
+	executionDrivers := make(map[domain.Provider]driver.ExecutionDriver, len(drivers))
+	schedulerDrivers := make(map[domain.Provider]driver.SchedulerDriver, len(drivers))
+	refreshDrivers := make(map[domain.Provider]driver.RefreshDriver, len(drivers))
+	catalogDrivers := make(map[domain.Provider]driver.Descriptor, len(drivers))
+	oauthDrivers := make(map[domain.Provider]driver.OAuthDriver, len(drivers))
+	adminDrivers := make(map[domain.Provider]driver.AdminDriver, len(drivers))
+	for provider, drv := range drivers {
+		executionDrivers[provider] = drv
+		schedulerDrivers[provider] = drv
+		refreshDrivers[provider] = drv
+		catalogDrivers[provider] = drv
+		oauthDrivers[provider] = drv
+		adminDrivers[provider] = drv
+	}
 
 	// Initialize token manager
-	tokMgr := tokens.NewManager(p, c, transportPool, cfg.TokenRefreshAdvance, drivers)
-	p.SetDrivers(drivers)
+	tokMgr := tokens.NewManager(p, c, transportPool, cfg.TokenRefreshAdvance, refreshDrivers)
+	p.SetDrivers(schedulerDrivers)
 
 	// Wire 401 → background token refresh
 	p.SetOnAuthFailure(func(accountID string) {
@@ -135,11 +153,15 @@ func main() {
 		MaxRequestBodyMB:  cfg.MaxRequestBodyMB,
 		MaxRetryAccounts:  cfg.MaxRetryAccounts,
 		SessionBindingTTL: cfg.SessionBindingTTL,
-	}, transportPool, bus, drivers)
+	}, transportPool, bus, executionDrivers)
 
 	// Start server
 	ctx := context.Background()
-	srv := server.New(cfg, s, p, tokMgr, r, transportPool, authMw, bus, version, drivers)
+	srv := server.New(cfg, s, p, tokMgr, r, transportPool, authMw, bus, version, server.DriverViews{
+		Catalog: catalogDrivers,
+		OAuth:   oauthDrivers,
+		Admin:   adminDrivers,
+	})
 	if err := srv.Run(ctx); err != nil {
 		slog.Error("server error", "error", err)
 		os.Exit(1)
