@@ -33,6 +33,71 @@ on_error() {
 
 trap on_error ERR
 
+wait_for_health() {
+    local attempts="${1:-30}"
+    local code="000"
+    for ((i = 1; i <= attempts; i++)); do
+        code="$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 "$SITE/health" 2>/dev/null || echo "000")"
+        if [[ "$code" == "200" ]]; then
+            return 0
+        fi
+        sleep 1
+    done
+    echo "    FAIL: /health did not return 200 (last=$code)"
+    return 1
+}
+
+query_db_invariants() {
+    ssh "$REMOTE" env REMOTE_ENV="$REMOTE_ENV" bash -s <<'EOF'
+set -euo pipefail
+db_path="$(awk -F= '$1 == "DB_PATH" { print substr($0, index($0, "=") + 1); exit }' "$REMOTE_ENV")"
+if [[ -z "$db_path" || ! -f "$db_path" ]]; then
+    echo "missing|0|0|0|0"
+    exit 0
+fi
+sqlite3 "$db_path" <<'SQL'
+.mode list
+.separator |
+SELECT
+    'ok',
+    (SELECT COUNT(*) FROM accounts),
+    (SELECT COUNT(*) FROM quota_buckets),
+    (SELECT COUNT(*) FROM accounts WHERE subject = ''),
+    (SELECT COUNT(DISTINCT CASE
+        WHEN bucket_key != '' THEN bucket_key
+        WHEN subject != '' THEN provider || ':' || subject
+        ELSE provider || ':' || id
+    END) FROM accounts);
+SQL
+EOF
+}
+
+query_orphan_buckets() {
+    ssh "$REMOTE" env REMOTE_ENV="$REMOTE_ENV" bash -s <<'EOF'
+set -euo pipefail
+db_path="$(awk -F= '$1 == "DB_PATH" { print substr($0, index($0, "=") + 1); exit }' "$REMOTE_ENV")"
+if [[ -z "$db_path" || ! -f "$db_path" ]]; then
+    exit 0
+fi
+sqlite3 "$db_path" <<'SQL'
+.mode list
+.separator |
+WITH effective AS (
+    SELECT DISTINCT CASE
+        WHEN bucket_key != '' THEN bucket_key
+        WHEN subject != '' THEN provider || ':' || subject
+        ELSE provider || ':' || id
+    END AS bucket_key
+    FROM accounts
+)
+SELECT bucket_key
+FROM quota_buckets
+EXCEPT
+SELECT bucket_key FROM effective;
+SQL
+EOF
+}
+
 # ── 1. Frontend build ──────────────────────────────────
 if [[ "${SKIP_FRONTEND:-}" != "1" ]]; then
     echo "==> building frontend..."
@@ -80,6 +145,45 @@ STATUS=$(ssh "$REMOTE" "systemctl is-active $SERVICE 2>/dev/null || true")
 if [[ "$STATUS" != "active" ]]; then
     echo "    FAIL: service is $STATUS"
     ssh "$REMOTE" "journalctl -u $SERVICE -n 15 --no-pager"
+    exit 1
+fi
+
+echo "==> waiting for /health..."
+wait_for_health
+echo "    healthy"
+
+echo "==> verifying database invariants..."
+DB_FLAG=""
+ACCOUNT_COUNT=0
+BUCKET_COUNT=0
+EMPTY_SUBJECT_COUNT=0
+DISTINCT_BUCKET_COUNT=0
+for ((attempt = 1; attempt <= 20; attempt++)); do
+    DB_CHECK="$(query_db_invariants)"
+    IFS='|' read -r DB_FLAG ACCOUNT_COUNT BUCKET_COUNT EMPTY_SUBJECT_COUNT DISTINCT_BUCKET_COUNT <<<"$DB_CHECK"
+    if [[ "$DB_FLAG" == "ok" && "$EMPTY_SUBJECT_COUNT" == "0" && "$BUCKET_COUNT" == "$DISTINCT_BUCKET_COUNT" ]]; then
+        break
+    fi
+    sleep 1
+done
+echo "    accounts=$ACCOUNT_COUNT buckets=$BUCKET_COUNT distinct_bucket_keys=$DISTINCT_BUCKET_COUNT empty_subjects=$EMPTY_SUBJECT_COUNT"
+if [[ "$DB_FLAG" != "ok" ]]; then
+    echo "    FAIL: database file missing"
+    exit 1
+fi
+if [[ "$EMPTY_SUBJECT_COUNT" != "0" ]]; then
+    echo "    FAIL: accounts with empty subject detected"
+    exit 1
+fi
+if [[ "$BUCKET_COUNT" != "$DISTINCT_BUCKET_COUNT" ]]; then
+    echo "    FAIL: quota_buckets count does not match distinct effective bucket keys"
+    ORPHAN_BUCKETS="$(query_orphan_buckets || true)"
+    if [[ -n "$ORPHAN_BUCKETS" ]]; then
+        echo "    orphan buckets:"
+        while IFS= read -r bucket; do
+            [[ -n "$bucket" ]] && echo "      - $bucket"
+        done <<<"$ORPHAN_BUCKETS"
+    fi
     exit 1
 fi
 
