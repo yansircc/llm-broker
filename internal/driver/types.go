@@ -57,9 +57,9 @@ type Usage struct {
 
 // TokenResponse is the OAuth refresh/exchange response.
 type TokenResponse struct {
-	AccessToken  string
-	RefreshToken string
-	ExpiresIn    int
+	AccessToken  string `json:"access_token"`
+	RefreshToken string `json:"refresh_token"`
+	ExpiresIn    int    `json:"expires_in"`
 }
 
 // ExchangeResult holds the tokens and identity from an authorization code exchange.
