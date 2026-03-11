@@ -102,7 +102,7 @@
 		actionError = '';
 		try {
 			await api(`/users/${user.id}`, { method: 'DELETE' });
-			goto(`${base}/dashboard`);
+			goto(`${base}/users`);
 		} catch (e: any) {
 			actionError = e.message;
 		}
@@ -111,7 +111,7 @@
 
 {#if error}
 	<p class="error-msg">{error}</p>
-	<p><a href="{base}/dashboard">&larr; back to dashboard</a></p>
+	<p><a href="{base}/users">&larr; back to users</a></p>
 {:else if loading}
 	<p class="loading">loading user...</p>
 {:else if user}
@@ -239,5 +239,5 @@
 		</tbody></table>
 	{/if}
 
-	<p style="margin-top:16px;font-size:12px"><a href="{base}/dashboard">&larr; back</a></p>
+	<p style="margin-top:16px;font-size:12px"><a href="{base}/users">&larr; back</a></p>
 {/if}

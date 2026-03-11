@@ -223,6 +223,19 @@ func TestGetAccount_WithIdentity(t *testing.T) {
 	}
 }
 
+func TestClearEgressCellCooldown_NotFound(t *testing.T) {
+	srv := newTestServer(t)
+
+	w := httptest.NewRecorder()
+	r := adminRequest("POST", "/admin/egress/cells/missing/clear-cooldown")
+	r.SetPathValue("id", "missing")
+	srv.handleClearEgressCellCooldown(w, r)
+
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("status %d, want %d, body: %s", w.Code, http.StatusNotFound, w.Body.String())
+	}
+}
+
 // ---------------------------------------------------------------------------
 // User detail contract tests
 // ---------------------------------------------------------------------------

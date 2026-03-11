@@ -251,6 +251,35 @@ func TestCooldownCellForAccount(t *testing.T) {
 	}
 }
 
+func TestClearCellCooldown(t *testing.T) {
+	acct := activeAccount("a", "a@x")
+	acct.CellID = "cell-a"
+	until := time.Now().Add(2 * time.Minute).UTC()
+
+	p := newTestPool(t, acct)
+	p.cells["cell-a"] = &domain.EgressCell{
+		ID:            "cell-a",
+		Name:          "cell-a",
+		Status:        domain.EgressCellActive,
+		Proxy:         &domain.ProxyConfig{Type: "socks5", Host: "127.0.0.1", Port: 11080},
+		CooldownUntil: &until,
+		CreatedAt:     time.Now().UTC(),
+		UpdatedAt:     time.Now().UTC(),
+	}
+
+	if !p.ClearCellCooldown("cell-a") {
+		t.Fatal("ClearCellCooldown() = false, want true")
+	}
+
+	cell := p.GetCell("cell-a")
+	if cell == nil {
+		t.Fatal("cell should still exist")
+	}
+	if cell.CooldownUntil != nil {
+		t.Fatalf("cell cooldown = %v, want nil", cell.CooldownUntil)
+	}
+}
+
 // Test 2: applyBucketCooldown is monotonic
 func TestApplyCooldown_Monotonic(t *testing.T) {
 	acct := activeAccount("a", "a@x")

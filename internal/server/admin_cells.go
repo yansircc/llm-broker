@@ -105,3 +105,34 @@ func (s *Server) handleUpsertEgressCell(w http.ResponseWriter, r *http.Request) 
 		UpdatedAt:     saved.UpdatedAt,
 	})
 }
+
+func (s *Server) handleClearEgressCellCooldown(w http.ResponseWriter, r *http.Request) {
+	id := strings.TrimSpace(r.PathValue("id"))
+	if id == "" {
+		writeAdminError(w, http.StatusBadRequest, "invalid_request", "cell id is required")
+		return
+	}
+	if s.pool.GetCell(id) == nil {
+		writeAdminError(w, http.StatusNotFound, "not_found", "cell not found")
+		return
+	}
+	if !s.pool.ClearCellCooldown(id) {
+		writeJSON(w, http.StatusOK, map[string]any{
+			"id":      id,
+			"cleared": false,
+		})
+		return
+	}
+	cell := s.pool.GetCell(id)
+	writeJSON(w, http.StatusOK, EgressCellResponse{
+		ID:            cell.ID,
+		Name:          cell.Name,
+		Status:        string(cell.Status),
+		Proxy:         cell.Proxy,
+		Labels:        cell.Labels,
+		CooldownUntil: cell.CooldownUntil,
+		StateJSON:     cell.StateJSON,
+		CreatedAt:     cell.CreatedAt,
+		UpdatedAt:     cell.UpdatedAt,
+	})
+}

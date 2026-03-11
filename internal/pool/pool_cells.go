@@ -175,3 +175,22 @@ func (p *Pool) CooldownCellForAccount(accountID string, proposed time.Time, mess
 	}
 	return p.CooldownCell(cellID, proposed, message)
 }
+
+func (p *Pool) ClearCellCooldown(cellID string) bool {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	cell := p.cellLocked(cellID)
+	if cell == nil || cell.CooldownUntil == nil {
+		return false
+	}
+	cell.CooldownUntil = nil
+	cell.UpdatedAt = time.Now().UTC()
+	p.persistCellLocked(cell)
+	p.bus.Publish(events.Event{
+		Type:    events.EventRecover,
+		Message: fmt.Sprintf("cell %s cooldown cleared", cellID),
+	})
+	slog.Info("admin cleared cell cooldown", "cellId", cellID)
+	return true
+}

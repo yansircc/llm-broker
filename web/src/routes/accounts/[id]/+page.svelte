@@ -3,6 +3,7 @@
 	import { goto } from '$app/navigation';
 	import { base } from '$app/paths';
 	import { api } from '$lib/api';
+	import type { EgressCellSummary } from '$lib/admin-types';
 	import { timeAgo, fmtDate, dotClass, remainClass, remainTime } from '$lib/format';
 	import Countdown from '$lib/components/Countdown.svelte';
 	import PriorityEditor from '$lib/components/PriorityEditor.svelte';
@@ -25,6 +26,8 @@
 		last_refresh_at: string | null;
 		expires_at: number;
 		cooldown_until: string | null;
+		cell_id?: string;
+		cell?: EgressCellSummary | null;
 		windows: { label: string; pct: number; reset?: number }[];
 		stainless: Record<string, string> | null;
 		sessions: { session_uuid: string; account_id: string; created_at: string; last_used_at: string; expires_at: string }[];
@@ -96,7 +99,7 @@
 		actionError = '';
 		try {
 			await api(`/accounts/${acct.id}`, { method: 'DELETE' });
-			goto(`${base}/dashboard`);
+			goto(`${base}/accounts`);
 		} catch (e: any) {
 			actionError = e.message;
 		}
@@ -147,7 +150,7 @@
 
 {#if error}
 	<p class="error-msg">{error}</p>
-	<p><a href="{base}/dashboard">&larr; back to dashboard</a></p>
+	<p><a href="{base}/accounts">&larr; back to accounts</a></p>
 {:else if loading}
 	<p class="loading">loading account...</p>
 {:else if acct}
@@ -267,6 +270,45 @@
 		</dd>
 	</dl>
 
+	<h2>egress</h2>
+	<dl>
+		<dt>cell</dt>
+		<dd>
+			{#if acct.cell_id}
+				<a href="{base}/cells/{acct.cell_id}">{acct.cell?.name ?? acct.cell_id}</a>
+			{:else}
+				<span class="muted">legacy direct</span>
+			{/if}
+		</dd>
+
+		<dt>cell status</dt>
+		<dd>
+			{#if acct.cell}
+				<span class={acct.cell.status === 'active' ? 'g' : acct.cell.status === 'error' ? 'r' : 'muted'}>{acct.cell.status}</span>
+			{:else}
+				<span class="muted">-</span>
+			{/if}
+		</dd>
+
+		<dt>cell cooldown</dt>
+		<dd>
+			{#if acct.cell?.cooldown_until}
+				<Countdown until={acct.cell.cooldown_until} variant="cooldown" />
+			{:else}
+				<span class="muted">-</span>
+			{/if}
+		</dd>
+
+		<dt>cell labels</dt>
+		<dd>
+			{#if acct.cell?.labels && Object.keys(acct.cell.labels).length > 0}
+				{Object.entries(acct.cell.labels).map(([key, value]) => `${key}=${value}`).join(' / ')}
+			{:else}
+				<span class="muted">-</span>
+			{/if}
+		</dd>
+	</dl>
+
 	{#if acct.stainless && Object.keys(acct.stainless).length > 0}
 		<h2>stainless fingerprint</h2>
 		<dl>
@@ -299,5 +341,5 @@
 		</tbody></table>
 	{/if}
 
-	<p style="margin-top:16px;font-size:12px"><a href="{base}/dashboard">&larr; back</a></p>
+	<p style="margin-top:16px;font-size:12px"><a href="{base}/accounts">&larr; back</a></p>
 {/if}

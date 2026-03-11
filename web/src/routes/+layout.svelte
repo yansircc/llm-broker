@@ -8,7 +8,21 @@
 		children: import('svelte').Snippet;
 	}
 
+	const navItems = [
+		{ href: '/dashboard', label: 'ops' },
+		{ href: '/accounts', label: 'accounts' },
+		{ href: '/users', label: 'users' },
+		{ href: '/activity', label: 'activity' },
+		{ href: '/migrations', label: 'migration' }
+	];
+
 	let { children }: Props = $props();
+
+	function activeNav(href: string) {
+		const path = $page.url.pathname;
+		const full = `${base}${href}`;
+		return path === full || path.startsWith(full + '/');
+	}
 
 	$effect(() => {
 		if ($page.url.pathname.endsWith('/login')) return;
@@ -18,6 +32,17 @@
 	});
 </script>
 
-<h1><a href="{base}/dashboard" style="text-decoration:none;color:inherit;">broker</a></h1>
+{#if !$page.url.pathname.endsWith('/login')}
+	<h1><a href="{base}/dashboard" style="text-decoration:none;color:inherit;">broker</a></h1>
+	<div class="topnav">
+		{#each navItems as item (item.href)}
+			{#if activeNav(item.href)}
+				<span class="active">[{item.label}]</span>
+			{:else}
+				<a href="{base}{item.href}">[{item.label}]</a>
+			{/if}
+		{/each}
+	</div>
+{/if}
 
 {@render children()}
