@@ -15,6 +15,9 @@ func (p *Pool) isAvailable(acct *domain.Account, drv driver.SchedulerDriver, mod
 	if acct.Status != domain.StatusActive {
 		return false
 	}
+	if acct.CellID != "" && !p.cellAvailableLocked(p.cellForAccountLocked(acct), now) {
+		return false
+	}
 	if cooldownUntil := p.bucketCooldownLocked(acct); cooldownUntil != nil && now.Before(*cooldownUntil) {
 		return false
 	}

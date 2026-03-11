@@ -100,7 +100,7 @@ func TestHandleExchangeCodePreservesExistingRefreshTokenOnRebind(t *testing.T) {
 	}
 
 	c := crypto.New("test-encryption-key")
-	tm := tokens.NewManager(p, c, nil, time.Minute, nil)
+	tm := tokens.NewManager(p, c, nil, time.Minute, 0, nil)
 	oldRefreshEnc, err := tm.EncryptToken("old-refresh")
 	if err != nil {
 		t.Fatalf("EncryptToken(old refresh) error = %v", err)

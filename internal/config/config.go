@@ -43,6 +43,7 @@ type Config struct {
 	ErrorPause403        time.Duration
 	ErrorPause429        time.Duration
 	ErrorPause529        time.Duration
+	CellErrorPause       time.Duration
 
 	// Request
 	RequestTimeout   time.Duration
@@ -84,6 +85,7 @@ func Load() *Config {
 		ErrorPause403:        envDuration("ERROR_PAUSE_403", 10*time.Minute),
 		ErrorPause429:        envDuration("ERROR_PAUSE_429", 60*time.Second),
 		ErrorPause529:        envDuration("ERROR_PAUSE_529", 5*time.Minute),
+		CellErrorPause:       envDuration("CELL_ERROR_PAUSE", 60*time.Second),
 
 		RequestTimeout:   envDuration("REQUEST_TIMEOUT", 5*time.Minute),
 		MaxRequestBodyMB: envInt("REQUEST_MAX_SIZE_MB", 60),

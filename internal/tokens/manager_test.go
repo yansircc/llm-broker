@@ -3,6 +3,7 @@ package tokens
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"testing"
 	"time"
@@ -75,7 +76,10 @@ func (d *refreshStubDriver) GetUtilization(json.RawMessage) []driver.UtilWindow 
 }
 
 type refreshStubPool struct {
-	acct *domain.Account
+	acct            *domain.Account
+	cooledCellID    string
+	cooldownUntil   time.Time
+	cooldownMessage string
 }
 
 func (p *refreshStubPool) Get(string) *domain.Account { return p.acct }
@@ -88,6 +92,12 @@ func (p *refreshStubPool) StoreTokens(_ string, accessTokenEnc, refreshTokenEnc 
 func (p *refreshStubPool) MarkError(string, string)               {}
 func (p *refreshStubPool) AcquireRefreshLock(string, string) bool { return true }
 func (p *refreshStubPool) ReleaseRefreshLock(string, string)      {}
+func (p *refreshStubPool) CooldownCell(cellID string, until time.Time, message string) bool {
+	p.cooledCellID = cellID
+	p.cooldownUntil = until
+	p.cooldownMessage = message
+	return true
+}
 
 func TestForceRefreshPreservesExistingRefreshTokenWhenProviderReturnsEmpty(t *testing.T) {
 	c := crypto.New("test-encryption-key")
@@ -114,7 +124,7 @@ func TestForceRefreshPreservesExistingRefreshTokenWhenProviderReturnsEmpty(t *te
 			ExpiresIn:   3600,
 		},
 	}
-	mgr := NewManager(pool, c, nil, time.Minute, map[domain.Provider]driver.RefreshDriver{
+	mgr := NewManager(pool, c, nil, time.Minute, 0, map[domain.Provider]driver.RefreshDriver{
 		domain.ProviderGemini: drv,
 	})
 
@@ -140,5 +150,44 @@ func TestForceRefreshPreservesExistingRefreshTokenWhenProviderReturnsEmpty(t *te
 	}
 	if accessToken != "new-access" {
 		t.Fatalf("access token = %q, want new-access", accessToken)
+	}
+}
+
+func TestForceRefreshCooldownsCellOnTransportError(t *testing.T) {
+	c := crypto.New("test-encryption-key")
+	refreshEnc, err := c.Encrypt("old-refresh", tokenSalt)
+	if err != nil {
+		t.Fatalf("Encrypt(old refresh) error = %v", err)
+	}
+
+	pool := &refreshStubPool{
+		acct: &domain.Account{
+			ID:              "acct-1",
+			Email:           "mark@example.com",
+			Provider:        domain.ProviderGemini,
+			RefreshTokenEnc: refreshEnc,
+			CellID:          "cell-fr-par-mark",
+		},
+	}
+	drv := &refreshStubDriver{err: errors.New("proxy connect tcp: connection refused")}
+	mgr := NewManager(pool, c, nil, time.Minute, time.Minute, map[domain.Provider]driver.RefreshDriver{
+		domain.ProviderGemini: drv,
+	})
+
+	_, err = mgr.ForceRefresh(context.Background(), "acct-1")
+	if err == nil {
+		t.Fatal("ForceRefresh() error = nil, want transport error")
+	}
+	if pool.cooledCellID != "cell-fr-par-mark" {
+		t.Fatalf("cooledCellID = %q", pool.cooledCellID)
+	}
+	if pool.cooldownUntil.IsZero() {
+		t.Fatal("cooldownUntil is zero")
+	}
+	if pool.cooldownUntil.Before(time.Now().Add(30 * time.Second)) {
+		t.Fatalf("cooldownUntil = %s, want around now+1m", pool.cooldownUntil.Format(time.RFC3339))
+	}
+	if pool.cooldownMessage == "" {
+		t.Fatal("cooldownMessage is empty")
 	}
 }

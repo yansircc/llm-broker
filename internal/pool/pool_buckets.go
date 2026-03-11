@@ -137,6 +137,7 @@ func (p *Pool) projectAccountLocked(acct *domain.Account) *domain.Account {
 	copy.BucketKey = p.bucketKeyLocked(acct)
 	copy.CooldownUntil = nil
 	copy.ProviderStateJSON = "{}"
+	copy.Cell = cloneCell(p.cellForAccountLocked(acct))
 	if bucket := p.bucketLocked(acct); bucket != nil {
 		copy.CooldownUntil = bucket.CooldownUntil
 		if bucket.StateJSON != "" {

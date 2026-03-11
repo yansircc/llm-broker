@@ -49,6 +49,7 @@ type Account struct {
 
 	// Proxy & persisted identity (stored as JSON strings in DB)
 	ProxyJSON    string `db:"proxy_json"    json:"-"`
+	CellID       string `db:"cell_id"       json:"cell_id,omitempty"`
 	IdentityJSON string `db:"identity_json" json:"-"`
 
 	Subject string `db:"subject" json:"subject,omitempty"`
@@ -60,6 +61,7 @@ type Account struct {
 	// Runtime only (not stored in DB)
 	Proxy    *ProxyConfig      `db:"-" json:"-"`
 	Identity map[string]string `db:"-" json:"-"`
+	Cell     *EgressCell       `db:"-" json:"-"`
 }
 
 // ProxyConfig holds per-account proxy settings.
@@ -111,4 +113,14 @@ func (a *Account) IdentityString(key string) string {
 		return ""
 	}
 	return a.Identity[key]
+}
+
+func (a *Account) TransportProxy() *ProxyConfig {
+	if a == nil {
+		return nil
+	}
+	if a.Cell != nil && a.Cell.Proxy != nil {
+		return a.Cell.Proxy
+	}
+	return a.Proxy
 }

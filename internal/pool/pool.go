@@ -35,6 +35,7 @@ func ExcludeBucket(bucketKey string) Exclusion {
 type Pool struct {
 	mu       sync.RWMutex
 	accounts map[string]*domain.Account
+	cells    map[string]*domain.EgressCell
 	buckets  map[string]*domain.QuotaBucket
 	store    store.Store
 	bus      *events.Bus
@@ -55,6 +56,7 @@ func (p *Pool) SetOnAuthFailure(fn func(accountID string)) {
 func New(s store.Store, bus *events.Bus) (*Pool, error) {
 	p := &Pool{
 		accounts:      make(map[string]*domain.Account),
+		cells:         make(map[string]*domain.EgressCell),
 		buckets:       make(map[string]*domain.QuotaBucket),
 		store:         s,
 		bus:           bus,
@@ -71,6 +73,15 @@ func New(s store.Store, bus *events.Bus) (*Pool, error) {
 	for _, acct := range accounts {
 		acct.HydrateRuntime()
 		p.accounts[acct.ID] = acct
+	}
+
+	cells, err := s.ListEgressCells(context.Background())
+	if err != nil {
+		return nil, fmt.Errorf("load egress cells: %w", err)
+	}
+	for _, cell := range cells {
+		cell.HydrateRuntime()
+		p.cells[cell.ID] = cell
 	}
 
 	buckets, err := s.ListQuotaBuckets(context.Background())

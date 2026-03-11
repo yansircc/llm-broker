@@ -12,6 +12,7 @@ import (
 
 	"github.com/yansircc/llm-broker/internal/domain"
 	"github.com/yansircc/llm-broker/internal/driver"
+	"github.com/yansircc/llm-broker/internal/neterr"
 )
 
 // Run starts the server and blocks until shutdown.
@@ -79,6 +80,9 @@ func (s *Server) probeAccount(ctx context.Context, acct *domain.Account) (driver
 	}
 
 	result, err := drv.Probe(ctx, acct, accessToken, s.transportPool.ClientForAccount(acct))
+	if err != nil && !result.Observe && acct.CellID != "" && s.cfg.CellErrorPause > 0 && neterr.IsTransport(err) {
+		s.pool.CooldownCell(acct.CellID, time.Now().Add(s.cfg.CellErrorPause), fmt.Sprintf("probe transport error on account %s: %v", acct.Email, err))
+	}
 	if result.Observe {
 		s.pool.Observe(acct.ID, result.Effect)
 	}

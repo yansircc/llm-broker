@@ -12,7 +12,7 @@ import (
 const accountCols = `id, email, provider, status, priority, priority_mode, error_message,
 	bucket_key,
 	refresh_token_enc, access_token_enc, expires_at, created_at,
-	last_used_at, last_refresh_at, proxy_json, identity_json,
+	last_used_at, last_refresh_at, proxy_json, cell_id, identity_json,
 	subject`
 
 func scanAccount(scanner interface{ Scan(...any) error }) (*domain.Account, error) {
@@ -20,7 +20,7 @@ func scanAccount(scanner interface{ Scan(...any) error }) (*domain.Account, erro
 		id, email, provider, status, priMode, errMsg string
 		bucketKey                                    string
 		refreshEnc, accessEnc                        string
-		proxyJSON, identityJSON                      string
+		proxyJSON, cellID, identityJSON              string
 		prio                                         int
 		expiresAt, createdAt                         int64
 		lastUsedAt, lastRefreshAt                    sql.NullInt64
@@ -30,7 +30,7 @@ func scanAccount(scanner interface{ Scan(...any) error }) (*domain.Account, erro
 		&id, &email, &provider, &status, &prio, &priMode, &errMsg,
 		&bucketKey,
 		&refreshEnc, &accessEnc, &expiresAt, &createdAt,
-		&lastUsedAt, &lastRefreshAt, &proxyJSON, &identityJSON,
+		&lastUsedAt, &lastRefreshAt, &proxyJSON, &cellID, &identityJSON,
 		&subject,
 	)
 	if err != nil {
@@ -60,6 +60,7 @@ func scanAccount(scanner interface{ Scan(...any) error }) (*domain.Account, erro
 		LastUsedAt:      scanNullableTime(lastUsedAt),
 		LastRefreshAt:   scanNullableTime(lastRefreshAt),
 		ProxyJSON:       proxyJSON,
+		CellID:          cellID,
 		IdentityJSON:    identityJSON,
 		Subject:         subject,
 	}
@@ -101,9 +102,9 @@ func (s *SQLiteStore) SaveAccount(ctx context.Context, acct *domain.Account) err
 			id, email, provider, status, priority, priority_mode, error_message,
 			bucket_key,
 			refresh_token_enc, access_token_enc, expires_at, created_at,
-			last_used_at, last_refresh_at, proxy_json, identity_json,
+			last_used_at, last_refresh_at, proxy_json, cell_id, identity_json,
 			subject
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(id) DO UPDATE SET
 			email=excluded.email, provider=excluded.provider, status=excluded.status,
 			priority=excluded.priority, priority_mode=excluded.priority_mode,
@@ -112,13 +113,13 @@ func (s *SQLiteStore) SaveAccount(ctx context.Context, acct *domain.Account) err
 			refresh_token_enc=excluded.refresh_token_enc, access_token_enc=excluded.access_token_enc,
 			expires_at=excluded.expires_at,
 			last_used_at=excluded.last_used_at, last_refresh_at=excluded.last_refresh_at,
-			proxy_json=excluded.proxy_json, identity_json=excluded.identity_json,
+			proxy_json=excluded.proxy_json, cell_id=excluded.cell_id, identity_json=excluded.identity_json,
 			subject=excluded.subject`,
 		acct.ID, acct.Email, string(acct.Provider), string(acct.Status),
 		acct.Priority, acct.PriorityMode, acct.ErrorMessage, acct.BucketKey,
 		acct.RefreshTokenEnc, acct.AccessTokenEnc, acct.ExpiresAt, acct.CreatedAt.Unix(),
 		nullableUnix(acct.LastUsedAt), nullableUnix(acct.LastRefreshAt),
-		acct.ProxyJSON, acct.IdentityJSON, acct.Subject,
+		acct.ProxyJSON, acct.CellID, acct.IdentityJSON, acct.Subject,
 	)
 	return err
 }

@@ -14,9 +14,22 @@ CREATE TABLE IF NOT EXISTS accounts (
     last_used_at INTEGER,
     last_refresh_at INTEGER,
     proxy_json TEXT NOT NULL DEFAULT '',
+    cell_id TEXT NOT NULL DEFAULT '',
     identity_json TEXT NOT NULL DEFAULT '',
     subject TEXT NOT NULL,
     UNIQUE(provider, subject)
+);
+
+CREATE TABLE IF NOT EXISTS egress_cells (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'active',
+    proxy_json TEXT NOT NULL DEFAULT '',
+    labels_json TEXT NOT NULL DEFAULT '',
+    cooldown_until INTEGER,
+    state_json TEXT NOT NULL DEFAULT '{}',
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS users (

@@ -103,11 +103,19 @@ func TestMigrate_LegacyAccountsTable(t *testing.T) {
 	if !hasColumns(cols, "bucket_key", "subject") {
 		t.Fatalf("migrated columns missing expected fields: %v", cols)
 	}
-	if !hasColumns(cols, "identity_json") {
-		t.Fatalf("migrated columns missing identity_json: %v", cols)
+	if !hasColumns(cols, "identity_json", "cell_id") {
+		t.Fatalf("migrated columns missing identity_json/cell_id: %v", cols)
 	}
 	if hasColumns(cols, "schedulable", "overloaded_until", "five_hour_util", "codex_primary_util", "ext_info_json", "meta_json", "cooldown_until", "provider_state_json") {
 		t.Fatalf("legacy columns still present after migration: %v", cols)
+	}
+
+	cellCols, err := store.tableColumns(context.Background(), "egress_cells")
+	if err != nil {
+		t.Fatalf("tableColumns(egress_cells): %v", err)
+	}
+	if !hasColumns(cellCols, "proxy_json", "labels_json", "state_json") {
+		t.Fatalf("egress_cells columns missing expected fields: %v", cellCols)
 	}
 
 	acct, err := store.GetAccount(context.Background(), "acct-1")
@@ -165,8 +173,20 @@ func TestNew_AllowsRequestLogColumnOrderDrift(t *testing.T) {
 			last_used_at INTEGER,
 			last_refresh_at INTEGER,
 			proxy_json TEXT NOT NULL DEFAULT '',
+			cell_id TEXT NOT NULL DEFAULT '',
 			identity_json TEXT NOT NULL DEFAULT '',
 			subject TEXT NOT NULL
+		);
+		CREATE TABLE egress_cells (
+			id TEXT PRIMARY KEY,
+			name TEXT NOT NULL,
+			status TEXT NOT NULL DEFAULT 'active',
+			proxy_json TEXT NOT NULL DEFAULT '',
+			labels_json TEXT NOT NULL DEFAULT '',
+			cooldown_until INTEGER,
+			state_json TEXT NOT NULL DEFAULT '{}',
+			created_at INTEGER NOT NULL,
+			updated_at INTEGER NOT NULL
 		);
 		CREATE TABLE users (
 			id TEXT PRIMARY KEY,
@@ -233,9 +253,61 @@ func TestSaveAccount_WritesCurrentSchema(t *testing.T) {
 		AccessTokenEnc:  "access",
 		ExpiresAt:       time.Now().Add(time.Hour).UnixMilli(),
 		CreatedAt:       time.Now().UTC(),
+		CellID:          "cell-fr-par-1",
 	}
 
 	if err := store.SaveAccount(context.Background(), acct); err != nil {
 		t.Fatalf("SaveAccount(): %v", err)
+	}
+
+	saved, err := store.GetAccount(context.Background(), "acct-1")
+	if err != nil {
+		t.Fatalf("GetAccount(): %v", err)
+	}
+	if saved == nil || saved.CellID != "cell-fr-par-1" {
+		t.Fatalf("saved CellID = %q, want cell-fr-par-1", saved.CellID)
+	}
+}
+
+func TestSaveEgressCell_RoundTrip(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "save-cell.db")
+	if err := Migrate(dbPath); err != nil {
+		t.Fatalf("Migrate(): %v", err)
+	}
+
+	store, err := New(dbPath)
+	if err != nil {
+		t.Fatalf("New(): %v", err)
+	}
+	defer store.Close()
+
+	now := time.Now().UTC()
+	cell := &domain.EgressCell{
+		ID:        "cell-fr-par-1",
+		Name:      "France / mark",
+		Status:    domain.EgressCellActive,
+		Proxy:     &domain.ProxyConfig{Type: "socks5", Host: "10.10.0.2", Port: 11081},
+		Labels:    map[string]string{"country": "FR", "city": "Paris"},
+		StateJSON: "{}",
+		CreatedAt: now,
+		UpdatedAt: now,
+	}
+
+	if err := store.SaveEgressCell(context.Background(), cell); err != nil {
+		t.Fatalf("SaveEgressCell(): %v", err)
+	}
+
+	saved, err := store.GetEgressCell(context.Background(), cell.ID)
+	if err != nil {
+		t.Fatalf("GetEgressCell(): %v", err)
+	}
+	if saved == nil {
+		t.Fatal("GetEgressCell() returned nil")
+	}
+	if saved.Proxy == nil || saved.Proxy.Host != "10.10.0.2" {
+		t.Fatalf("saved Proxy = %#v, want hydrated proxy", saved.Proxy)
+	}
+	if saved.Labels["city"] != "Paris" {
+		t.Fatalf("saved Labels = %#v, want city=Paris", saved.Labels)
 	}
 }

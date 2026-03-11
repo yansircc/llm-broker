@@ -12,6 +12,7 @@ import (
 	"github.com/yansircc/llm-broker/internal/domain"
 	"github.com/yansircc/llm-broker/internal/driver"
 	"github.com/yansircc/llm-broker/internal/events"
+	"github.com/yansircc/llm-broker/internal/neterr"
 	"github.com/yansircc/llm-broker/internal/pool"
 )
 
@@ -83,6 +84,9 @@ func (r *Relay) executeRelayAttempt(
 
 	resp, err := r.transport.ClientForAccount(acct).Do(upReq)
 	if err != nil {
+		if acct.CellID != "" && r.cfg.CellErrorPause > 0 && neterr.IsTransport(err) {
+			r.pool.CooldownCell(acct.CellID, time.Now().Add(r.cfg.CellErrorPause), fmt.Sprintf("relay transport error on account %s: %v", acct.Email, err))
+		}
 		slog.Error("upstream request failed", "accountId", acct.ID, "error", err)
 		state.exclusions = append(state.exclusions, pool.ExcludeAccount(acct.ID))
 		state.lastErr = err

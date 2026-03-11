@@ -35,6 +35,15 @@ type AccountFieldResponse struct {
 	Value string `json:"value"`
 }
 
+type EgressCellSummaryResponse struct {
+	ID            string            `json:"id"`
+	Name          string            `json:"name"`
+	Status        string            `json:"status"`
+	Labels        map[string]string `json:"labels,omitempty"`
+	CooldownUntil *time.Time        `json:"cooldown_until,omitempty"`
+	AccountCount  int               `json:"account_count,omitempty"`
+}
+
 type DashboardAccount struct {
 	ID            string                      `json:"id"`
 	Email         string                      `json:"email"`
@@ -90,6 +99,8 @@ type AccountDetailResponse struct {
 	LastRefreshAt  *time.Time                  `json:"last_refresh_at,omitempty"`
 	ExpiresAt      int64                       `json:"expires_at"`
 	CooldownUntil  *time.Time                  `json:"cooldown_until,omitempty"`
+	CellID         string                      `json:"cell_id,omitempty"`
+	Cell           *EgressCellSummaryResponse  `json:"cell,omitempty"`
 	Windows        []UtilizationWindowResponse `json:"windows"`
 	Stainless      map[string]interface{}      `json:"stainless,omitempty"`
 	Sessions       []domain.SessionBindingInfo `json:"sessions"`
@@ -108,7 +119,29 @@ type AccountListItem struct {
 	PriorityMode  string                      `json:"priority_mode"`
 	LastUsedAt    *time.Time                  `json:"last_used_at,omitempty"`
 	CooldownUntil *time.Time                  `json:"cooldown_until,omitempty"`
+	CellID        string                      `json:"cell_id,omitempty"`
+	Cell          *EgressCellSummaryResponse  `json:"cell,omitempty"`
 	Windows       []UtilizationWindowResponse `json:"windows"`
+}
+
+type EgressCellResponse struct {
+	ID            string                 `json:"id"`
+	Name          string                 `json:"name"`
+	Status        string                 `json:"status"`
+	Proxy         *domain.ProxyConfig    `json:"proxy,omitempty"`
+	Labels        map[string]string      `json:"labels,omitempty"`
+	CooldownUntil *time.Time             `json:"cooldown_until,omitempty"`
+	StateJSON     string                 `json:"state_json,omitempty"`
+	CreatedAt     time.Time              `json:"created_at"`
+	UpdatedAt     time.Time              `json:"updated_at"`
+	Accounts      []EgressCellAccountRef `json:"accounts,omitempty"`
+}
+
+type EgressCellAccountRef struct {
+	ID       string `json:"id"`
+	Email    string `json:"email"`
+	Provider string `json:"provider"`
+	Status   string `json:"status"`
 }
 
 // ---------------------------------------------------------------------------

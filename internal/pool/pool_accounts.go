@@ -74,6 +74,7 @@ func (p *Pool) Update(accountID string, fn func(*domain.Account)) error {
 	acct.LastRefreshAt = projected.LastRefreshAt
 	acct.Proxy = projected.Proxy
 	acct.ProxyJSON = projected.ProxyJSON
+	acct.CellID = projected.CellID
 	acct.Identity = projected.Identity
 	acct.IdentityJSON = projected.IdentityJSON
 	acct.Subject = projected.Subject

@@ -28,8 +28,21 @@ var desiredAccountColumns = []string{
 	"last_used_at",
 	"last_refresh_at",
 	"proxy_json",
+	"cell_id",
 	"identity_json",
 	"subject",
+}
+
+var desiredEgressCellColumns = []string{
+	"id",
+	"name",
+	"status",
+	"proxy_json",
+	"labels_json",
+	"cooldown_until",
+	"state_json",
+	"created_at",
+	"updated_at",
 }
 
 var desiredUserColumns = []string{
@@ -96,6 +109,7 @@ func (s *SQLiteStore) validateCurrentSchema(ctx context.Context) error {
 		want  []string
 	}{
 		{table: "accounts", want: desiredAccountColumns},
+		{table: "egress_cells", want: desiredEgressCellColumns},
 		{table: "users", want: desiredUserColumns},
 		{table: "request_log", want: desiredRequestLogColumns},
 		{table: "quota_buckets", want: desiredQuotaBucketColumns},
@@ -134,6 +148,10 @@ func (s *SQLiteStore) migrateAccountsTable(ctx context.Context) error {
 	if identitySource == "" {
 		return fmt.Errorf("accounts migration: missing identity column in %v", cols)
 	}
+	cellIDExpr := "''"
+	if slices.Contains(cols, "cell_id") {
+		cellIDExpr = "cell_id"
+	}
 
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -158,6 +176,7 @@ func (s *SQLiteStore) migrateAccountsTable(ctx context.Context) error {
 			last_used_at INTEGER,
 			last_refresh_at INTEGER,
 			proxy_json TEXT NOT NULL DEFAULT '',
+			cell_id TEXT NOT NULL DEFAULT '',
 			identity_json TEXT NOT NULL DEFAULT '',
 			subject TEXT NOT NULL,
 			UNIQUE(provider, subject)
@@ -171,7 +190,7 @@ func (s *SQLiteStore) migrateAccountsTable(ctx context.Context) error {
 			id, email, provider, status, priority, priority_mode, error_message,
 			bucket_key,
 			refresh_token_enc, access_token_enc, expires_at, created_at,
-			last_used_at, last_refresh_at, proxy_json, identity_json,
+			last_used_at, last_refresh_at, proxy_json, cell_id, identity_json,
 			subject
 		)
 		SELECT
@@ -194,9 +213,10 @@ func (s *SQLiteStore) migrateAccountsTable(ctx context.Context) error {
 			last_refresh_at,
 			proxy_json,
 			%s,
+			%s,
 			subject
 		FROM accounts
-	`, identitySource)
+	`, cellIDExpr, identitySource)
 	if _, err := tx.ExecContext(ctx, insertSQL); err != nil {
 		return fmt.Errorf("copy accounts: %w", err)
 	}

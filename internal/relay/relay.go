@@ -23,6 +23,7 @@ type Config struct {
 	MaxRequestBodyMB  int
 	MaxRetryAccounts  int
 	SessionBindingTTL time.Duration
+	CellErrorPause    time.Duration
 }
 
 type Relay struct {

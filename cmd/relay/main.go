@@ -136,7 +136,7 @@ func main() {
 	}
 
 	// Initialize token manager
-	tokMgr := tokens.NewManager(p, c, transportPool, cfg.TokenRefreshAdvance, refreshDrivers)
+	tokMgr := tokens.NewManager(p, c, transportPool, cfg.TokenRefreshAdvance, cfg.CellErrorPause, refreshDrivers)
 	p.SetDrivers(schedulerDrivers)
 
 	// Wire 401 → background token refresh
@@ -153,6 +153,7 @@ func main() {
 		MaxRequestBodyMB:  cfg.MaxRequestBodyMB,
 		MaxRetryAccounts:  cfg.MaxRetryAccounts,
 		SessionBindingTTL: cfg.SessionBindingTTL,
+		CellErrorPause:    cfg.CellErrorPause,
 	}, transportPool, bus, executionDrivers)
 
 	// Start server

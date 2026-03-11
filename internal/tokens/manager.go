@@ -11,6 +11,7 @@ import (
 	"github.com/yansircc/llm-broker/internal/crypto"
 	"github.com/yansircc/llm-broker/internal/domain"
 	"github.com/yansircc/llm-broker/internal/driver"
+	"github.com/yansircc/llm-broker/internal/neterr"
 )
 
 const tokenSalt = "salt"
@@ -22,6 +23,7 @@ type PoolAccess interface {
 	MarkError(accountID, msg string)
 	AcquireRefreshLock(accountID, lockID string) bool
 	ReleaseRefreshLock(accountID, lockID string)
+	CooldownCell(cellID string, until time.Time, message string) bool
 }
 
 // TransportProvider supplies plain proxy transports for refresh flows.
@@ -37,10 +39,11 @@ type Manager struct {
 	drivers             map[domain.Provider]driver.RefreshDriver
 	client              *http.Client
 	tokenRefreshAdvance time.Duration
+	cellErrorPause      time.Duration
 }
 
 // NewManager creates a token manager.
-func NewManager(pool PoolAccess, c *crypto.Crypto, tp TransportProvider, refreshAdvance time.Duration, drivers map[domain.Provider]driver.RefreshDriver) *Manager {
+func NewManager(pool PoolAccess, c *crypto.Crypto, tp TransportProvider, refreshAdvance, cellErrorPause time.Duration, drivers map[domain.Provider]driver.RefreshDriver) *Manager {
 	return &Manager{
 		pool:                pool,
 		crypto:              c,
@@ -48,6 +51,7 @@ func NewManager(pool PoolAccess, c *crypto.Crypto, tp TransportProvider, refresh
 		drivers:             drivers,
 		client:              &http.Client{Timeout: 30 * time.Second},
 		tokenRefreshAdvance: refreshAdvance,
+		cellErrorPause:      cellErrorPause,
 	}
 }
 
@@ -129,15 +133,19 @@ func (tm *Manager) refresh(ctx context.Context, accountID string) (string, error
 	}
 
 	client := tm.client
-	if tm.transport != nil && acct.Proxy != nil {
+	if proxy := acct.TransportProxy(); tm.transport != nil && proxy != nil {
 		client = &http.Client{
-			Transport: tm.transport.TransportForProxy(acct.Proxy),
+			Transport: tm.transport.TransportForProxy(proxy),
 			Timeout:   30 * time.Second,
 		}
 	}
 
 	tokenResp, err := drv.RefreshToken(ctx, client, refreshToken)
 	if err != nil {
+		if acct.CellID != "" && tm.cellErrorPause > 0 && neterr.IsTransport(err) {
+			tm.pool.CooldownCell(acct.CellID, time.Now().Add(tm.cellErrorPause), fmt.Sprintf("refresh transport error on account %s: %v", acct.Email, err))
+			return "", fmt.Errorf("oauth refresh via cell %s: %w", acct.CellID, err)
+		}
 		tm.markError(accountID, err.Error())
 		return "", fmt.Errorf("oauth refresh: %w", err)
 	}

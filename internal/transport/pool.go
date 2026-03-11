@@ -46,7 +46,8 @@ func (m *Pool) TransportForProxy(pcfg *domain.ProxyConfig) *http.Transport {
 		return nil
 	}
 	return &http.Transport{
-		DialTLSContext: proxyDialer(pcfg),
+		ForceAttemptHTTP2: true,
+		DialContext:       rawProxyDialer(pcfg),
 	}
 }
 
@@ -110,18 +111,20 @@ func (m *Pool) cleanup(idleTimeout time.Duration) {
 }
 
 func transportKey(acct *domain.Account) string {
-	if acct.Proxy == nil {
+	proxy := acct.TransportProxy()
+	if proxy == nil {
 		return "direct"
 	}
-	return fmt.Sprintf("%s://%s:%d", acct.Proxy.Type, acct.Proxy.Host, acct.Proxy.Port)
+	return fmt.Sprintf("%s://%s:%d", proxy.Type, proxy.Host, proxy.Port)
 }
 
 func buildRoundTripper(acct *domain.Account) http.RoundTripper {
-	if acct.Proxy != nil {
+	if proxy := acct.TransportProxy(); proxy != nil {
 		return &http.Transport{
+			ForceAttemptHTTP2:   true,
 			MaxIdleConnsPerHost: 2,
 			IdleConnTimeout:     5 * time.Minute,
-			DialTLSContext:      proxyDialer(acct.Proxy),
+			DialContext:         rawProxyDialer(proxy),
 		}
 	}
 	return &http2.Transport{

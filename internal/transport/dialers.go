@@ -29,10 +29,6 @@ func dialUTLS(ctx context.Context, network, addr string) (net.Conn, error) {
 	return uTLSHandshake(ctx, rawConn, host)
 }
 
-func dialUTLSViaConn(ctx context.Context, rawConn net.Conn, serverName string) (net.Conn, error) {
-	return uTLSHandshake(ctx, rawConn, serverName)
-}
-
 func uTLSHandshake(_ context.Context, rawConn net.Conn, serverName string) (net.Conn, error) {
 	tlsConn := utls.UClient(rawConn, &utls.Config{
 		ServerName:         serverName,
@@ -48,16 +44,16 @@ func uTLSHandshake(_ context.Context, rawConn net.Conn, serverName string) (net.
 	return tlsConn, nil
 }
 
-func proxyDialer(pcfg *domain.ProxyConfig) func(ctx context.Context, network, addr string) (net.Conn, error) {
+func rawProxyDialer(pcfg *domain.ProxyConfig) func(ctx context.Context, network, addr string) (net.Conn, error) {
 	switch pcfg.Type {
 	case "socks5":
-		return socks5Dialer(pcfg)
+		return rawSocks5Dialer(pcfg)
 	default:
-		return httpConnectDialer(pcfg)
+		return rawHTTPConnectDialer(pcfg)
 	}
 }
 
-func socks5Dialer(pcfg *domain.ProxyConfig) func(ctx context.Context, network, addr string) (net.Conn, error) {
+func rawSocks5Dialer(pcfg *domain.ProxyConfig) func(ctx context.Context, network, addr string) (net.Conn, error) {
 	return func(ctx context.Context, network, addr string) (net.Conn, error) {
 		proxyAddr := fmt.Sprintf("%s:%d", pcfg.Host, pcfg.Port)
 
@@ -78,18 +74,11 @@ func socks5Dialer(pcfg *domain.ProxyConfig) func(ctx context.Context, network, a
 		if err != nil {
 			return nil, fmt.Errorf("socks5 dial: %w", err)
 		}
-
-		host, _, err := net.SplitHostPort(addr)
-		if err != nil {
-			rawConn.Close()
-			return nil, err
-		}
-
-		return dialUTLSViaConn(ctx, rawConn, host)
+		return rawConn, nil
 	}
 }
 
-func httpConnectDialer(pcfg *domain.ProxyConfig) func(ctx context.Context, network, addr string) (net.Conn, error) {
+func rawHTTPConnectDialer(pcfg *domain.ProxyConfig) func(ctx context.Context, network, addr string) (net.Conn, error) {
 	return func(ctx context.Context, network, addr string) (net.Conn, error) {
 		proxyAddr := fmt.Sprintf("%s:%d", pcfg.Host, pcfg.Port)
 
@@ -127,13 +116,6 @@ func httpConnectDialer(pcfg *domain.ProxyConfig) func(ctx context.Context, netwo
 			rawConn.Close()
 			return nil, fmt.Errorf("proxy CONNECT failed: %s", resp.Status)
 		}
-
-		host, _, err := net.SplitHostPort(addr)
-		if err != nil {
-			rawConn.Close()
-			return nil, err
-		}
-
-		return dialUTLSViaConn(ctx, rawConn, host)
+		return rawConn, nil
 	}
 }

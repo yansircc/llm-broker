@@ -101,6 +101,7 @@ func newTestPool(t *testing.T, accounts ...*domain.Account) *Pool {
 	bus := events.NewBus(100)
 	p := &Pool{
 		accounts:      make(map[string]*domain.Account),
+		cells:         make(map[string]*domain.EgressCell),
 		buckets:       make(map[string]*domain.QuotaBucket),
 		store:         ms,
 		bus:           bus,
@@ -178,6 +179,75 @@ func TestPick_NeverReturnsUnavailable(t *testing.T) {
 	_, err = p.Pick(testDriver, []Exclusion{ExcludeAccount("g")}, "claude-opus-4-6", "")
 	if err == nil {
 		t.Fatal("expected error when all accounts unavailable for opus")
+	}
+}
+
+func TestPick_SkipsUnavailableCell(t *testing.T) {
+	good := activeAccount("good", "good@x")
+	good.CellID = "cell-good"
+	bad := activeAccount("bad", "bad@x")
+	bad.Priority = 99
+	bad.CellID = "cell-bad"
+
+	p := newTestPool(t, good, bad)
+	p.cells["cell-good"] = &domain.EgressCell{
+		ID:        "cell-good",
+		Name:      "good",
+		Status:    domain.EgressCellActive,
+		Proxy:     &domain.ProxyConfig{Type: "socks5", Host: "10.0.0.2", Port: 11081},
+		CreatedAt: time.Now().UTC(),
+		UpdatedAt: time.Now().UTC(),
+	}
+	p.cells["cell-bad"] = &domain.EgressCell{
+		ID:        "cell-bad",
+		Name:      "bad",
+		Status:    domain.EgressCellDisabled,
+		Proxy:     &domain.ProxyConfig{Type: "socks5", Host: "10.0.0.3", Port: 11082},
+		CreatedAt: time.Now().UTC(),
+		UpdatedAt: time.Now().UTC(),
+	}
+
+	acct, err := p.Pick(testDriver, nil, "claude-haiku", "")
+	if err != nil {
+		t.Fatalf("Pick(): %v", err)
+	}
+	if acct.ID != "good" {
+		t.Fatalf("Pick() = %s, want good", acct.ID)
+	}
+	if acct.Cell == nil || acct.Cell.ID != "cell-good" {
+		t.Fatalf("acct.Cell = %#v, want cell-good", acct.Cell)
+	}
+}
+
+func TestCooldownCellForAccount(t *testing.T) {
+	acct := activeAccount("a", "a@x")
+	acct.CellID = "cell-a"
+
+	p := newTestPool(t, acct)
+	p.cells["cell-a"] = &domain.EgressCell{
+		ID:        "cell-a",
+		Name:      "cell-a",
+		Status:    domain.EgressCellActive,
+		Proxy:     &domain.ProxyConfig{Type: "socks5", Host: "127.0.0.1", Port: 11080},
+		CreatedAt: time.Now().UTC(),
+		UpdatedAt: time.Now().UTC(),
+	}
+
+	until := time.Now().Add(2 * time.Minute)
+	if !p.CooldownCellForAccount("a", until, "transport error") {
+		t.Fatal("CooldownCellForAccount() = false, want true")
+	}
+
+	cell := p.GetCell("cell-a")
+	if cell == nil || cell.CooldownUntil == nil {
+		t.Fatal("cell cooldown should be set")
+	}
+	if cell.CooldownUntil.UTC().Unix() != until.UTC().Unix() {
+		t.Fatalf("cell cooldown = %v, want %v", cell.CooldownUntil, until.UTC())
+	}
+
+	if _, err := p.Pick(testDriver, nil, "claude-haiku", ""); err == nil {
+		t.Fatal("Pick() should fail while the only cell is cooling down")
 	}
 }
 

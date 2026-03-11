@@ -22,6 +22,10 @@ type Store interface {
 	ListAccounts(ctx context.Context) ([]*domain.Account, error)
 	SaveAccount(ctx context.Context, acct *domain.Account) error // UPSERT
 	DeleteAccount(ctx context.Context, id string) error
+	GetEgressCell(ctx context.Context, id string) (*domain.EgressCell, error)
+	ListEgressCells(ctx context.Context) ([]*domain.EgressCell, error)
+	SaveEgressCell(ctx context.Context, cell *domain.EgressCell) error
+	DeleteEgressCell(ctx context.Context, id string) error
 	GetQuotaBucket(ctx context.Context, bucketKey string) (*domain.QuotaBucket, error)
 	ListQuotaBuckets(ctx context.Context) ([]*domain.QuotaBucket, error)
 	SaveQuotaBucket(ctx context.Context, bucket *domain.QuotaBucket) error

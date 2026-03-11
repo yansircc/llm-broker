@@ -50,3 +50,23 @@ func TestIdentityString(t *testing.T) {
 		t.Errorf("expected empty, got %s", got)
 	}
 }
+
+func TestTransportProxyPrefersCell(t *testing.T) {
+	a := &Account{
+		Proxy: &ProxyConfig{Type: "socks5", Host: "127.0.0.1", Port: 1080},
+		Cell: &EgressCell{
+			Proxy: &ProxyConfig{Type: "socks5", Host: "10.0.0.2", Port: 11080},
+		},
+	}
+
+	got := a.TransportProxy()
+	if got == nil || got.Host != "10.0.0.2" || got.Port != 11080 {
+		t.Fatalf("TransportProxy() = %#v, want cell proxy", got)
+	}
+
+	a.Cell = nil
+	got = a.TransportProxy()
+	if got == nil || got.Host != "127.0.0.1" || got.Port != 1080 {
+		t.Fatalf("TransportProxy() fallback = %#v, want direct proxy", got)
+	}
+}

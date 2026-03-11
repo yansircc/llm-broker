@@ -13,6 +13,7 @@ import (
 // handleListAccounts returns all accounts (without tokens).
 func (s *Server) handleListAccounts(w http.ResponseWriter, r *http.Request) {
 	accounts := s.pool.List()
+	cellCounts := accountCountsByCell(accounts)
 
 	views := make([]AccountListItem, 0, len(accounts))
 	for _, a := range accounts {
@@ -26,6 +27,8 @@ func (s *Server) handleListAccounts(w http.ResponseWriter, r *http.Request) {
 			PriorityMode:  a.PriorityMode,
 			LastUsedAt:    a.LastUsedAt,
 			CooldownUntil: a.CooldownUntil,
+			CellID:        a.CellID,
+			Cell:          toCellSummary(a.Cell, cellCounts[a.CellID]),
 			Windows:       proj.windows,
 		})
 	}
@@ -67,6 +70,7 @@ func (s *Server) handleGetAccount(w http.ResponseWriter, r *http.Request) {
 	}
 
 	proj := s.projectAccount(acct)
+	cellCounts := accountCountsByCell(s.pool.List())
 
 	writeJSON(w, http.StatusOK, AccountDetailResponse{
 		ID:             acct.ID,
@@ -85,6 +89,8 @@ func (s *Server) handleGetAccount(w http.ResponseWriter, r *http.Request) {
 		LastRefreshAt:  acct.LastRefreshAt,
 		ExpiresAt:      acct.ExpiresAt,
 		CooldownUntil:  acct.CooldownUntil,
+		CellID:         acct.CellID,
+		Cell:           toCellSummary(acct.Cell, cellCounts[acct.CellID]),
 		Windows:        proj.windows,
 		Stainless:      stainless,
 		Sessions:       sessions,
@@ -175,6 +181,29 @@ func (s *Server) handleUpdateAccountPriority(w http.ResponseWriter, r *http.Requ
 		Mode     string `json:"mode"`
 		Priority int    `json:"priority"`
 	}{id, mode, priority})
+}
+
+func (s *Server) handleBindAccountCell(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	var req struct {
+		CellID string `json:"cell_id"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeAdminError(w, http.StatusBadRequest, "invalid_request", "invalid JSON body")
+		return
+	}
+	if req.CellID != "" && s.pool.GetCell(req.CellID) == nil {
+		writeAdminError(w, http.StatusBadRequest, "invalid_request", "cell not found")
+		return
+	}
+	if err := s.pool.Update(id, func(a *domain.Account) {
+		a.CellID = strings.TrimSpace(req.CellID)
+	}); err != nil {
+		writeAdminError(w, http.StatusNotFound, "not_found", "account not found")
+		return
+	}
+	slog.Info("account cell updated", "id", id, "cellId", req.CellID)
+	writeJSON(w, http.StatusOK, map[string]string{"id": id, "cell_id": req.CellID})
 }
 
 func (s *Server) handleRefreshAccount(w http.ResponseWriter, r *http.Request) {

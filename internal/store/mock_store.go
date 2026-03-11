@@ -12,6 +12,7 @@ import (
 type MockStore struct {
 	mu       sync.Mutex
 	accounts map[string]*domain.Account
+	cells    map[string]*domain.EgressCell
 	buckets  map[string]*domain.QuotaBucket
 	users    map[string]*domain.User
 	logs     []*domain.RequestLog
@@ -28,6 +29,7 @@ type MockStore struct {
 func NewMockStore() *MockStore {
 	return &MockStore{
 		accounts: make(map[string]*domain.Account),
+		cells:    make(map[string]*domain.EgressCell),
 		buckets:  make(map[string]*domain.QuotaBucket),
 		users:    make(map[string]*domain.User),
 	}
@@ -82,6 +84,43 @@ func (m *MockStore) DeleteAccount(_ context.Context, id string) error {
 		return m.DeleteAccountErr
 	}
 	delete(m.accounts, id)
+	return nil
+}
+
+func (m *MockStore) GetEgressCell(_ context.Context, id string) (*domain.EgressCell, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	cell, ok := m.cells[id]
+	if !ok {
+		return nil, nil
+	}
+	copy := *cell
+	return &copy, nil
+}
+
+func (m *MockStore) ListEgressCells(_ context.Context) ([]*domain.EgressCell, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	result := make([]*domain.EgressCell, 0, len(m.cells))
+	for _, cell := range m.cells {
+		copy := *cell
+		result = append(result, &copy)
+	}
+	return result, nil
+}
+
+func (m *MockStore) SaveEgressCell(_ context.Context, cell *domain.EgressCell) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	copy := *cell
+	m.cells[cell.ID] = &copy
+	return nil
+}
+
+func (m *MockStore) DeleteEgressCell(_ context.Context, id string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	delete(m.cells, id)
 	return nil
 }
 
