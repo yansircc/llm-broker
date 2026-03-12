@@ -82,12 +82,30 @@ func (r *Relay) executeRelayAttempt(
 		return relayAttemptStop
 	}
 
+	attemptStartedAt := time.Now()
 	resp, err := r.transport.ClientForAccount(acct).Do(upReq)
 	if err != nil {
 		if acct.CellID != "" && r.cfg.CellErrorPause > 0 && neterr.IsTransport(err) {
 			r.pool.CooldownCell(acct.CellID, time.Now().Add(r.cfg.CellErrorPause), fmt.Sprintf("relay transport error on account %s: %v", acct.Email, err))
 		}
-		slog.Error("upstream request failed", "accountId", acct.ID, "error", err)
+		r.logRequestAsync(&domain.RequestLog{
+			UserID:     prepared.keyInfo.ID,
+			AccountID:  acct.ID,
+			Model:      prepared.input.Model,
+			Status:     "transport_error",
+			DurationMs: time.Since(attemptStartedAt).Milliseconds(),
+			CreatedAt:  time.Now().UTC(),
+		})
+		slog.Error("upstream request failed",
+			"accountId", acct.ID,
+			"userId", prepared.keyInfo.ID,
+			"userName", prepared.keyInfo.Name,
+			"model", prepared.input.Model,
+			"path", prepared.input.Path,
+			"sessionUUID", prepared.sessionUUID,
+			"clientRetryCount", prepared.input.Headers.Get("X-Stainless-Retry-Count"),
+			"error", err,
+		)
 		state.exclusions = append(state.exclusions, pool.ExcludeAccount(acct.ID))
 		state.lastErr = err
 		return relayAttemptContinue
@@ -97,10 +115,24 @@ func (r *Relay) executeRelayAttempt(
 		errBody, _ := io.ReadAll(resp.Body)
 		resp.Body.Close()
 
+		r.logRequestAsync(&domain.RequestLog{
+			UserID:     prepared.keyInfo.ID,
+			AccountID:  acct.ID,
+			Model:      prepared.input.Model,
+			Status:     fmt.Sprintf("upstream_%d", resp.StatusCode),
+			DurationMs: time.Since(attemptStartedAt).Milliseconds(),
+			CreatedAt:  time.Now().UTC(),
+		})
+
 		slog.Warn("retriable upstream error",
 			"status", resp.StatusCode,
 			"accountId", acct.ID,
+			"userId", prepared.keyInfo.ID,
+			"userName", prepared.keyInfo.Name,
 			"model", prepared.input.Model,
+			"path", prepared.input.Path,
+			"sessionUUID", prepared.sessionUUID,
+			"clientRetryCount", prepared.input.Headers.Get("X-Stainless-Retry-Count"),
 			"body", truncate(string(errBody), 500),
 		)
 
@@ -129,13 +161,27 @@ func (r *Relay) executeRelayAttempt(
 		errBody, _ := io.ReadAll(resp.Body)
 		resp.Body.Close()
 
+		r.logRequestAsync(&domain.RequestLog{
+			UserID:     prepared.keyInfo.ID,
+			AccountID:  acct.ID,
+			Model:      prepared.input.Model,
+			Status:     fmt.Sprintf("upstream_%d", resp.StatusCode),
+			DurationMs: time.Since(attemptStartedAt).Milliseconds(),
+			CreatedAt:  time.Now().UTC(),
+		})
+
 		effect := drv.Interpret(http.StatusOK, resp.Header, nil, prepared.input.Model, json.RawMessage(acct.ProviderStateJSON))
 		r.pool.Observe(acct.ID, effect)
 
 		slog.Warn("upstream non-retriable error",
 			"status", resp.StatusCode,
 			"accountId", acct.ID,
+			"userId", prepared.keyInfo.ID,
+			"userName", prepared.keyInfo.Name,
 			"model", prepared.input.Model,
+			"path", prepared.input.Path,
+			"sessionUUID", prepared.sessionUUID,
+			"clientRetryCount", prepared.input.Headers.Get("X-Stainless-Retry-Count"),
 			"body", truncate(string(errBody), 500),
 		)
 
@@ -187,22 +233,29 @@ func (r *Relay) finishRelaySuccess(
 	}
 }
 
-func (r *Relay) logUsageAsync(userID, accountID, model string, usage *driver.Usage, cost float64, startTime time.Time) {
+func (r *Relay) logRequestAsync(entry *domain.RequestLog) {
+	if entry == nil {
+		return
+	}
 	go func() {
-		_ = r.store.InsertRequestLog(context.Background(), &domain.RequestLog{
-			UserID:            userID,
-			AccountID:         accountID,
-			Model:             model,
-			InputTokens:       usage.InputTokens,
-			OutputTokens:      usage.OutputTokens,
-			CacheReadTokens:   usage.CacheReadTokens,
-			CacheCreateTokens: usage.CacheCreateTokens,
-			CostUSD:           cost,
-			Status:            "ok",
-			DurationMs:        time.Since(startTime).Milliseconds(),
-			CreatedAt:         time.Now().UTC(),
-		})
+		_ = r.store.InsertRequestLog(context.Background(), entry)
 	}()
+}
+
+func (r *Relay) logUsageAsync(userID, accountID, model string, usage *driver.Usage, cost float64, startTime time.Time) {
+	r.logRequestAsync(&domain.RequestLog{
+		UserID:            userID,
+		AccountID:         accountID,
+		Model:             model,
+		InputTokens:       usage.InputTokens,
+		OutputTokens:      usage.OutputTokens,
+		CacheReadTokens:   usage.CacheReadTokens,
+		CacheCreateTokens: usage.CacheCreateTokens,
+		CostUSD:           cost,
+		Status:            "ok",
+		DurationMs:        time.Since(startTime).Milliseconds(),
+		CreatedAt:         time.Now().UTC(),
+	})
 }
 
 func (r *Relay) finishRelayFailure(w http.ResponseWriter, drv driver.ExecutionDriver, isStream bool, state *relayAttemptState) {

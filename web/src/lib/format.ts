@@ -51,6 +51,8 @@ export function tagClass(status: string): string {
 
 export function statusColor(status: string): string {
 	if (status === 'ok' || status === '200') return 'g';
+	if (status.startsWith('upstream_4')) return 'r';
+	if (status.startsWith('upstream_5') || status === 'transport_error') return 'o';
 	if (status.startsWith('4') || status === 'error') return 'r';
 	if (status.startsWith('retry') || status.startsWith('5') || status === '529') return 'o';
 	return '';

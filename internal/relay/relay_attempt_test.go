@@ -1,0 +1,309 @@
+package relay
+
+import (
+	"context"
+	"encoding/json"
+	"io"
+	"log/slog"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"sync"
+	"testing"
+	"time"
+
+	"github.com/yansircc/llm-broker/internal/auth"
+	"github.com/yansircc/llm-broker/internal/domain"
+	"github.com/yansircc/llm-broker/internal/driver"
+	"github.com/yansircc/llm-broker/internal/events"
+	"github.com/yansircc/llm-broker/internal/pool"
+	"github.com/yansircc/llm-broker/internal/store"
+)
+
+type relayTestDriver struct {
+	provider domain.Provider
+}
+
+func (d *relayTestDriver) Provider() domain.Provider { return d.provider }
+
+func (d *relayTestDriver) Plan(_ *driver.RelayInput) driver.RelayPlan { return driver.RelayPlan{} }
+
+func (d *relayTestDriver) BuildRequest(ctx context.Context, _ *driver.RelayInput, _ *domain.Account, _ string) (*http.Request, error) {
+	return http.NewRequestWithContext(ctx, http.MethodPost, "https://upstream.test/v1/messages", strings.NewReader(`{}`))
+}
+
+func (d *relayTestDriver) Interpret(statusCode int, _ http.Header, _ []byte, _ string, _ json.RawMessage) driver.Effect {
+	if statusCode == http.StatusOK {
+		return driver.Effect{Kind: driver.EffectSuccess, Scope: driver.EffectScopeBucket}
+	}
+	return driver.Effect{
+		Kind:          driver.EffectCooldown,
+		Scope:         driver.EffectScopeBucket,
+		CooldownUntil: time.Now().Add(5 * time.Minute),
+	}
+}
+
+func (d *relayTestDriver) StreamResponse(_ context.Context, _ http.ResponseWriter, _ *http.Response) (bool, *driver.Usage) {
+	return false, nil
+}
+
+func (d *relayTestDriver) ForwardResponse(_ http.ResponseWriter, _ *http.Response) {}
+
+func (d *relayTestDriver) ParseJSONUsage(_ []byte) *driver.Usage { return nil }
+
+func (d *relayTestDriver) ShouldRetry(statusCode int) bool { return statusCode == 529 }
+
+func (d *relayTestDriver) RetrySameAccount(_ int, _ []byte, _ int) bool { return false }
+
+func (d *relayTestDriver) ParseNonRetriable(_ int, _ []byte) bool { return false }
+
+func (d *relayTestDriver) WriteError(w http.ResponseWriter, status int, msg string) {
+	http.Error(w, msg, status)
+}
+
+func (d *relayTestDriver) WriteUpstreamError(w http.ResponseWriter, statusCode int, body []byte, _ bool) {
+	w.WriteHeader(statusCode)
+	_, _ = w.Write(body)
+}
+
+func (d *relayTestDriver) InterceptRequest(_ http.ResponseWriter, _ map[string]interface{}, _ string) bool {
+	return false
+}
+
+func (d *relayTestDriver) CalcCost(_ string, _ *driver.Usage) float64 { return 0 }
+
+func (d *relayTestDriver) BucketKey(acct *domain.Account) string {
+	if acct == nil {
+		return ""
+	}
+	if acct.BucketKey != "" {
+		return acct.BucketKey
+	}
+	if acct.Subject != "" {
+		return string(d.provider) + ":" + acct.Subject
+	}
+	return string(d.provider) + ":" + acct.ID
+}
+
+func (d *relayTestDriver) AutoPriority(_ json.RawMessage) int { return 50 }
+
+func (d *relayTestDriver) IsStale(_ json.RawMessage, _ time.Time) bool { return false }
+
+func (d *relayTestDriver) ComputeExhaustedCooldown(_ json.RawMessage, _ time.Time) time.Time {
+	return time.Time{}
+}
+
+func (d *relayTestDriver) CanServe(_ json.RawMessage, _ string, _ time.Time) bool { return true }
+
+type relayTestTokenProvider struct{}
+
+func (relayTestTokenProvider) EnsureValidToken(_ context.Context, _ string) (string, error) {
+	return "tok", nil
+}
+
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (fn roundTripFunc) RoundTrip(req *http.Request) (*http.Response, error) { return fn(req) }
+
+type relayTestTransport struct {
+	client *http.Client
+}
+
+func (t relayTestTransport) ClientForAccount(_ *domain.Account) *http.Client { return t.client }
+
+type capturedRecord struct {
+	msg   string
+	attrs map[string]any
+}
+
+type captureHandler struct {
+	mu      sync.Mutex
+	records []capturedRecord
+}
+
+func (h *captureHandler) Enabled(context.Context, slog.Level) bool { return true }
+
+func (h *captureHandler) Handle(_ context.Context, record slog.Record) error {
+	captured := capturedRecord{
+		msg:   record.Message,
+		attrs: make(map[string]any),
+	}
+	record.Attrs(func(attr slog.Attr) bool {
+		captured.attrs[attr.Key] = valueAny(attr.Value)
+		return true
+	})
+
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.records = append(h.records, captured)
+	return nil
+}
+
+func (h *captureHandler) WithAttrs(_ []slog.Attr) slog.Handler { return h }
+
+func (h *captureHandler) WithGroup(_ string) slog.Handler { return h }
+
+func (h *captureHandler) find(msg string) *capturedRecord {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	for i := range h.records {
+		if h.records[i].msg == msg {
+			record := h.records[i]
+			return &record
+		}
+	}
+	return nil
+}
+
+func valueAny(v slog.Value) any {
+	switch v.Kind() {
+	case slog.KindString:
+		return v.String()
+	case slog.KindInt64:
+		return v.Int64()
+	case slog.KindUint64:
+		return v.Uint64()
+	case slog.KindBool:
+		return v.Bool()
+	case slog.KindFloat64:
+		return v.Float64()
+	case slog.KindDuration:
+		return v.Duration()
+	case slog.KindTime:
+		return v.Time()
+	default:
+		return v.Any()
+	}
+}
+
+func TestExecuteRelayAttemptLogsRetriableFailure(t *testing.T) {
+	mockStore := store.NewMockStore()
+	account := &domain.Account{
+		ID:        "acct-1",
+		Email:     "acct@example.com",
+		Provider:  domain.ProviderClaude,
+		Status:    domain.StatusActive,
+		Subject:   "subject-1",
+		CreatedAt: time.Now().UTC(),
+	}
+	if err := mockStore.SaveAccount(context.Background(), account); err != nil {
+		t.Fatalf("SaveAccount: %v", err)
+	}
+	if err := mockStore.SaveQuotaBucket(context.Background(), &domain.QuotaBucket{
+		BucketKey: "claude:subject-1",
+		Provider:  domain.ProviderClaude,
+		StateJSON: "{}",
+		UpdatedAt: time.Now().UTC(),
+	}); err != nil {
+		t.Fatalf("SaveQuotaBucket: %v", err)
+	}
+
+	bus := events.NewBus(16)
+	p, err := pool.New(mockStore, bus)
+	if err != nil {
+		t.Fatalf("pool.New: %v", err)
+	}
+
+	driverStub := &relayTestDriver{provider: domain.ProviderClaude}
+	transport := relayTestTransport{
+		client: &http.Client{
+			Transport: roundTripFunc(func(_ *http.Request) (*http.Response, error) {
+				return &http.Response{
+					StatusCode: 529,
+					Header:     make(http.Header),
+					Body: io.NopCloser(strings.NewReader(
+						`{"type":"error","error":{"type":"overloaded_error","message":"Overloaded"}}`,
+					)),
+				}, nil
+			}),
+		},
+	}
+	relaySvc := New(
+		p,
+		relayTestTokenProvider{},
+		mockStore,
+		Config{MaxRetryAccounts: 1},
+		transport,
+		bus,
+		map[domain.Provider]driver.ExecutionDriver{domain.ProviderClaude: driverStub},
+	)
+
+	capture := &captureHandler{}
+	oldLogger := slog.Default()
+	slog.SetDefault(slog.New(capture))
+	defer slog.SetDefault(oldLogger)
+
+	headers := make(http.Header)
+	headers.Set("X-Stainless-Retry-Count", "1")
+	prepared := &preparedRelayRequest{
+		keyInfo: &auth.KeyInfo{ID: "user-1", Name: "leo"},
+		input: &driver.RelayInput{
+			Headers: headers,
+			Path:    "/v1/messages",
+			Model:   "claude-sonnet-4-6",
+		},
+		sessionUUID: "session-123",
+	}
+
+	outcome := relaySvc.executeRelayAttempt(
+		context.Background(),
+		httptest.NewRecorder(),
+		driverStub,
+		prepared,
+		newRelayAttemptState(),
+		0,
+	)
+	if outcome != relayAttemptContinue {
+		t.Fatalf("executeRelayAttempt outcome = %v, want %v", outcome, relayAttemptContinue)
+	}
+
+	var logs []*domain.RequestLog
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		var total int
+		logs, total, err = mockStore.QueryRequestLogs(context.Background(), domain.RequestLogQuery{})
+		if err != nil {
+			t.Fatalf("QueryRequestLogs: %v", err)
+		}
+		if total == 1 {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if len(logs) != 1 {
+		t.Fatalf("len(logs) = %d, want 1", len(logs))
+	}
+
+	if logs[0].UserID != "user-1" {
+		t.Fatalf("UserID = %q, want user-1", logs[0].UserID)
+	}
+	if logs[0].AccountID != account.ID {
+		t.Fatalf("AccountID = %q, want %q", logs[0].AccountID, account.ID)
+	}
+	if logs[0].Model != "claude-sonnet-4-6" {
+		t.Fatalf("Model = %q", logs[0].Model)
+	}
+	if logs[0].Status != "upstream_529" {
+		t.Fatalf("Status = %q, want upstream_529", logs[0].Status)
+	}
+
+	record := capture.find("retriable upstream error")
+	if record == nil {
+		t.Fatal("missing retriable upstream error log record")
+	}
+	if record.attrs["userId"] != "user-1" {
+		t.Fatalf("log userId = %#v, want user-1", record.attrs["userId"])
+	}
+	if record.attrs["userName"] != "leo" {
+		t.Fatalf("log userName = %#v, want leo", record.attrs["userName"])
+	}
+	if record.attrs["path"] != "/v1/messages" {
+		t.Fatalf("log path = %#v, want /v1/messages", record.attrs["path"])
+	}
+	if record.attrs["sessionUUID"] != "session-123" {
+		t.Fatalf("log sessionUUID = %#v, want session-123", record.attrs["sessionUUID"])
+	}
+	if record.attrs["clientRetryCount"] != "1" {
+		t.Fatalf("log clientRetryCount = %#v, want 1", record.attrs["clientRetryCount"])
+	}
+}

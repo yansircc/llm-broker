@@ -104,10 +104,10 @@ func (s *SQLiteStore) QueryUsagePeriods(ctx context.Context, userID string, loc 
 		var where string
 		var args []interface{}
 		if userID != "" {
-			where = "user_id = ? AND created_at >= ? AND created_at < ?"
+			where = "user_id = ? AND status = 'ok' AND created_at >= ? AND created_at < ?"
 			args = []interface{}{userID, p.since.Unix(), p.until.Unix()}
 		} else {
-			where = "created_at >= ? AND created_at < ?"
+			where = "status = 'ok' AND created_at >= ? AND created_at < ?"
 			args = []interface{}{p.since.Unix(), p.until.Unix()}
 		}
 		row := s.db.QueryRowContext(ctx, fmt.Sprintf(
@@ -123,7 +123,7 @@ func (s *SQLiteStore) QueryUsagePeriods(ctx context.Context, userID string, loc 
 
 func (s *SQLiteStore) QueryUserTotalCosts(ctx context.Context) (map[string]float64, error) {
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT user_id, COALESCE(SUM(cost_usd),0) FROM request_log GROUP BY user_id`)
+		`SELECT user_id, COALESCE(SUM(cost_usd),0) FROM request_log WHERE status = 'ok' GROUP BY user_id`)
 	if err != nil {
 		return nil, err
 	}
@@ -143,10 +143,10 @@ func (s *SQLiteStore) QueryModelUsage(ctx context.Context, userID string) ([]dom
 	var where string
 	var args []interface{}
 	if userID != "" {
-		where = "user_id = ? AND created_at >= ?"
+		where = "user_id = ? AND status = 'ok' AND created_at >= ?"
 		args = []interface{}{userID, sevenDaysAgo}
 	} else {
-		where = "created_at >= ?"
+		where = "status = 'ok' AND created_at >= ?"
 		args = []interface{}{sevenDaysAgo}
 	}
 	rows, err := s.db.QueryContext(ctx, fmt.Sprintf(
