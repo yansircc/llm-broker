@@ -51,6 +51,8 @@ var desiredUserColumns = []string{
 	"token_hash",
 	"token_prefix",
 	"status",
+	"allowed_surface",
+	"bound_account_id",
 	"created_at",
 	"last_active_at",
 }
@@ -124,6 +126,9 @@ func Migrate(dbPath string) error {
 		return err
 	}
 	if err := s.migrateAccountsTable(context.Background()); err != nil {
+		return err
+	}
+	if err := s.migrateUsersTable(context.Background()); err != nil {
 		return err
 	}
 	if err := s.validateCurrentSchema(context.Background()); err != nil {
@@ -322,6 +327,80 @@ func (s *SQLiteStore) migrateQuotaBucketsTable(ctx context.Context) error {
 		`, bucketKeyExpr, cooldownExpr, stateExpr)
 	if _, err := s.db.ExecContext(ctx, seedSQL); err != nil {
 		return fmt.Errorf("seed quota_buckets from accounts: %w", err)
+	}
+	return nil
+}
+
+func (s *SQLiteStore) migrateUsersTable(ctx context.Context) error {
+	cols, err := s.tableColumns(ctx, "users")
+	if err != nil {
+		return fmt.Errorf("inspect users schema: %w", err)
+	}
+	if sameColumns(cols, desiredUserColumns) {
+		return nil
+	}
+	if !hasColumns(cols, "id", "name", "token_hash", "token_prefix", "status", "created_at", "last_active_at") {
+		return fmt.Errorf("users migration: unsupported schema %v", cols)
+	}
+
+	allowedSurfaceExpr := "'native'"
+	if slices.Contains(cols, "allowed_surface") {
+		allowedSurfaceExpr = "COALESCE(NULLIF(allowed_surface, ''), 'native')"
+	}
+	boundAccountExpr := "''"
+	if slices.Contains(cols, "bound_account_id") {
+		boundAccountExpr = "bound_account_id"
+	}
+
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin users migration: %w", err)
+	}
+	defer tx.Rollback()
+
+	if _, err := tx.ExecContext(ctx, `
+		CREATE TABLE users_new (
+			id TEXT PRIMARY KEY,
+			name TEXT NOT NULL UNIQUE,
+			token_hash TEXT NOT NULL UNIQUE,
+			token_prefix TEXT NOT NULL,
+			status TEXT NOT NULL DEFAULT 'active',
+			allowed_surface TEXT NOT NULL DEFAULT 'native',
+			bound_account_id TEXT NOT NULL DEFAULT '',
+			created_at INTEGER NOT NULL,
+			last_active_at INTEGER
+		)
+	`); err != nil {
+		return fmt.Errorf("create users_new: %w", err)
+	}
+
+	insertSQL := fmt.Sprintf(`
+		INSERT INTO users_new (
+			id, name, token_hash, token_prefix, status, allowed_surface, bound_account_id, created_at, last_active_at
+		)
+		SELECT
+			id,
+			name,
+			token_hash,
+			token_prefix,
+			status,
+			%s,
+			%s,
+			created_at,
+			last_active_at
+		FROM users
+	`, allowedSurfaceExpr, boundAccountExpr)
+	if _, err := tx.ExecContext(ctx, insertSQL); err != nil {
+		return fmt.Errorf("copy users: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, `DROP TABLE users`); err != nil {
+		return fmt.Errorf("drop old users: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, `ALTER TABLE users_new RENAME TO users`); err != nil {
+		return fmt.Errorf("rename users_new: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit users migration: %w", err)
 	}
 	return nil
 }

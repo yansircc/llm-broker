@@ -65,13 +65,17 @@ func (r *Relay) driverFor(provider domain.Provider) driver.ExecutionDriver {
 }
 
 func (r *Relay) HandleProvider(provider domain.Provider) http.HandlerFunc {
+	return r.HandleProviderSurface(provider, domain.SurfaceNative)
+}
+
+func (r *Relay) HandleProviderSurface(provider domain.Provider, surface domain.Surface) http.HandlerFunc {
 	return func(w http.ResponseWriter, req *http.Request) {
 		drv := r.driverFor(provider)
 		if drv == nil {
 			http.Error(w, "unknown provider", http.StatusNotFound)
 			return
 		}
-		r.handleWithDriver(w, req, drv)
+		r.handleWithDriver(w, req, drv, surface)
 	}
 }
 

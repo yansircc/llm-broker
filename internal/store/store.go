@@ -53,6 +53,7 @@ type Store interface {
 	DeleteUser(ctx context.Context, id string) error
 	UpdateUserStatus(ctx context.Context, id, status string) error
 	UpdateUserToken(ctx context.Context, id, tokenHash, tokenPrefix string) error
+	UpdateUserPolicy(ctx context.Context, id string, allowedSurface domain.Surface, boundAccountID string) error
 	UpdateUserLastActive(ctx context.Context, id string) error
 
 	// Request log

@@ -9,22 +9,26 @@ import (
 )
 
 func (s *SQLiteStore) CreateUser(ctx context.Context, u *domain.User) error {
+	allowedSurface := u.AllowedSurface
+	if allowedSurface == "" {
+		allowedSurface = domain.SurfaceNative
+	}
 	_, err := s.db.ExecContext(ctx,
-		`INSERT INTO users (id, name, token_hash, token_prefix, status, created_at) VALUES (?, ?, ?, ?, ?, ?)`,
-		u.ID, u.Name, u.TokenHash, u.TokenPrefix, u.Status, u.CreatedAt.Unix())
+		`INSERT INTO users (id, name, token_hash, token_prefix, status, allowed_surface, bound_account_id, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+		u.ID, u.Name, u.TokenHash, u.TokenPrefix, u.Status, string(allowedSurface), u.BoundAccountID, u.CreatedAt.Unix())
 	return err
 }
 
 func (s *SQLiteStore) GetUserByTokenHash(ctx context.Context, tokenHash string) (*domain.User, error) {
 	row := s.db.QueryRowContext(ctx,
-		`SELECT id, name, token_hash, token_prefix, status, created_at, last_active_at FROM users WHERE token_hash = ?`,
+		`SELECT id, name, token_hash, token_prefix, status, allowed_surface, bound_account_id, created_at, last_active_at FROM users WHERE token_hash = ?`,
 		tokenHash)
 	return scanUser(row)
 }
 
 func (s *SQLiteStore) ListUsers(ctx context.Context) ([]*domain.User, error) {
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT id, name, token_hash, token_prefix, status, created_at, last_active_at FROM users ORDER BY created_at`)
+		`SELECT id, name, token_hash, token_prefix, status, allowed_surface, bound_account_id, created_at, last_active_at FROM users ORDER BY created_at`)
 	if err != nil {
 		return nil, err
 	}
@@ -65,6 +69,19 @@ func (s *SQLiteStore) UpdateUserToken(ctx context.Context, id, tokenHash, tokenP
 	return ensureRowsAffected(result)
 }
 
+func (s *SQLiteStore) UpdateUserPolicy(ctx context.Context, id string, allowedSurface domain.Surface, boundAccountID string) error {
+	if allowedSurface == "" {
+		allowedSurface = domain.SurfaceNative
+	}
+	result, err := s.db.ExecContext(ctx,
+		"UPDATE users SET allowed_surface = ?, bound_account_id = ? WHERE id = ?",
+		string(allowedSurface), boundAccountID, id)
+	if err != nil {
+		return err
+	}
+	return ensureRowsAffected(result)
+}
+
 func (s *SQLiteStore) UpdateUserLastActive(ctx context.Context, id string) error {
 	_, err := s.db.ExecContext(ctx,
 		"UPDATE users SET last_active_at = ? WHERE id = ?", time.Now().Unix(), id)
@@ -73,11 +90,11 @@ func (s *SQLiteStore) UpdateUserLastActive(ctx context.Context, id string) error
 
 func scanUser(scanner interface{ Scan(...any) error }) (*domain.User, error) {
 	var (
-		id, name, tokenHash, tokenPrefix, status string
-		createdAt                                int64
-		lastActiveAt                             sql.NullInt64
+		id, name, tokenHash, tokenPrefix, status, allowedSurface, boundAccountID string
+		createdAt                                                                int64
+		lastActiveAt                                                             sql.NullInt64
 	)
-	err := scanner.Scan(&id, &name, &tokenHash, &tokenPrefix, &status, &createdAt, &lastActiveAt)
+	err := scanner.Scan(&id, &name, &tokenHash, &tokenPrefix, &status, &allowedSurface, &boundAccountID, &createdAt, &lastActiveAt)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
@@ -85,12 +102,17 @@ func scanUser(scanner interface{ Scan(...any) error }) (*domain.User, error) {
 		return nil, err
 	}
 	u := &domain.User{
-		ID:          id,
-		Name:        name,
-		TokenHash:   tokenHash,
-		TokenPrefix: tokenPrefix,
-		Status:      status,
-		CreatedAt:   time.Unix(createdAt, 0).UTC(),
+		ID:             id,
+		Name:           name,
+		TokenHash:      tokenHash,
+		TokenPrefix:    tokenPrefix,
+		Status:         status,
+		AllowedSurface: domain.NormalizeSurface(allowedSurface),
+		BoundAccountID: boundAccountID,
+		CreatedAt:      time.Unix(createdAt, 0).UTC(),
+	}
+	if u.AllowedSurface == "" {
+		u.AllowedSurface = domain.SurfaceNative
 	}
 	if lastActiveAt.Valid {
 		t := time.Unix(lastActiveAt.Int64, 0).UTC()

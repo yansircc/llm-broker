@@ -5,13 +5,14 @@ import (
 	"net/http"
 
 	"github.com/yansircc/llm-broker/internal/auth"
+	"github.com/yansircc/llm-broker/internal/domain"
 	"github.com/yansircc/llm-broker/internal/driver"
 )
 
-func (r *Relay) handleCountTokens(w http.ResponseWriter, req *http.Request, drv driver.ExecutionDriver, input *driver.RelayInput, keyInfo *auth.KeyInfo) {
+func (r *Relay) handleCountTokens(w http.ResponseWriter, req *http.Request, drv driver.ExecutionDriver, input *driver.RelayInput, keyInfo *auth.KeyInfo, surface domain.Surface) {
 	ctx := req.Context()
 
-	acct, err := r.pool.Pick(drv, nil, input.Model, keyInfo.BoundAccountID)
+	acct, err := r.pool.PickForSurface(drv, nil, input.Model, keyInfo.BoundAccountID, surface)
 	if err != nil {
 		slog.Warn("count_tokens: account selection failed", "error", err)
 		drv.WriteError(w, http.StatusServiceUnavailable, "no available accounts")

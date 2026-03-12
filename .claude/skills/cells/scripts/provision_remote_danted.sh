@@ -148,8 +148,8 @@ UNIT
 if command -v ufw >/dev/null 2>&1; then
     ufw_status="$(ufw status | sed -n '1s/^Status: //p' || true)"
     if [[ "$ufw_status" == "active" ]]; then
-        if ! ufw status numbered | grep -Fq "$WG_BIND_IP $LISTEN_PORT/tcp on wg0"; then
-            ufw allow in on wg0 from "$ALLOW_FROM" to "$WG_BIND_IP" port "$LISTEN_PORT" proto tcp comment "$CELL_ID socks over wg"
+        if ! ufw status numbered | grep -Fq "$WG_BIND_IP $LISTEN_PORT/tcp on $IFACE"; then
+            ufw allow in on "$IFACE" from "$ALLOW_FROM" to "$WG_BIND_IP" port "$LISTEN_PORT" proto tcp comment "$CELL_ID socks"
         fi
     fi
 fi

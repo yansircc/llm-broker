@@ -46,10 +46,12 @@ type Config struct {
 	CellErrorPause       time.Duration
 
 	// Request
-	RequestTimeout   time.Duration
-	MaxRequestBodyMB int
-	MaxRetryAccounts int
-	MaxCacheControls int
+	RequestTimeout             time.Duration
+	MaxRequestBodyMB           int
+	MaxRetryAccounts           int
+	MaxCacheControls           int
+	CompatMaxRequestsPerMinute int
+	CompatMaxConcurrent        int
 
 	// Logging
 	LogLevel string
@@ -91,10 +93,12 @@ func Load() *Config {
 		ErrorPause529:        envDuration("ERROR_PAUSE_529", 5*time.Minute),
 		CellErrorPause:       envDuration("CELL_ERROR_PAUSE", 60*time.Second),
 
-		RequestTimeout:   envDuration("REQUEST_TIMEOUT", 5*time.Minute),
-		MaxRequestBodyMB: envInt("REQUEST_MAX_SIZE_MB", 60),
-		MaxRetryAccounts: envInt("MAX_RETRY_ACCOUNTS", 2),
-		MaxCacheControls: envInt("MAX_CACHE_CONTROLS", 4),
+		RequestTimeout:             envDuration("REQUEST_TIMEOUT", 5*time.Minute),
+		MaxRequestBodyMB:           envInt("REQUEST_MAX_SIZE_MB", 60),
+		MaxRetryAccounts:           envInt("MAX_RETRY_ACCOUNTS", 2),
+		MaxCacheControls:           envInt("MAX_CACHE_CONTROLS", 4),
+		CompatMaxRequestsPerMinute: envInt("COMPAT_MAX_REQUESTS_PER_MINUTE", 6),
+		CompatMaxConcurrent:        envInt("COMPAT_MAX_CONCURRENT", 1),
 
 		LogLevel: envOr("LOG_LEVEL", "info"),
 

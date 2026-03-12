@@ -3,13 +3,14 @@ package relay
 import (
 	"net/http"
 
+	"github.com/yansircc/llm-broker/internal/domain"
 	"github.com/yansircc/llm-broker/internal/driver"
 )
 
-func (r *Relay) handleWithDriver(w http.ResponseWriter, req *http.Request, drv driver.ExecutionDriver) {
+func (r *Relay) handleWithDriver(w http.ResponseWriter, req *http.Request, drv driver.ExecutionDriver, surface domain.Surface) {
 	ctx := req.Context()
 
-	prepared, handled := r.prepareRelayRequest(w, req, drv)
+	prepared, handled := r.prepareRelayRequest(w, req, drv, surface)
 	if handled {
 		return
 	}

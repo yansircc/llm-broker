@@ -397,6 +397,21 @@ func (m *MockStore) UpdateUserToken(_ context.Context, id, tokenHash, tokenPrefi
 	return nil
 }
 
+func (m *MockStore) UpdateUserPolicy(_ context.Context, id string, allowedSurface domain.Surface, boundAccountID string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	u, ok := m.users[id]
+	if !ok {
+		return ErrNotFound
+	}
+	if allowedSurface == "" {
+		allowedSurface = domain.SurfaceNative
+	}
+	u.AllowedSurface = allowedSurface
+	u.BoundAccountID = boundAccountID
+	return nil
+}
+
 func (m *MockStore) UpdateUserLastActive(_ context.Context, id string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()

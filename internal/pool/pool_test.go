@@ -220,6 +220,58 @@ func TestPick_SkipsUnavailableCell(t *testing.T) {
 	}
 }
 
+func TestPickForSurface_SeparatesNativeAndCompatLanes(t *testing.T) {
+	native := activeAccount("native", "native@x")
+	native.Priority = 80
+	native.CellID = "cell-native"
+
+	compat := activeAccount("compat", "compat@x")
+	compat.Priority = 90
+	compat.CellID = "cell-compat"
+
+	p := newTestPool(t, native, compat)
+	for _, cell := range []*domain.EgressCell{
+		{
+			ID:        "cell-native",
+			Name:      "native",
+			Status:    domain.EgressCellActive,
+			Proxy:     &domain.ProxyConfig{Type: "socks5", Host: "10.0.0.2", Port: 11081},
+			Labels:    map[string]string{"lane": "native"},
+			CreatedAt: time.Now().UTC(),
+			UpdatedAt: time.Now().UTC(),
+		},
+		{
+			ID:        "cell-compat",
+			Name:      "compat",
+			Status:    domain.EgressCellActive,
+			Proxy:     &domain.ProxyConfig{Type: "socks5", Host: "10.0.0.3", Port: 11082},
+			Labels:    map[string]string{"lane": "compat"},
+			CreatedAt: time.Now().UTC(),
+			UpdatedAt: time.Now().UTC(),
+		},
+	} {
+		if err := p.SaveCell(cell); err != nil {
+			t.Fatalf("SaveCell(%s): %v", cell.ID, err)
+		}
+	}
+
+	gotNative, err := p.PickForSurface(testDriver, nil, "claude-haiku", "", domain.SurfaceNative)
+	if err != nil {
+		t.Fatalf("PickForSurface(native): %v", err)
+	}
+	if gotNative.ID != "native" {
+		t.Fatalf("PickForSurface(native) = %s, want native", gotNative.ID)
+	}
+
+	gotCompat, err := p.PickForSurface(testDriver, nil, "claude-haiku", "", domain.SurfaceCompat)
+	if err != nil {
+		t.Fatalf("PickForSurface(compat): %v", err)
+	}
+	if gotCompat.ID != "compat" {
+		t.Fatalf("PickForSurface(compat) = %s, want compat", gotCompat.ID)
+	}
+}
+
 func TestCooldownCellForAccount(t *testing.T) {
 	acct := activeAccount("a", "a@x")
 	acct.CellID = "cell-a"

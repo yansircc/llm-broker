@@ -32,13 +32,13 @@ func (d *GeminiDriver) BuildRequest(ctx context.Context, input *RelayInput, acct
 		return nil, fmt.Errorf("invalid gemini relay path")
 	}
 
-	body := input.RawBody
+	body := stripJSONField(input.RawBody, "model")
 	if needsGeminiProject(upstreamPath) {
 		state := parseGeminiState(json.RawMessage(acct.ProviderStateJSON))
 		if state.ProjectID == "" {
 			return nil, fmt.Errorf("gemini account missing project_id")
 		}
-		body = injectGeminiProject(input.RawBody, state.ProjectID)
+		body = injectGeminiProject(body, state.ProjectID)
 	}
 
 	rawQuery := input.RawQuery

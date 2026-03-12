@@ -62,7 +62,7 @@ func (r *Relay) executeRelayAttempt(
 	state *relayAttemptState,
 	attempt int,
 ) relayAttemptOutcome {
-	acct, err := r.pool.Pick(drv, state.exclusions, prepared.input.Model, state.boundAccountID(prepared, attempt))
+	acct, err := r.pool.PickForSurface(drv, state.exclusions, prepared.input.Model, state.boundAccountID(prepared, attempt), prepared.surface)
 	if err != nil {
 		state.lastErr = err
 		return relayAttemptStop

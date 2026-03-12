@@ -55,6 +55,8 @@ func isReservedUIPath(path string) bool {
 		return true
 	case path == "/v1" || strings.HasPrefix(path, "/v1/"):
 		return true
+	case path == "/compat" || strings.HasPrefix(path, "/compat/"):
+		return true
 	case path == "/openai" || strings.HasPrefix(path, "/openai/"):
 		return true
 	case path == "/ui" || strings.HasPrefix(path, "/ui/"):

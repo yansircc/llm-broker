@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 
+	"github.com/yansircc/llm-broker/internal/domain"
 	"github.com/yansircc/llm-broker/internal/driver"
 )
 
@@ -17,13 +18,21 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 
 func (s *Server) registerRelayRoutes(mux *http.ServeMux) {
 	auth := s.authMw.Authenticate
+	native := func(handler http.Handler) http.Handler {
+		return auth(requireSurfaceHandler(domain.SurfaceNative, handler))
+	}
+	compat := func(handler http.Handler) http.Handler {
+		return auth(requireSurfaceHandler(domain.SurfaceCompat, handler))
+	}
 
-	mux.Handle("GET /v1/models", auth(http.HandlerFunc(s.handleListModels)))
+	mux.Handle("GET /v1/models", native(http.HandlerFunc(s.handleListModels)))
+	mux.Handle("GET /compat/v1/models", compat(http.HandlerFunc(s.handleCompatListModels)))
+	mux.Handle("POST /compat/v1/chat/completions", compat(http.HandlerFunc(s.handleCompatOpenAIChatCompletions)))
 
 	for _, provider := range sortedProviders(s.catalogDrivers) {
 		drv := s.catalogDrivers[provider]
 		for _, path := range drv.Info().RelayPaths {
-			mux.Handle("POST "+path, auth(http.HandlerFunc(s.relay.HandleProvider(provider))))
+			mux.Handle("POST "+path, native(http.HandlerFunc(s.relay.HandleProviderSurface(provider, domain.SurfaceNative))))
 		}
 	}
 }
@@ -59,6 +68,7 @@ func (s *Server) registerAdminRoutes(mux *http.ServeMux) {
 	mux.Handle("DELETE /admin/users/{id}", admin(s.handleDeleteUser))
 	mux.Handle("POST /admin/users/{id}/regenerate", admin(s.handleRegenerateUserToken))
 	mux.Handle("POST /admin/users/{id}/status", admin(s.handleUpdateUserStatus))
+	mux.Handle("POST /admin/users/{id}/policy", admin(s.handleUpdateUserPolicy))
 
 	mux.Handle("GET /admin/dashboard", admin(s.handleDashboard))
 	mux.Handle("GET /admin/health", admin(s.handleHealth))

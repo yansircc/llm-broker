@@ -22,10 +22,21 @@ import (
 
 func (s *Server) handleCreateUser(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		Name string `json:"name"`
+		Name           string `json:"name"`
+		AllowedSurface string `json:"allowed_surface"`
+		BoundAccountID string `json:"bound_account_id"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Name == "" {
 		writeAdminError(w, http.StatusBadRequest, "invalid_request", "name is required")
+		return
+	}
+	allowedSurface, err := parseUserAllowedSurface(req.AllowedSurface)
+	if err != nil {
+		writeAdminError(w, http.StatusBadRequest, "invalid_request", err.Error())
+		return
+	}
+	if err := s.validateUserBoundAccount(req.BoundAccountID); err != nil {
+		writeAdminError(w, http.StatusBadRequest, "invalid_request", err.Error())
 		return
 	}
 
@@ -35,12 +46,14 @@ func (s *Server) handleCreateUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	u := &domain.User{
-		ID:          uuid.New().String(),
-		Name:        req.Name,
-		TokenHash:   hashStr,
-		TokenPrefix: prefix,
-		Status:      "active",
-		CreatedAt:   time.Now().UTC(),
+		ID:             uuid.New().String(),
+		Name:           req.Name,
+		TokenHash:      hashStr,
+		TokenPrefix:    prefix,
+		Status:         "active",
+		AllowedSurface: allowedSurface,
+		BoundAccountID: req.BoundAccountID,
+		CreatedAt:      time.Now().UTC(),
 	}
 	if err := s.store.CreateUser(r.Context(), u); err != nil {
 		slog.Error("create user failed", "error", err)
@@ -49,10 +62,18 @@ func (s *Server) handleCreateUser(w http.ResponseWriter, r *http.Request) {
 	}
 
 	slog.Info("user created", "id", u.ID, "name", u.Name)
-	writeJSON(w, http.StatusOK, map[string]string{
-		"id":    u.ID,
-		"name":  u.Name,
-		"token": plaintext,
+	writeJSON(w, http.StatusOK, struct {
+		ID             string         `json:"id"`
+		Name           string         `json:"name"`
+		Token          string         `json:"token"`
+		AllowedSurface domain.Surface `json:"allowed_surface"`
+		BoundAccountID string         `json:"bound_account_id,omitempty"`
+	}{
+		ID:             u.ID,
+		Name:           u.Name,
+		Token:          plaintext,
+		AllowedSurface: u.AllowedSurface,
+		BoundAccountID: u.BoundAccountID,
 	})
 }
 
@@ -144,6 +165,68 @@ func (s *Server) handleUpdateUserStatus(w http.ResponseWriter, r *http.Request) 
 	writeJSON(w, http.StatusOK, map[string]string{"id": id, "status": req.Status})
 }
 
+func (s *Server) handleUpdateUserPolicy(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	var req struct {
+		AllowedSurface string `json:"allowed_surface"`
+		BoundAccountID string `json:"bound_account_id"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeAdminError(w, http.StatusBadRequest, "invalid_request", "invalid JSON body")
+		return
+	}
+	allowedSurface, err := parseUserAllowedSurface(req.AllowedSurface)
+	if err != nil {
+		writeAdminError(w, http.StatusBadRequest, "invalid_request", err.Error())
+		return
+	}
+	if err := s.validateUserBoundAccount(req.BoundAccountID); err != nil {
+		writeAdminError(w, http.StatusBadRequest, "invalid_request", err.Error())
+		return
+	}
+	if err := s.store.UpdateUserPolicy(r.Context(), id, allowedSurface, req.BoundAccountID); err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			writeAdminError(w, http.StatusNotFound, "not_found", "user not found")
+			return
+		}
+		writeAdminError(w, http.StatusInternalServerError, "internal_error", "failed to update user policy")
+		return
+	}
+	slog.Info("user policy updated", "id", id, "allowedSurface", allowedSurface, "boundAccountId", req.BoundAccountID)
+	writeJSON(w, http.StatusOK, struct {
+		ID             string         `json:"id"`
+		AllowedSurface domain.Surface `json:"allowed_surface"`
+		BoundAccountID string         `json:"bound_account_id,omitempty"`
+	}{
+		ID:             id,
+		AllowedSurface: allowedSurface,
+		BoundAccountID: req.BoundAccountID,
+	})
+}
+
+func parseUserAllowedSurface(raw string) (domain.Surface, error) {
+	if raw == "" {
+		return domain.SurfaceNative, nil
+	}
+	allowedSurface := domain.NormalizeSurface(raw)
+	switch allowedSurface {
+	case domain.SurfaceNative, domain.SurfaceCompat, domain.SurfaceAll:
+		return allowedSurface, nil
+	default:
+		return "", fmt.Errorf("allowed_surface must be 'native', 'compat', or 'all'")
+	}
+}
+
+func (s *Server) validateUserBoundAccount(accountID string) error {
+	if accountID == "" {
+		return nil
+	}
+	if s.pool.Get(accountID) == nil {
+		return fmt.Errorf("bound_account_id not found")
+	}
+	return nil
+}
+
 func generateUserToken(name string) (plaintext, hashStr, prefix string, err error) {
 	b := make([]byte, 8)
 	if _, err = rand.Read(b); err != nil {
@@ -214,6 +297,8 @@ func (s *Server) handleGetUser(w http.ResponseWriter, r *http.Request) {
 		Name:           user.Name,
 		TokenPrefix:    user.TokenPrefix,
 		Status:         user.Status,
+		AllowedSurface: user.AllowedSurface,
+		BoundAccountID: user.BoundAccountID,
 		CreatedAt:      user.CreatedAt,
 		LastActiveAt:   user.LastActiveAt,
 		Usage:          usage,

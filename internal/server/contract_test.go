@@ -14,6 +14,7 @@ import (
 	"github.com/yansircc/llm-broker/internal/auth"
 	"github.com/yansircc/llm-broker/internal/config"
 	"github.com/yansircc/llm-broker/internal/domain"
+	"github.com/yansircc/llm-broker/internal/driver"
 	"github.com/yansircc/llm-broker/internal/events"
 	"github.com/yansircc/llm-broker/internal/pool"
 	"github.com/yansircc/llm-broker/internal/store"
@@ -520,6 +521,69 @@ func TestAdminAccountsRoute_RequiresAdmin(t *testing.T) {
 	}
 }
 
+func TestCompatRoute_RejectsNativeOnlyUser(t *testing.T) {
+	srv := newTestServer(t)
+	srv.authMw = auth.NewMiddleware("admin-secret", srv.store)
+	srv.catalogDrivers = map[domain.Provider]driver.Descriptor{
+		domain.ProviderClaude: driver.NewClaudeDriver(driver.ClaudeConfig{}, nil),
+	}
+
+	user := &domain.User{
+		ID:             "u-native",
+		Name:           "native-user",
+		TokenHash:      tokenHash("native-token"),
+		TokenPrefix:    "tk_native_abcd...",
+		Status:         "active",
+		AllowedSurface: domain.SurfaceNative,
+		CreatedAt:      time.Now().UTC(),
+	}
+	if err := srv.store.CreateUser(context.Background(), user); err != nil {
+		t.Fatal(err)
+	}
+
+	mux := http.NewServeMux()
+	srv.registerRelayRoutes(mux)
+
+	req := httptest.NewRequest(http.MethodGet, "/compat/v1/models", nil)
+	req.Header.Set("Authorization", "Bearer native-token")
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+
+	if w.Code != http.StatusForbidden {
+		t.Fatalf("status %d, want %d, body: %s", w.Code, http.StatusForbidden, w.Body.String())
+	}
+}
+
+func TestNativeRoute_RejectsCompatOnlyUser(t *testing.T) {
+	srv := newTestServer(t)
+	srv.authMw = auth.NewMiddleware("admin-secret", srv.store)
+
+	user := &domain.User{
+		ID:             "u-compat",
+		Name:           "compat-user",
+		TokenHash:      tokenHash("compat-token"),
+		TokenPrefix:    "tk_compat_abcd...",
+		Status:         "active",
+		AllowedSurface: domain.SurfaceCompat,
+		CreatedAt:      time.Now().UTC(),
+	}
+	if err := srv.store.CreateUser(context.Background(), user); err != nil {
+		t.Fatal(err)
+	}
+
+	mux := http.NewServeMux()
+	srv.registerRelayRoutes(mux)
+
+	req := httptest.NewRequest(http.MethodGet, "/v1/models", nil)
+	req.Header.Set("Authorization", "Bearer compat-token")
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+
+	if w.Code != http.StatusForbidden {
+		t.Fatalf("status %d, want %d, body: %s", w.Code, http.StatusForbidden, w.Body.String())
+	}
+}
+
 func TestDeleteUser_NotFound(t *testing.T) {
 	srv := newTestServer(t)
 
@@ -544,5 +608,53 @@ func TestUpdateUserStatus_NotFound(t *testing.T) {
 
 	if w.Code != http.StatusNotFound {
 		t.Fatalf("status %d, want %d, body: %s", w.Code, http.StatusNotFound, w.Body.String())
+	}
+}
+
+func TestUpdateUserPolicy_RoundTrip(t *testing.T) {
+	srv := newTestServer(t)
+
+	if err := srv.store.SaveAccount(context.Background(), &domain.Account{
+		ID:       "acct-compat-1",
+		Email:    "compat@example.com",
+		Provider: domain.ProviderClaude,
+		Status:   domain.StatusActive,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	srv.pool, _ = pool.New(srv.store, srv.bus)
+
+	user := &domain.User{
+		ID:        "u-1",
+		Name:      "policy-user",
+		Status:    "active",
+		CreatedAt: time.Now().UTC(),
+	}
+	if err := srv.store.CreateUser(context.Background(), user); err != nil {
+		t.Fatal(err)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/admin/users/u-1/policy", strings.NewReader(`{"allowed_surface":"compat","bound_account_id":"acct-compat-1"}`))
+	req = req.WithContext(adminRequest(http.MethodPost, "/admin/users/u-1/policy").Context())
+	req.SetPathValue("id", "u-1")
+	w := httptest.NewRecorder()
+	srv.handleUpdateUserPolicy(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status %d, want %d, body: %s", w.Code, http.StatusOK, w.Body.String())
+	}
+
+	users, err := srv.store.ListUsers(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(users) != 1 {
+		t.Fatalf("len(users) = %d, want 1", len(users))
+	}
+	if users[0].AllowedSurface != domain.SurfaceCompat {
+		t.Fatalf("AllowedSurface = %q, want compat", users[0].AllowedSurface)
+	}
+	if users[0].BoundAccountID != "acct-compat-1" {
+		t.Fatalf("BoundAccountID = %q, want acct-compat-1", users[0].BoundAccountID)
 	}
 }

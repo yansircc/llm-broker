@@ -147,6 +147,145 @@ func TestMigrate_LegacyAccountsTable(t *testing.T) {
 	}
 }
 
+func TestMigrate_LegacyUsersTable(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "legacy-users.db")
+
+	db, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		t.Fatalf("open sqlite: %v", err)
+	}
+	t.Cleanup(func() { db.Close() })
+
+	if _, err := db.Exec(`
+		CREATE TABLE accounts (
+			id TEXT PRIMARY KEY,
+			email TEXT NOT NULL,
+			provider TEXT NOT NULL,
+			status TEXT NOT NULL DEFAULT 'created',
+			priority INTEGER NOT NULL DEFAULT 50,
+			priority_mode TEXT NOT NULL DEFAULT 'auto',
+			error_message TEXT NOT NULL DEFAULT '',
+			bucket_key TEXT NOT NULL DEFAULT '',
+			refresh_token_enc TEXT NOT NULL DEFAULT '',
+			access_token_enc TEXT NOT NULL DEFAULT '',
+			expires_at INTEGER NOT NULL DEFAULT 0,
+			created_at INTEGER NOT NULL,
+			last_used_at INTEGER,
+			last_refresh_at INTEGER,
+			proxy_json TEXT NOT NULL DEFAULT '',
+			cell_id TEXT NOT NULL DEFAULT '',
+			identity_json TEXT NOT NULL DEFAULT '',
+			subject TEXT NOT NULL
+		);
+		CREATE TABLE egress_cells (
+			id TEXT PRIMARY KEY,
+			name TEXT NOT NULL,
+			status TEXT NOT NULL DEFAULT 'active',
+			proxy_json TEXT NOT NULL DEFAULT '',
+			labels_json TEXT NOT NULL DEFAULT '',
+			cooldown_until INTEGER,
+			state_json TEXT NOT NULL DEFAULT '{}',
+			created_at INTEGER NOT NULL,
+			updated_at INTEGER NOT NULL
+		);
+		CREATE TABLE users (
+			id TEXT PRIMARY KEY,
+			name TEXT NOT NULL UNIQUE,
+			token_hash TEXT NOT NULL UNIQUE,
+			token_prefix TEXT NOT NULL,
+			status TEXT NOT NULL DEFAULT 'active',
+			created_at INTEGER NOT NULL,
+			last_active_at INTEGER
+		);
+		CREATE TABLE request_log (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			user_id TEXT NOT NULL,
+			account_id TEXT NOT NULL,
+			model TEXT NOT NULL,
+			input_tokens INTEGER NOT NULL DEFAULT 0,
+			output_tokens INTEGER NOT NULL DEFAULT 0,
+			cache_read_tokens INTEGER NOT NULL DEFAULT 0,
+			cache_create_tokens INTEGER NOT NULL DEFAULT 0,
+			cost_usd REAL NOT NULL DEFAULT 0,
+			status TEXT NOT NULL,
+			duration_ms INTEGER NOT NULL DEFAULT 0,
+			created_at INTEGER NOT NULL
+		);
+		CREATE TABLE quota_buckets (
+			bucket_key TEXT PRIMARY KEY,
+			provider TEXT NOT NULL,
+			cooldown_until INTEGER,
+			state_json TEXT NOT NULL DEFAULT '{}',
+			updated_at INTEGER NOT NULL
+		);
+		CREATE TABLE session_bindings (
+			session_uuid TEXT PRIMARY KEY,
+			account_id TEXT NOT NULL,
+			created_at INTEGER NOT NULL,
+			last_used_at INTEGER NOT NULL,
+			expires_at INTEGER NOT NULL
+		);
+		CREATE TABLE stainless_bindings (
+			account_id TEXT PRIMARY KEY,
+			headers_json TEXT NOT NULL,
+			created_at INTEGER NOT NULL,
+			expires_at INTEGER NOT NULL
+		);
+		CREATE TABLE oauth_sessions (
+			session_id TEXT PRIMARY KEY,
+			data_json TEXT NOT NULL,
+			created_at INTEGER NOT NULL,
+			expires_at INTEGER NOT NULL
+		);
+		CREATE TABLE refresh_locks (
+			account_id TEXT PRIMARY KEY,
+			lock_id TEXT NOT NULL,
+			created_at INTEGER NOT NULL,
+			expires_at INTEGER NOT NULL
+		)
+	`); err != nil {
+		t.Fatalf("create legacy users schema: %v", err)
+	}
+	if _, err := db.Exec(`
+		INSERT INTO users (id, name, token_hash, token_prefix, status, created_at)
+		VALUES (?, ?, ?, ?, ?, ?)
+	`, "u-1", "legacy-user", "hash", "tk_legacy_abcd...", "active", time.Now().Add(-time.Hour).Unix()); err != nil {
+		t.Fatalf("insert legacy user: %v", err)
+	}
+
+	if err := Migrate(dbPath); err != nil {
+		t.Fatalf("Migrate(): %v", err)
+	}
+
+	store, err := New(dbPath)
+	if err != nil {
+		t.Fatalf("New(): %v", err)
+	}
+	defer store.Close()
+
+	cols, err := store.tableColumns(context.Background(), "users")
+	if err != nil {
+		t.Fatalf("tableColumns(users): %v", err)
+	}
+	if !hasColumns(cols, "allowed_surface", "bound_account_id") {
+		t.Fatalf("migrated users columns missing policy fields: %v", cols)
+	}
+
+	users, err := store.ListUsers(context.Background())
+	if err != nil {
+		t.Fatalf("ListUsers(): %v", err)
+	}
+	if len(users) != 1 {
+		t.Fatalf("len(users) = %d, want 1", len(users))
+	}
+	if users[0].AllowedSurface != domain.SurfaceNative {
+		t.Fatalf("AllowedSurface = %q, want native", users[0].AllowedSurface)
+	}
+	if users[0].BoundAccountID != "" {
+		t.Fatalf("BoundAccountID = %q, want empty", users[0].BoundAccountID)
+	}
+}
+
 func TestNew_AllowsRequestLogColumnOrderDrift(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "order-drift.db")
 
@@ -194,6 +333,8 @@ func TestNew_AllowsRequestLogColumnOrderDrift(t *testing.T) {
 			token_hash TEXT NOT NULL UNIQUE,
 			token_prefix TEXT NOT NULL,
 			status TEXT NOT NULL DEFAULT 'active',
+			allowed_surface TEXT NOT NULL DEFAULT 'native',
+			bound_account_id TEXT NOT NULL DEFAULT '',
 			created_at INTEGER NOT NULL,
 			last_active_at INTEGER
 		);

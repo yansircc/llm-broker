@@ -10,6 +10,7 @@ import (
 	"net/http"
 
 	"github.com/yansircc/llm-broker/internal/auth"
+	"github.com/yansircc/llm-broker/internal/domain"
 	"github.com/yansircc/llm-broker/internal/driver"
 	"github.com/yansircc/llm-broker/internal/events"
 )
@@ -17,11 +18,12 @@ import (
 type preparedRelayRequest struct {
 	keyInfo               *auth.KeyInfo
 	input                 *driver.RelayInput
+	surface               domain.Surface
 	sessionUUID           string
 	sessionBoundAccountID string
 }
 
-func (r *Relay) prepareRelayRequest(w http.ResponseWriter, req *http.Request, drv driver.ExecutionDriver) (*preparedRelayRequest, bool) {
+func (r *Relay) prepareRelayRequest(w http.ResponseWriter, req *http.Request, drv driver.ExecutionDriver, surface domain.Surface) (*preparedRelayRequest, bool) {
 	keyInfo := auth.GetKeyInfo(req.Context())
 	if keyInfo == nil {
 		drv.WriteError(w, http.StatusUnauthorized, "not authenticated")
@@ -38,11 +40,11 @@ func (r *Relay) prepareRelayRequest(w http.ResponseWriter, req *http.Request, dr
 	}
 
 	if plan.IsCountTokens {
-		r.handleCountTokens(w, req, drv, input, keyInfo)
+		r.handleCountTokens(w, req, drv, input, keyInfo, surface)
 		return nil, true
 	}
 
-	sessionBoundAccountID, ok := r.resolveSessionBoundAccount(req.Context(), w, drv, input.Model, plan)
+	sessionBoundAccountID, ok := r.resolveSessionBoundAccount(req.Context(), w, drv, input.Model, plan, surface)
 	if !ok {
 		return nil, true
 	}
@@ -50,6 +52,7 @@ func (r *Relay) prepareRelayRequest(w http.ResponseWriter, req *http.Request, dr
 	return &preparedRelayRequest{
 		keyInfo:               keyInfo,
 		input:                 input,
+		surface:               surface,
 		sessionUUID:           plan.SessionUUID,
 		sessionBoundAccountID: sessionBoundAccountID,
 	}, false
@@ -95,7 +98,7 @@ func (r *Relay) parseRelayInput(w http.ResponseWriter, req *http.Request, drv dr
 	return input, plan, true
 }
 
-func (r *Relay) resolveSessionBoundAccount(ctx context.Context, w http.ResponseWriter, drv driver.ExecutionDriver, model string, plan driver.RelayPlan) (string, bool) {
+func (r *Relay) resolveSessionBoundAccount(ctx context.Context, w http.ResponseWriter, drv driver.ExecutionDriver, model string, plan driver.RelayPlan, surface domain.Surface) (string, bool) {
 	if plan.SessionUUID == "" {
 		return "", true
 	}
@@ -109,7 +112,7 @@ func (r *Relay) resolveSessionBoundAccount(ctx context.Context, w http.ResponseW
 	if !ok {
 		return "", true
 	}
-	if r.pool.IsAvailableFor(boundID, drv, model) {
+	if r.pool.IsAvailableForSurface(boundID, drv, model, surface) {
 		if err := r.pool.RenewSessionBinding(ctx, plan.SessionUUID, r.cfg.SessionBindingTTL); err != nil {
 			slog.Warn("renew session binding failed", "sessionUUID", plan.SessionUUID, "accountId", boundID, "error", err)
 		}

@@ -85,6 +85,22 @@ func injectGeminiProject(rawBody []byte, projectID string) []byte {
 	return out
 }
 
+func stripJSONField(rawBody []byte, field string) []byte {
+	var body map[string]interface{}
+	if json.Unmarshal(rawBody, &body) != nil {
+		return rawBody
+	}
+	if _, ok := body[field]; !ok {
+		return rawBody
+	}
+	delete(body, field)
+	out, err := json.Marshal(body)
+	if err != nil {
+		return rawBody
+	}
+	return out
+}
+
 func parseGeminiRetryDelay(body []byte) time.Duration {
 	if len(body) == 0 {
 		return 0

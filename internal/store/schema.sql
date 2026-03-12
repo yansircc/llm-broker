@@ -38,6 +38,8 @@ CREATE TABLE IF NOT EXISTS users (
     token_hash TEXT NOT NULL UNIQUE,
     token_prefix TEXT NOT NULL,
     status TEXT NOT NULL DEFAULT 'active',
+    allowed_surface TEXT NOT NULL DEFAULT 'native',
+    bound_account_id TEXT NOT NULL DEFAULT '',
     created_at INTEGER NOT NULL,
     last_active_at INTEGER
 );

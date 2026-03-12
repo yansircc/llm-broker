@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/yansircc/llm-broker/internal/domain"
 	"github.com/yansircc/llm-broker/internal/store"
 )
 
@@ -21,6 +22,7 @@ const KeyInfoKey contextKey = "keyInfo"
 type KeyInfo struct {
 	ID             string
 	Name           string
+	AllowedSurface domain.Surface
 	BoundAccountID string
 	IsAdmin        bool
 }
@@ -65,9 +67,10 @@ func (m *Middleware) ValidateToken(ctx context.Context, token string) (*KeyInfo,
 func (m *Middleware) validateToken(ctx context.Context, token string) (*KeyInfo, error) {
 	if subtle.ConstantTimeCompare([]byte(token), []byte(m.adminToken)) == 1 {
 		return &KeyInfo{
-			ID:      "admin",
-			Name:    "admin",
-			IsAdmin: true,
+			ID:             "admin",
+			Name:           "admin",
+			AllowedSurface: domain.SurfaceAll,
+			IsAdmin:        true,
 		}, nil
 	}
 
@@ -84,12 +87,17 @@ func (m *Middleware) validateToken(ctx context.Context, token string) (*KeyInfo,
 	if user.Status != "active" {
 		return nil, fmt.Errorf("user %s is %s", user.Name, user.Status)
 	}
+	if user.AllowedSurface == "" {
+		user.AllowedSurface = domain.SurfaceNative
+	}
 
 	go m.store.UpdateUserLastActive(context.Background(), user.ID)
 
 	return &KeyInfo{
-		ID:   user.ID,
-		Name: user.Name,
+		ID:             user.ID,
+		Name:           user.Name,
+		AllowedSurface: user.AllowedSurface,
+		BoundAccountID: user.BoundAccountID,
 	}, nil
 }
 

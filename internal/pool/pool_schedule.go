@@ -28,6 +28,38 @@ func (p *Pool) isAvailable(acct *domain.Account, drv driver.SchedulerDriver, mod
 	return true
 }
 
+func cellLane(cell *domain.EgressCell) domain.Surface {
+	if cell == nil || len(cell.Labels) == 0 {
+		return ""
+	}
+	return domain.NormalizeSurface(cell.Labels["lane"])
+}
+
+func (p *Pool) allowedOnSurfaceLocked(acct *domain.Account, surface domain.Surface) bool {
+	surface = domain.NormalizeSurface(string(surface))
+	if surface == "" || surface == domain.SurfaceAll {
+		return true
+	}
+
+	cell := p.cellForAccountLocked(acct)
+	lane := cellLane(cell)
+
+	switch surface {
+	case domain.SurfaceCompat:
+		if cell == nil {
+			return false
+		}
+		return lane == domain.SurfaceCompat || lane == domain.SurfaceAll
+	case domain.SurfaceNative:
+		if cell == nil {
+			return true
+		}
+		return lane == "" || lane == domain.SurfaceNative || lane == domain.SurfaceAll
+	default:
+		return false
+	}
+}
+
 func (p *Pool) matchesProvider(acct *domain.Account, provider domain.Provider) bool {
 	return acct.Provider == provider
 }
@@ -40,6 +72,10 @@ func timeOrZero(t *time.Time) time.Time {
 }
 
 func (p *Pool) IsAvailableFor(accountID string, drv driver.SchedulerDriver, model string) bool {
+	return p.IsAvailableForSurface(accountID, drv, model, domain.SurfaceNative)
+}
+
+func (p *Pool) IsAvailableForSurface(accountID string, drv driver.SchedulerDriver, model string, surface domain.Surface) bool {
 	if err := p.refreshState(context.Background()); err != nil {
 		slog.Warn("pool refresh failed", "op", "is_available_for", "error", err)
 	}
@@ -49,10 +85,17 @@ func (p *Pool) IsAvailableFor(accountID string, drv driver.SchedulerDriver, mode
 	if !ok {
 		return false
 	}
+	if !p.allowedOnSurfaceLocked(acct, surface) {
+		return false
+	}
 	return p.isAvailable(acct, drv, model, time.Now())
 }
 
 func (p *Pool) Pick(drv driver.SchedulerDriver, exclusions []Exclusion, model string, boundAccountID string) (*domain.Account, error) {
+	return p.PickForSurface(drv, exclusions, model, boundAccountID, domain.SurfaceNative)
+}
+
+func (p *Pool) PickForSurface(drv driver.SchedulerDriver, exclusions []Exclusion, model string, boundAccountID string, surface domain.Surface) (*domain.Account, error) {
 	if err := p.refreshState(context.Background()); err != nil {
 		return nil, fmt.Errorf("refresh pool state: %w", err)
 	}
@@ -82,7 +125,7 @@ func (p *Pool) Pick(drv driver.SchedulerDriver, exclusions []Exclusion, model st
 				return nil, fmt.Errorf("bound bucket %s excluded", p.bucketKeyLocked(acct))
 			}
 		}
-		if ok && p.isAvailable(acct, drv, model, now) {
+		if ok && p.allowedOnSurfaceLocked(acct, surface) && p.isAvailable(acct, drv, model, now) {
 			return p.projectAccountLocked(acct), nil
 		}
 		if ok {
@@ -105,6 +148,9 @@ func (p *Pool) Pick(drv driver.SchedulerDriver, exclusions []Exclusion, model st
 		}
 		bucketKey := p.bucketKeyLocked(acct)
 		if _, excluded := excludedBuckets[bucketKey]; excluded {
+			continue
+		}
+		if !p.allowedOnSurfaceLocked(acct, surface) {
 			continue
 		}
 		if !p.isAvailable(acct, drv, model, now) {
