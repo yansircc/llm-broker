@@ -22,6 +22,32 @@ Run `scripts/deploy.sh` from the repo root (or any worktree). The script handles
 bash .claude/skills/deploy/scripts/deploy.sh
 ```
 
+`deploy.sh` now supports strategy selection:
+
+- `DEPLOY_STRATEGY=auto` (default) — if the remote has blue-green layout, use blue-green deploy; otherwise use legacy single-instance deploy
+- `DEPLOY_STRATEGY=legacy` — force the old stop-replace-restart path
+- `DEPLOY_STRATEGY=bluegreen` — force blue-green slot deploy
+
+### Blue-green bootstrap
+
+Bootstrap a host into blue-green mode once:
+
+```bash
+bash .claude/skills/deploy/scripts/bluegreen_setup.sh
+```
+
+If the host is already blue-green enabled, the script refuses to re-run unless forced:
+
+```bash
+FORCE_BOOTSTRAP=1 bash .claude/skills/deploy/scripts/bluegreen_setup.sh
+```
+
+After bootstrap, regular deploys can keep using:
+
+```bash
+bash .claude/skills/deploy/scripts/deploy.sh
+```
+
 ### Rollback
 
 Manually rollback to the most recent snapshot:
@@ -53,6 +79,7 @@ SKIP_FRONTEND=1 bash .claude/skills/deploy/scripts/deploy.sh
 ### Failure handling
 
 - Service fails after deploy — script auto-restores the snapshot it just took
+- Blue-green bootstrap fails — script auto-restores the snapshot it just took
 - Manual rollback — use `restore.sh` or the `rollback` shortcut
 - No snapshot exists — first deploy can only fail forward; nothing remote is deleted before upload succeeds
 - npm/go/scp fails — exits before touching the remote runtime
