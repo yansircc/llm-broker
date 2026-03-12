@@ -301,6 +301,9 @@ show_recent_restart_events() {
     if [[ "$#" -eq 0 ]]; then
         return 0
     fi
+    if [[ "${DEPLOY_VERBOSE:-0}" != "1" ]]; then
+        return 0
+    fi
 
     ssh "$REMOTE" env UNITS="$*" bash -s <<'EOF' || true
 set -euo pipefail

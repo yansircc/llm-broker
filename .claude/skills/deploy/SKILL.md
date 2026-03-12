@@ -18,6 +18,8 @@ Run `scripts/deploy.sh` from the repo root (or any worktree). The script handles
 6. Verify service health — if restart fails, auto-restore the snapshot
 7. Smoke test HTTP endpoints — `/health`, admin API, frontend pages
 
+Before starting any deploy, tell the human the rollback command first so they can recover immediately if the release looks wrong. At minimum print `bash .claude/skills/deploy/scripts/restore.sh latest`, and after the snapshot is created, surface the exact snapshot-specific rollback command emitted by the script.
+
 ```bash
 bash .claude/skills/deploy/scripts/deploy.sh
 ```
