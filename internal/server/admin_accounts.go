@@ -194,6 +194,11 @@ func (s *Server) handleUpdateAccountPriority(w http.ResponseWriter, r *http.Requ
 
 func (s *Server) handleBindAccountCell(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
+	acct := s.pool.Get(id)
+	if acct == nil {
+		writeAdminError(w, http.StatusNotFound, "not_found", "account not found")
+		return
+	}
 	var req struct {
 		CellID string `json:"cell_id"`
 	}
@@ -201,18 +206,64 @@ func (s *Server) handleBindAccountCell(w http.ResponseWriter, r *http.Request) {
 		writeAdminError(w, http.StatusBadRequest, "invalid_request", "invalid JSON body")
 		return
 	}
-	if req.CellID != "" && s.pool.GetCell(req.CellID) == nil {
-		writeAdminError(w, http.StatusBadRequest, "invalid_request", "cell not found")
-		return
+	req.CellID = strings.TrimSpace(req.CellID)
+	if req.CellID != "" {
+		cell := s.pool.GetCell(req.CellID)
+		if cell == nil {
+			writeAdminError(w, http.StatusBadRequest, "invalid_request", "cell not found")
+			return
+		}
+		if req.CellID != acct.CellID {
+			if reason := accountCellBindError(cell, time.Now().UTC()); reason != "" {
+				writeAdminError(w, http.StatusBadRequest, "invalid_request", reason)
+				return
+			}
+			if accountOwnsCell(s.pool.List(), acct.ID, req.CellID) {
+				writeAdminError(w, http.StatusBadRequest, "invalid_request", "cell is already bound to another account")
+				return
+			}
+		}
 	}
 	if err := s.pool.Update(id, func(a *domain.Account) {
-		a.CellID = strings.TrimSpace(req.CellID)
+		a.CellID = req.CellID
 	}); err != nil {
 		writeAdminError(w, http.StatusNotFound, "not_found", "account not found")
 		return
 	}
 	slog.Info("account cell updated", "id", id, "cellId", req.CellID)
 	writeJSON(w, http.StatusOK, map[string]string{"id": id, "cell_id": req.CellID})
+}
+
+func accountCellBindError(cell *domain.EgressCell, now time.Time) string {
+	if cell == nil {
+		return "cell not found"
+	}
+	status := cell.Status
+	if status == "" {
+		status = domain.EgressCellActive
+	}
+	if status != domain.EgressCellActive {
+		return "cell is not active"
+	}
+	if cell.CooldownUntil != nil && now.Before(*cell.CooldownUntil) {
+		return "cell is cooling down"
+	}
+	if cell.Proxy == nil || strings.TrimSpace(cell.Proxy.Host) == "" || cell.Proxy.Port <= 0 {
+		return "cell has no usable proxy"
+	}
+	return ""
+}
+
+func accountOwnsCell(accounts []*domain.Account, accountID, cellID string) bool {
+	for _, acct := range accounts {
+		if acct == nil || acct.ID == accountID {
+			continue
+		}
+		if acct.CellID == cellID {
+			return true
+		}
+	}
+	return false
 }
 
 func (s *Server) handleRefreshAccount(w http.ResponseWriter, r *http.Request) {

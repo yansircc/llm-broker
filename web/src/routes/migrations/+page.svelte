@@ -30,11 +30,12 @@
 			]);
 			accounts = accountList;
 			cells = cellList;
-			if (!selectedAccountID) {
-				selectedAccountID = accountList.find((acct) => !acct.cell_id)?.id ?? '';
+			const legacyAccounts = accountList.filter((acct) => !acct.cell_id);
+			if (!legacyAccounts.some((acct) => acct.id === selectedAccountID)) {
+				selectedAccountID = legacyAccounts[0]?.id ?? '';
 			}
-			if (!selectedCellID) {
-				selectedCellID = cellList.find((cell) => cell.status === 'active')?.id ?? '';
+			if (!cellList.some((cell) => cell.id === selectedCellID && cellAvailable(cell))) {
+				selectedCellID = cellList.find(cellAvailable)?.id ?? '';
 			}
 			lastRefresh = new Date().toLocaleTimeString('en-GB', { hour12: false });
 		} catch (e: any) {
@@ -49,6 +50,34 @@
 
 	function cooldownActive(cell: EgressCellView): boolean {
 		return !!cell.cooldown_until && new Date(cell.cooldown_until).getTime() > Date.now();
+	}
+
+	function cellSelectable(cell: EgressCellView): boolean {
+		return cell.status === 'active' && !cooldownActive(cell) && !!cell.proxy?.host && !!cell.proxy?.port;
+	}
+
+	function cellAccounts(cell: EgressCellView | null | undefined) {
+		return cell?.accounts ?? [];
+	}
+
+	function cellAvailable(cell: EgressCellView): boolean {
+		return cellSelectable(cell) && cellAccounts(cell).length === 0;
+	}
+
+	function availableCells(): EgressCellView[] {
+		return cells.filter(cellAvailable);
+	}
+
+	function optionLabel(cell: EgressCellView): string {
+		const parts = [cell.name || cell.id];
+		const cellRegion = region(cell);
+		if (cellRegion !== '-') parts.push(cellRegion);
+		if (cooldownActive(cell)) {
+			parts.push('cooling');
+		} else if (cell.status !== 'active') {
+			parts.push(cell.status);
+		}
+		return parts.join(' / ');
 	}
 
 	function selectedAccount(): AccountListItem | undefined {
@@ -118,8 +147,8 @@
 		</select>
 		<select bind:value={selectedCellID} style="margin-right:8px;max-width:240px;">
 			<option value="">select cell</option>
-			{#each cells as cell (cell.id)}
-				<option value={cell.id}>{cell.name || cell.id}</option>
+			{#each availableCells() as cell (cell.id)}
+				<option value={cell.id}>{optionLabel(cell)}</option>
 			{/each}
 		</select>
 		<button class="link" onclick={bindAccount} disabled={binding || !selectedAccountID || !selectedCellID}>{binding ? '[binding...]' : '[bind account]'}</button>
@@ -138,15 +167,15 @@
 			<dd>{selectedCell()?.name ?? selectedCellID ?? '-'}</dd>
 
 			<dt>target region</dt>
-			<dd>{selectedCell() ? region(selectedCell()!) : '-'}</dd>
+			<dd>{selectedCell() ? region(selectedCell()) : '-'}</dd>
 
 			<dt>target status</dt>
 			<dd>
 				{#if selectedCell()}
-					{#if cooldownActive(selectedCell()!)}
+					{#if cooldownActive(selectedCell())}
 						<span class="o">cooling</span>
 					{:else}
-						<span class={selectedCell()!.status === 'active' ? 'g' : selectedCell()!.status === 'error' ? 'r' : 'muted'}>{selectedCell()!.status}</span>
+						<span class={selectedCell()?.status === 'active' ? 'g' : selectedCell()?.status === 'error' ? 'r' : 'muted'}>{selectedCell()?.status}</span>
 					{/if}
 				{:else}
 					<span class="muted">-</span>
@@ -220,7 +249,7 @@
 					<tr>
 						<td><a href="{base}/cells/{cell.id}">{cell.name || cell.id}</a></td>
 						<td>{region(cell)}</td>
-						<td class="num">{cell.accounts.length}</td>
+						<td class="num">{cellAccounts(cell).length}</td>
 						<td>
 							{#if cooldownActive(cell)}
 								<span class="o">cooling</span>

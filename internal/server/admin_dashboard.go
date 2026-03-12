@@ -46,6 +46,7 @@ func (s *Server) dashboardAccounts() []DashboardAccount {
 			Priority:      proj.effectivePriority,
 			CooldownUntil: acct.CooldownUntil,
 			LastUsedAt:    acct.LastUsedAt,
+			CellID:        acct.CellID,
 			Windows:       proj.windows,
 		})
 	}

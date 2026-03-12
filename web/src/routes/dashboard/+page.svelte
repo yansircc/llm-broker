@@ -38,13 +38,21 @@
 		return `${cell.proxy.type}://${cell.proxy.host}:${cell.proxy.port}`;
 	}
 
+	function cellAccounts(cell: EgressCellView) {
+		return cell.accounts ?? [];
+	}
+
+	function activeCooldownUntil(cell: EgressCellView): string | null {
+		return cell.cooldown_until && new Date(cell.cooldown_until).getTime() > Date.now() ? cell.cooldown_until : null;
+	}
+
 	function cellStatusLabel(cell: EgressCellView): string {
-		if (cell.cooldown_until && new Date(cell.cooldown_until).getTime() > Date.now()) return 'cooling';
+		if (activeCooldownUntil(cell)) return 'cooling';
 		return cell.status || '-';
 	}
 
 	function cellStatusClass(cell: EgressCellView): string {
-		if (cell.cooldown_until && new Date(cell.cooldown_until).getTime() > Date.now()) return 'tag tag-overloaded';
+		if (activeCooldownUntil(cell)) return 'tag tag-overloaded';
 		switch (cell.status) {
 			case 'active': return 'tag tag-active';
 			case 'error': return 'tag tag-error';
@@ -66,7 +74,7 @@
 		<span>cells {cells.length}</span>
 		<span>accounts {data.accounts.length}</span>
 		<span>legacy direct {data.accounts.filter((acct) => !acct.cell_id).length}</span>
-		<span>cooling cells {cells.filter((cell) => cell.cooldown_until && new Date(cell.cooldown_until).getTime() > Date.now()).length}</span>
+		<span>cooling cells {cells.filter((cell) => activeCooldownUntil(cell)).length}</span>
 		<span><a href="{base}/migrations">migration</a></span>
 	</div>
 
@@ -89,14 +97,14 @@
 			<tbody>
 				{#each cells as cell (cell.id)}
 					<tr>
-						<td><a href="{base}/cells/{cell.id}">{cell.name || cell.id}</a><br><span class="muted">{cell.id}</span></td>
+						<td><a href="{base}/cells/{cell.id}">{cell.name || cell.id}</a></td>
 						<td>{cellRegion(cell)}</td>
 						<td>{cellProxy(cell)}</td>
-						<td class="num">{cell.accounts.length}</td>
+						<td class="num">{cellAccounts(cell).length}</td>
 						<td><span class={cellStatusClass(cell)}>{cellStatusLabel(cell)}</span></td>
 						<td>
-							{#if cell.cooldown_until}
-								{fmtDate(cell.cooldown_until)}
+							{#if activeCooldownUntil(cell)}
+								{fmtDate(activeCooldownUntil(cell)!)}
 							{:else}
 								<span class="muted">-</span>
 							{/if}

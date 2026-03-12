@@ -53,6 +53,7 @@ type DashboardAccount struct {
 	Priority      int                         `json:"priority"`
 	CooldownUntil *time.Time                  `json:"cooldown_until,omitempty"`
 	LastUsedAt    *time.Time                  `json:"last_used_at,omitempty"`
+	CellID        string                      `json:"cell_id,omitempty"`
 	Windows       []UtilizationWindowResponse `json:"windows"`
 }
 
@@ -134,7 +135,7 @@ type EgressCellResponse struct {
 	StateJSON     string                 `json:"state_json,omitempty"`
 	CreatedAt     time.Time              `json:"created_at"`
 	UpdatedAt     time.Time              `json:"updated_at"`
-	Accounts      []EgressCellAccountRef `json:"accounts,omitempty"`
+	Accounts      []EgressCellAccountRef `json:"accounts"`
 }
 
 type EgressCellAccountRef struct {

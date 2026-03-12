@@ -132,6 +132,41 @@ func TestDashboard_EmptyData(t *testing.T) {
 	}
 }
 
+func TestDashboard_AccountsIncludeCellID(t *testing.T) {
+	srv := newTestServer(t)
+
+	if err := srv.store.SaveAccount(context.Background(), &domain.Account{
+		ID:       "acct-1",
+		Email:    "acct-1@example.com",
+		Provider: domain.ProviderClaude,
+		Status:   domain.StatusActive,
+		CellID:   "cell-fr-linode-01",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	srv.pool, _ = pool.New(srv.store, srv.bus)
+
+	w := httptest.NewRecorder()
+	srv.handleDashboard(w, adminRequest("GET", "/admin/dashboard"))
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status %d, body: %s", w.Code, w.Body.String())
+	}
+
+	var result struct {
+		Accounts []map[string]any `json:"accounts"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &result); err != nil {
+		t.Fatalf("json.Unmarshal: %v", err)
+	}
+	if len(result.Accounts) != 1 {
+		t.Fatalf("len(accounts) = %d, want 1", len(result.Accounts))
+	}
+	if got := result.Accounts[0]["cell_id"]; got != "cell-fr-linode-01" {
+		t.Fatalf("cell_id = %#v, want %q", got, "cell-fr-linode-01")
+	}
+}
+
 // ---------------------------------------------------------------------------
 // Account detail contract tests
 // ---------------------------------------------------------------------------
@@ -233,6 +268,168 @@ func TestClearEgressCellCooldown_NotFound(t *testing.T) {
 
 	if w.Code != http.StatusNotFound {
 		t.Fatalf("status %d, want %d, body: %s", w.Code, http.StatusNotFound, w.Body.String())
+	}
+}
+
+func TestListEgressCells_EmptyAccountsArray(t *testing.T) {
+	srv := newTestServer(t)
+
+	if err := srv.store.SaveEgressCell(context.Background(), &domain.EgressCell{
+		ID:        "cell-uk-linode-02",
+		Name:      "UK Linode 02(local)",
+		Status:    domain.EgressCellActive,
+		Proxy:     &domain.ProxyConfig{Type: "socks5", Host: "127.0.0.1", Port: 11082},
+		CreatedAt: time.Now().UTC(),
+		UpdatedAt: time.Now().UTC(),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	srv.pool, _ = pool.New(srv.store, srv.bus)
+
+	w := httptest.NewRecorder()
+	srv.handleListEgressCells(w, adminRequest("GET", "/admin/egress/cells"))
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status %d, body: %s", w.Code, w.Body.String())
+	}
+
+	var result []map[string]any
+	if err := json.Unmarshal(w.Body.Bytes(), &result); err != nil {
+		t.Fatalf("json.Unmarshal: %v", err)
+	}
+	if len(result) != 1 {
+		t.Fatalf("len(result) = %d, want 1", len(result))
+	}
+	accounts, ok := result[0]["accounts"].([]any)
+	if !ok {
+		t.Fatalf("accounts is %T, want []", result[0]["accounts"])
+	}
+	if len(accounts) != 0 {
+		t.Fatalf("len(accounts) = %d, want 0", len(accounts))
+	}
+}
+
+func TestBindAccountCell_RejectsCoolingCell(t *testing.T) {
+	srv := newTestServer(t)
+
+	until := time.Now().UTC().Add(10 * time.Minute)
+	if err := srv.store.SaveAccount(context.Background(), &domain.Account{
+		ID:       "acct-1",
+		Email:    "acct-1@example.com",
+		Provider: domain.ProviderClaude,
+		Status:   domain.StatusActive,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := srv.store.SaveEgressCell(context.Background(), &domain.EgressCell{
+		ID:            "cell-fr-linode-01",
+		Name:          "FR Linode 01",
+		Status:        domain.EgressCellActive,
+		CooldownUntil: &until,
+		Proxy:         &domain.ProxyConfig{Type: "socks5", Host: "127.0.0.1", Port: 1081},
+		CreatedAt:     time.Now().UTC(),
+		UpdatedAt:     time.Now().UTC(),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	srv.pool, _ = pool.New(srv.store, srv.bus)
+
+	w := httptest.NewRecorder()
+	r := httptest.NewRequest(http.MethodPost, "/admin/accounts/acct-1/cell", strings.NewReader(`{"cell_id":"cell-fr-linode-01"}`))
+	r = r.WithContext(adminRequest(http.MethodPost, "/admin/accounts/acct-1/cell").Context())
+	r.SetPathValue("id", "acct-1")
+	srv.handleBindAccountCell(w, r)
+
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("status %d, want %d, body: %s", w.Code, http.StatusBadRequest, w.Body.String())
+	}
+	if !strings.Contains(w.Body.String(), "cooling down") {
+		t.Fatalf("body %q does not mention cooling down", w.Body.String())
+	}
+}
+
+func TestBindAccountCell_AllowsActiveCell(t *testing.T) {
+	srv := newTestServer(t)
+
+	if err := srv.store.SaveAccount(context.Background(), &domain.Account{
+		ID:       "acct-2",
+		Email:    "acct-2@example.com",
+		Provider: domain.ProviderClaude,
+		Status:   domain.StatusActive,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := srv.store.SaveEgressCell(context.Background(), &domain.EgressCell{
+		ID:        "cell-fr-linode-02",
+		Name:      "FR Linode 02",
+		Status:    domain.EgressCellActive,
+		Proxy:     &domain.ProxyConfig{Type: "socks5", Host: "127.0.0.1", Port: 1082},
+		CreatedAt: time.Now().UTC(),
+		UpdatedAt: time.Now().UTC(),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	srv.pool, _ = pool.New(srv.store, srv.bus)
+
+	w := httptest.NewRecorder()
+	r := httptest.NewRequest(http.MethodPost, "/admin/accounts/acct-2/cell", strings.NewReader(`{"cell_id":"cell-fr-linode-02"}`))
+	r = r.WithContext(adminRequest(http.MethodPost, "/admin/accounts/acct-2/cell").Context())
+	r.SetPathValue("id", "acct-2")
+	srv.handleBindAccountCell(w, r)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status %d, want %d, body: %s", w.Code, http.StatusOK, w.Body.String())
+	}
+
+	saved := srv.pool.Get("acct-2")
+	if saved == nil || saved.CellID != "cell-fr-linode-02" {
+		t.Fatalf("account cell_id = %q, want cell-fr-linode-02", saved.CellID)
+	}
+}
+
+func TestBindAccountCell_RejectsOccupiedCell(t *testing.T) {
+	srv := newTestServer(t)
+
+	if err := srv.store.SaveAccount(context.Background(), &domain.Account{
+		ID:       "acct-owner",
+		Email:    "owner@example.com",
+		Provider: domain.ProviderClaude,
+		Status:   domain.StatusActive,
+		CellID:   "cell-fr-linode-02",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := srv.store.SaveAccount(context.Background(), &domain.Account{
+		ID:       "acct-other",
+		Email:    "other@example.com",
+		Provider: domain.ProviderClaude,
+		Status:   domain.StatusActive,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := srv.store.SaveEgressCell(context.Background(), &domain.EgressCell{
+		ID:        "cell-fr-linode-02",
+		Name:      "FR Linode 02",
+		Status:    domain.EgressCellActive,
+		Proxy:     &domain.ProxyConfig{Type: "socks5", Host: "127.0.0.1", Port: 1082},
+		CreatedAt: time.Now().UTC(),
+		UpdatedAt: time.Now().UTC(),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	srv.pool, _ = pool.New(srv.store, srv.bus)
+
+	w := httptest.NewRecorder()
+	r := httptest.NewRequest(http.MethodPost, "/admin/accounts/acct-other/cell", strings.NewReader(`{"cell_id":"cell-fr-linode-02"}`))
+	r = r.WithContext(adminRequest(http.MethodPost, "/admin/accounts/acct-other/cell").Context())
+	r.SetPathValue("id", "acct-other")
+	srv.handleBindAccountCell(w, r)
+
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("status %d, want %d, body: %s", w.Code, http.StatusBadRequest, w.Body.String())
+	}
+	if !strings.Contains(w.Body.String(), "already bound") {
+		t.Fatalf("body %q does not mention occupied cell", w.Body.String())
 	}
 }
 

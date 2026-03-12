@@ -32,6 +32,12 @@ export async function api<T = unknown>(path: string, opts: RequestInit = {}): Pr
 		}
 
 		if (!res.ok) {
+			const contentType = res.headers.get('content-type');
+			if (contentType?.includes('application/json')) {
+				const payload = await res.json().catch(() => null);
+				const message = payload?.error?.message || payload?.message;
+				throw new ApiError(res.status, message || res.statusText);
+			}
 			const text = await res.text();
 			throw new ApiError(res.status, text || res.statusText);
 		}

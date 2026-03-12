@@ -44,6 +44,14 @@
 		return !!item.cooldown_until && new Date(item.cooldown_until).getTime() > Date.now();
 	}
 
+	function activeCooldownUntil(item: EgressCellView): string | null {
+		return cooldownActive(item) ? item.cooldown_until ?? null : null;
+	}
+
+	function cellAccounts(item: EgressCellView): NonNullable<EgressCellView['accounts']> {
+		return item.accounts ?? [];
+	}
+
 	async function clearCooldown() {
 		if (!cell) return;
 		clearing = true;
@@ -96,8 +104,8 @@
 
 		<dt>cooldown until</dt>
 		<dd>
-			{#if cell.cooldown_until}
-				{fmtDate(cell.cooldown_until)}
+			{#if activeCooldownUntil(cell)}
+				{fmtDate(activeCooldownUntil(cell)!)}
 			{:else}
 				<span class="muted">-</span>
 			{/if}
@@ -120,7 +128,7 @@
 	</dl>
 
 	<h2>bound accounts</h2>
-	{#if cell.accounts.length === 0}
+	{#if cellAccounts(cell).length === 0}
 		<p class="muted">no accounts bound</p>
 	{:else}
 		<table>
@@ -132,7 +140,7 @@
 				</tr>
 			</thead>
 			<tbody>
-				{#each cell.accounts as account (account.id)}
+				{#each cellAccounts(cell) as account (account.id)}
 					<tr>
 						<td><a href="{base}/accounts/{account.id}">{account.email}</a></td>
 						<td>{account.provider}</td>

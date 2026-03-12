@@ -103,6 +103,7 @@ func (s *Server) handleUpsertEgressCell(w http.ResponseWriter, r *http.Request) 
 		StateJSON:     saved.StateJSON,
 		CreatedAt:     saved.CreatedAt,
 		UpdatedAt:     saved.UpdatedAt,
+		Accounts:      []EgressCellAccountRef{},
 	})
 }
 
@@ -134,5 +135,6 @@ func (s *Server) handleClearEgressCellCooldown(w http.ResponseWriter, r *http.Re
 		StateJSON:     cell.StateJSON,
 		CreatedAt:     cell.CreatedAt,
 		UpdatedAt:     cell.UpdatedAt,
+		Accounts:      []EgressCellAccountRef{},
 	})
 }

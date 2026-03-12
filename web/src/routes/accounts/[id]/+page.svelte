@@ -3,7 +3,7 @@
 	import { goto } from '$app/navigation';
 	import { base } from '$app/paths';
 	import { api } from '$lib/api';
-	import type { EgressCellSummary } from '$lib/admin-types';
+	import type { EgressCellSummary, EgressCellView } from '$lib/admin-types';
 	import { timeAgo, fmtDate, dotClass, remainClass, remainTime } from '$lib/format';
 	import Countdown from '$lib/components/Countdown.svelte';
 	import PriorityEditor from '$lib/components/PriorityEditor.svelte';
@@ -34,19 +34,31 @@
 	}
 
 	let acct = $state<AccountDetail | null>(null);
+	let cells = $state<EgressCellView[]>([]);
 	let error = $state('');
 	let loading = $state(true);
 	let testResult = $state<{ ok: boolean; latency_ms: number; error?: string; time?: string } | null>(null);
 	let testing = $state(false);
 	let actionError = $state('');
+	let selectedCellID = $state('');
+	let savingCell = $state(false);
+	let cellResult = $state('');
 
 	$effect(() => {
 		loadAccount();
 	});
 
 	async function loadAccount() {
+		loading = true;
+		error = '';
 		try {
-			acct = await api<AccountDetail>('/accounts/' + $page.params.id);
+			const [accountData, cellList] = await Promise.all([
+				api<AccountDetail>('/accounts/' + $page.params.id),
+				api<EgressCellView[]>('/egress/cells')
+			]);
+			acct = accountData;
+			cells = cellList;
+			selectedCellID = accountData.cell_id ?? '';
 		} catch (e: any) {
 			error = e.message;
 		} finally {
@@ -122,6 +134,75 @@
 		acct.priority = priority;
 	}
 
+	function cooldownActive(cell: EgressCellSummary | EgressCellView | null | undefined): boolean {
+		return !!cell?.cooldown_until && new Date(cell.cooldown_until).getTime() > Date.now();
+	}
+
+	function activeCooldownUntil(cell: EgressCellSummary | EgressCellView | null | undefined): string | null {
+		return cooldownActive(cell) ? cell?.cooldown_until ?? null : null;
+	}
+
+	function cellSelectable(cell: EgressCellView): boolean {
+		return cell.status === 'active' && !cooldownActive(cell) && !!cell.proxy?.host && !!cell.proxy?.port;
+	}
+
+	function cellAccounts(cell: EgressCellView | null | undefined) {
+		return cell?.accounts ?? [];
+	}
+
+	function cellAvailableForAccount(cell: EgressCellView): boolean {
+		if (cell.id === acct?.cell_id) return true;
+		return cellSelectable(cell) && cellAccounts(cell).length === 0;
+	}
+
+	function bindableCells(): EgressCellView[] {
+		return cells.filter(cellAvailableForAccount);
+	}
+
+	function selectedCell(): EgressCellView | undefined {
+		return cells.find((cell) => cell.id === selectedCellID);
+	}
+
+	function region(cell: EgressCellSummary | EgressCellView | null | undefined): string {
+		const labels = cell?.labels ?? {};
+		return [labels.country, labels.city].filter(Boolean).join(' / ') || labels.site || '-';
+	}
+
+	function bindingChanged(): boolean {
+		return (acct?.cell_id ?? '') !== selectedCellID;
+	}
+
+	function optionLabel(cell: EgressCellView): string {
+		const parts = [cell.name || cell.id];
+		const cellRegion = region(cell);
+		if (cellRegion !== '-') parts.push(cellRegion);
+		if (cooldownActive(cell)) {
+			parts.push('cooling');
+		} else if (cell.status !== 'active') {
+			parts.push(cell.status);
+		}
+		return parts.join(' / ');
+	}
+
+	async function saveCellBinding() {
+		if (!acct) return;
+		savingCell = true;
+		actionError = '';
+		cellResult = '';
+		try {
+			await api(`/accounts/${acct.id}/cell`, {
+				method: 'POST',
+				body: JSON.stringify({ cell_id: selectedCellID })
+			});
+			cellResult = selectedCellID ? `bound ${acct.email} -> ${selectedCellID}` : `unbound ${acct.email}`;
+			await loadAccount();
+		} catch (e: any) {
+			actionError = e.message;
+		} finally {
+			savingCell = false;
+		}
+	}
+
 	let editingEmail = $state(false);
 	let emailInput = $state('');
 	let savingEmail = $state(false);
@@ -191,7 +272,21 @@
 		<dt>email</dt>
 		<dd>
 			{#if editingEmail}
-				<input type="text" bind:value={emailInput} onkeydown={(e: KeyboardEvent) => { if (e.key === 'Enter') saveEmail(); if (e.key === 'Escape') { editingEmail = false; emailError = ''; } }} maxlength={100} style="width:240px;font:13px monospace;border:1px solid #ccc;padding:0 4px;">
+				<input
+					id="account-email"
+					name="account-email"
+					type="text"
+					bind:value={emailInput}
+					autocomplete="off"
+					autocapitalize="off"
+					spellcheck="false"
+					data-1p-ignore="true"
+					data-lpignore="true"
+					data-bwignore="true"
+					onkeydown={(e: KeyboardEvent) => { if (e.key === 'Enter') saveEmail(); if (e.key === 'Escape') { editingEmail = false; emailError = ''; } }}
+					maxlength={100}
+					style="width:240px;font:13px monospace;border:1px solid #ccc;padding:0 4px;"
+				>
 				<button class="link" style="font-size:12px" onclick={saveEmail} disabled={savingEmail}>{savingEmail ? 'saving...' : '[save]'}</button>
 				<button class="link" style="font-size:12px;margin-left:4px" onclick={() => { editingEmail = false; emailError = ''; }}>[cancel]</button>
 			{:else}
@@ -272,6 +367,19 @@
 
 	<h2>egress</h2>
 	<dl>
+		<dt>bind</dt>
+		<dd>
+			<select bind:value={selectedCellID} style="margin-right:8px;max-width:320px;">
+				<option value="">legacy direct</option>
+				{#each bindableCells() as cell (cell.id)}
+					<option value={cell.id}>{optionLabel(cell)}</option>
+				{/each}
+			</select>
+			<button class="link" onclick={saveCellBinding} disabled={savingCell || !bindingChanged()}>
+				{savingCell ? '[saving...]' : selectedCellID ? '[bind cell]' : '[unbind cell]'}
+			</button>
+		</dd>
+
 		<dt>cell</dt>
 		<dd>
 			{#if acct.cell_id}
@@ -281,10 +389,45 @@
 			{/if}
 		</dd>
 
+		<dt>target</dt>
+		<dd>
+			{#if selectedCell()}
+				{selectedCell()?.name || selectedCell()?.id}
+			{:else}
+				<span class="muted">legacy direct</span>
+			{/if}
+		</dd>
+
+		<dt>target region</dt>
+		<dd>
+			{#if selectedCell()}
+				{region(selectedCell())}
+			{:else}
+				<span class="muted">-</span>
+			{/if}
+		</dd>
+
+		<dt>target status</dt>
+		<dd>
+			{#if selectedCell()}
+				{#if cooldownActive(selectedCell())}
+					<span class="o">cooling</span>
+				{:else}
+					<span class={selectedCell()?.status === 'active' ? 'g' : selectedCell()?.status === 'error' ? 'r' : 'muted'}>{selectedCell()?.status}</span>
+				{/if}
+			{:else}
+				<span class="muted">-</span>
+			{/if}
+		</dd>
+
 		<dt>cell status</dt>
 		<dd>
 			{#if acct.cell}
-				<span class={acct.cell.status === 'active' ? 'g' : acct.cell.status === 'error' ? 'r' : 'muted'}>{acct.cell.status}</span>
+				{#if cooldownActive(acct.cell)}
+					<span class="o">cooling</span>
+				{:else}
+					<span class={acct.cell.status === 'active' ? 'g' : acct.cell.status === 'error' ? 'r' : 'muted'}>{acct.cell.status}</span>
+				{/if}
 			{:else}
 				<span class="muted">-</span>
 			{/if}
@@ -292,8 +435,8 @@
 
 		<dt>cell cooldown</dt>
 		<dd>
-			{#if acct.cell?.cooldown_until}
-				<Countdown until={acct.cell.cooldown_until} variant="cooldown" />
+			{#if activeCooldownUntil(acct.cell)}
+				<Countdown until={activeCooldownUntil(acct.cell)!} variant="cooldown" />
 			{:else}
 				<span class="muted">-</span>
 			{/if}
@@ -308,6 +451,10 @@
 			{/if}
 		</dd>
 	</dl>
+
+	{#if cellResult}
+		<div class="bar" style="margin-top:0"><span class="g">{cellResult}</span></div>
+	{/if}
 
 	{#if acct.stainless && Object.keys(acct.stainless).length > 0}
 		<h2>stainless fingerprint</h2>
