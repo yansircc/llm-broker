@@ -11,8 +11,8 @@ func (d *CodexDriver) GenerateAuthURL() (string, OAuthSession, error) {
 	return generateCodexAuthURL()
 }
 
-func (d *CodexDriver) ExchangeCode(ctx context.Context, code, verifier, _ string) (*ExchangeResult, error) {
-	result, err := exchangeCodexCode(ctx, code, verifier)
+func (d *CodexDriver) ExchangeCode(ctx context.Context, client *http.Client, code, verifier, _ string) (*ExchangeResult, error) {
+	result, err := exchangeCodexCode(ctx, client, code, verifier)
 	if err != nil {
 		return nil, err
 	}

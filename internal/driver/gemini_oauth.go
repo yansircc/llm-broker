@@ -52,7 +52,7 @@ func generateGeminiAuthURL(cfg GeminiConfig) (string, OAuthSession, error) {
 	}, nil
 }
 
-func exchangeGeminiCode(ctx context.Context, cfg GeminiConfig, code, verifier string) (*geminiExchangeResult, error) {
+func exchangeGeminiCode(ctx context.Context, client *http.Client, cfg GeminiConfig, code, verifier string) (*geminiExchangeResult, error) {
 	form := url.Values{
 		"grant_type":    {"authorization_code"},
 		"client_id":     {cfg.OAuthClientID},
@@ -68,7 +68,7 @@ func exchangeGeminiCode(ctx context.Context, cfg GeminiConfig, code, verifier st
 	}
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 
-	client := &http.Client{Timeout: 30 * time.Second}
+	client = httpClientOrDefault(client, 30*time.Second)
 	resp, err := client.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("http request: %w", err)

@@ -54,7 +54,7 @@ func (d *refreshStubDriver) InterceptRequest(http.ResponseWriter, map[string]int
 func (d *refreshStubDriver) GenerateAuthURL() (string, driver.OAuthSession, error) {
 	return "", driver.OAuthSession{}, nil
 }
-func (d *refreshStubDriver) ExchangeCode(context.Context, string, string, string) (*driver.ExchangeResult, error) {
+func (d *refreshStubDriver) ExchangeCode(context.Context, *http.Client, string, string, string) (*driver.ExchangeResult, error) {
 	return nil, nil
 }
 func (d *refreshStubDriver) RefreshToken(context.Context, *http.Client, string) (*driver.TokenResponse, error) {

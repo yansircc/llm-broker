@@ -51,7 +51,7 @@ func generateClaudeAuthURL() (string, OAuthSession, error) {
 	}, nil
 }
 
-func exchangeClaudeCode(ctx context.Context, code, verifier, state string) (*TokenResponse, error) {
+func exchangeClaudeCode(ctx context.Context, client *http.Client, code, verifier, state string) (*TokenResponse, error) {
 	body, _ := json.Marshal(map[string]string{
 		"grant_type":    "authorization_code",
 		"client_id":     claudeOAuthClientID,
@@ -71,7 +71,7 @@ func exchangeClaudeCode(ctx context.Context, code, verifier, state string) (*Tok
 	req.Header.Set("Referer", "https://claude.ai/")
 	req.Header.Set("Origin", "https://claude.ai")
 
-	client := &http.Client{Timeout: 30 * time.Second}
+	client = httpClientOrDefault(client, 30*time.Second)
 	resp, err := client.Do(req)
 	if err != nil {
 		return nil, err
@@ -96,8 +96,7 @@ func exchangeClaudeCode(ctx context.Context, code, verifier, state string) (*Tok
 	return &tokenResp, nil
 }
 
-func fetchClaudeOrgWithToken(ctx context.Context, accessToken string) (uuid, email, name string, err error) {
-	client := &http.Client{Timeout: 15 * time.Second}
+func fetchClaudeOrgWithToken(ctx context.Context, client *http.Client, accessToken string) (uuid, email, name string, err error) {
 	req, err := http.NewRequestWithContext(ctx, "GET", claudeAIBaseURL+"/api/organizations", nil)
 	if err != nil {
 		return "", "", "", err
@@ -106,6 +105,7 @@ func fetchClaudeOrgWithToken(ctx context.Context, accessToken string) (uuid, ema
 	req.Header.Set("Accept", "application/json")
 	req.Header.Set("User-Agent", "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36")
 
+	client = httpClientOrDefault(client, 15*time.Second)
 	resp, err := client.Do(req)
 	if err != nil {
 		return "", "", "", err

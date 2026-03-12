@@ -56,7 +56,7 @@ func generateCodexAuthURL() (string, OAuthSession, error) {
 	}, nil
 }
 
-func exchangeCodexCode(ctx context.Context, code, verifier string) (*codexExchangeResult, error) {
+func exchangeCodexCode(ctx context.Context, client *http.Client, code, verifier string) (*codexExchangeResult, error) {
 	form := url.Values{
 		"grant_type":    {"authorization_code"},
 		"client_id":     {codexOAuthClientID},
@@ -71,7 +71,7 @@ func exchangeCodexCode(ctx context.Context, code, verifier string) (*codexExchan
 	}
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 
-	client := &http.Client{Timeout: 30 * time.Second}
+	client = httpClientOrDefault(client, 30*time.Second)
 	resp, err := client.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("http request: %w", err)

@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { base } from '$app/paths';
 	import { api } from '$lib/api';
+	import type { EgressCellView } from '$lib/admin-types';
 	import { addAccountPath, type ProviderOption } from '$lib/providers';
 
 	interface Props {
@@ -11,10 +12,12 @@
 
 	let providers = $state<ProviderOption[]>([]);
 	let provider = $state<ProviderOption | null>(null);
+	let cells = $state<EgressCellView[]>([]);
 	let loadingProvider = $state(true);
 	let providerError = $state('');
 	let generating = $state(false);
 	let exchanging = $state(false);
+	let selectedCellID = $state('');
 	let sessionId = $state('');
 	let authUrl = $state('');
 	let callbackInput = $state('');
@@ -30,10 +33,20 @@
 		loadingProvider = true;
 		providerError = '';
 		provider = null;
+		cells = [];
 		reset();
 		try {
-			providers = await api<ProviderOption[]>('/providers');
+			const [providerOptions, cellList] = await Promise.all([
+				api<ProviderOption[]>('/providers'),
+				api<EgressCellView[]>('/egress/cells')
+			]);
+			providers = providerOptions;
 			provider = providers.find((option) => option.id === id) ?? null;
+			cells = cellList;
+			const available = availableCells(cellList);
+			if (!available.some((cell) => cell.id === selectedCellID)) {
+				selectedCellID = available[0]?.id ?? '';
+			}
 			if (!provider) {
 				providerError = `unknown provider: ${id}`;
 			}
@@ -45,11 +58,17 @@
 	}
 
 	async function generateAuthUrl() {
-		if (!provider) return;
+		if (!provider || !selectedCellID) return;
 		generating = true;
 		genError = '';
 		try {
-			const data = await api<{ session_id: string; auth_url: string }>(`/accounts/generate-auth-url?provider=${provider.id}`, { method: 'POST' });
+			const data = await api<{ session_id: string; auth_url: string }>('/accounts/generate-auth-url', {
+				method: 'POST',
+				body: JSON.stringify({
+					provider: provider.id,
+					cell_id: selectedCellID
+				})
+			});
 			sessionId = data.session_id;
 			authUrl = data.auth_url;
 		} catch (e: any) {
@@ -88,6 +107,47 @@
 		exchangeError = '';
 		result = null;
 	}
+
+	function startOver() {
+		reset();
+		void loadProvider(providerID);
+	}
+
+	function cooldownActive(cell: EgressCellView | null | undefined): boolean {
+		return !!cell?.cooldown_until && new Date(cell.cooldown_until).getTime() > Date.now();
+	}
+
+	function cellSelectable(cell: EgressCellView): boolean {
+		return cell.status === 'active' && !cooldownActive(cell) && !!cell.proxy?.host && !!cell.proxy?.port;
+	}
+
+	function cellAccounts(cell: EgressCellView | null | undefined) {
+		return cell?.accounts ?? [];
+	}
+
+	function cellAvailable(cell: EgressCellView): boolean {
+		return cellSelectable(cell) && cellAccounts(cell).length === 0;
+	}
+
+	function availableCells(source: EgressCellView[] = cells): EgressCellView[] {
+		return source.filter(cellAvailable);
+	}
+
+	function selectedCell(): EgressCellView | undefined {
+		return cells.find((cell) => cell.id === selectedCellID);
+	}
+
+	function region(cell: EgressCellView | null | undefined): string {
+		const labels = cell?.labels ?? {};
+		return [labels.country, labels.city].filter(Boolean).join(' / ') || labels.site || '-';
+	}
+
+	function optionLabel(cell: EgressCellView): string {
+		const parts = [cell.name || cell.id];
+		const cellRegion = region(cell);
+		if (cellRegion !== '-') parts.push(cellRegion);
+		return parts.join(' / ');
+	}
 </script>
 
 <h2>add account</h2>
@@ -110,10 +170,37 @@
 		provider: <b>{provider.label}</b>
 	</div>
 
+	<h2>egress cell {#if selectedCellID}<span class="g">&#10003;</span>{/if}</h2>
+	<div class="bar">
+		<select bind:value={selectedCellID} disabled={generating || exchanging || !!sessionId || !!result}>
+			<option value="">select cell</option>
+			{#each availableCells() as cell (cell.id)}
+				<option value={cell.id}>{optionLabel(cell)}</option>
+			{/each}
+		</select>
+		<button class="link" onclick={() => void loadProvider(providerID)} disabled={loadingProvider || generating || exchanging} style="margin-left:8px">
+			[refresh cells]
+		</button>
+		{#if sessionId || result}
+			<button class="link" onclick={startOver} disabled={generating || exchanging} style="margin-left:8px">
+				[start over]
+			</button>
+		{/if}
+		{#if selectedCell()}
+			<br><br>
+			cell: <b>{selectedCell()?.name}</b><br>
+			region: <b>{region(selectedCell())}</b><br>
+			proxy: <b>{selectedCell()?.proxy?.type}://{selectedCell()?.proxy?.host}:{selectedCell()?.proxy?.port}</b>
+		{:else if availableCells().length === 0}
+			<br><br>
+			<span class="error-msg">no available cells</span>
+		{/if}
+	</div>
+
 	<h2>authorize {#if sessionId}<span class="g">&#10003;</span>{/if}</h2>
 	{#if !sessionId}
 		<p class="hint">generate an OAuth URL, open it in browser, login and authorize.</p>
-		<button class="link" onclick={generateAuthUrl} disabled={generating}>
+		<button class="link" onclick={generateAuthUrl} disabled={generating || !selectedCellID}>
 			{generating ? '[generating...]' : '[generate auth url]'}
 		</button>
 		{#if genError}
@@ -148,6 +235,7 @@
 				<br><br>
 				email: <b>{result.email}</b><br>
 				status: <b class="g">{result.status}</b><br>
+				cell: <b>{selectedCell()?.name ?? selectedCellID}</b><br>
 				<br>
 				<a href="{base}/accounts/{result.id}">view account &rarr;</a>
 			</div>

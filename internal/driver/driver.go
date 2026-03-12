@@ -76,8 +76,9 @@ type OAuthDriver interface {
 	GenerateAuthURL() (string, OAuthSession, error)
 
 	// ExchangeCode exchanges an authorization code for tokens and identity.
+	// Receives a pre-configured *http.Client so the caller can enforce egress routing.
 	// Must return a non-empty Subject or error.
-	ExchangeCode(ctx context.Context, code, verifier, state string) (*ExchangeResult, error)
+	ExchangeCode(ctx context.Context, client *http.Client, code, verifier, state string) (*ExchangeResult, error)
 }
 
 type RefreshDriver interface {

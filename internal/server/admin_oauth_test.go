@@ -18,11 +18,15 @@ import (
 	"github.com/yansircc/llm-broker/internal/pool"
 	"github.com/yansircc/llm-broker/internal/store"
 	"github.com/yansircc/llm-broker/internal/tokens"
+	"github.com/yansircc/llm-broker/internal/transport"
 )
 
 type exchangeStubDriver struct {
-	provider domain.Provider
-	result   *driver.ExchangeResult
+	provider           domain.Provider
+	authURL            string
+	session            driver.OAuthSession
+	result             *driver.ExchangeResult
+	lastExchangeClient *http.Client
 }
 
 func (d *exchangeStubDriver) Provider() domain.Provider { return d.provider }
@@ -68,9 +72,10 @@ func (d *exchangeStubDriver) InterceptRequest(http.ResponseWriter, map[string]in
 	return false
 }
 func (d *exchangeStubDriver) GenerateAuthURL() (string, driver.OAuthSession, error) {
-	return "", driver.OAuthSession{}, nil
+	return d.authURL, d.session, nil
 }
-func (d *exchangeStubDriver) ExchangeCode(context.Context, string, string, string) (*driver.ExchangeResult, error) {
+func (d *exchangeStubDriver) ExchangeCode(_ context.Context, client *http.Client, _, _, _ string) (*driver.ExchangeResult, error) {
+	d.lastExchangeClient = client
 	return d.result, nil
 }
 func (d *exchangeStubDriver) RefreshToken(context.Context, *http.Client, string) (*driver.TokenResponse, error) {
@@ -91,6 +96,221 @@ func (d *exchangeStubDriver) GetUtilization(json.RawMessage) []driver.UtilWindow
 	return nil
 }
 
+func TestHandleGenerateAuthURLStoresSelectedCell(t *testing.T) {
+	ms := store.NewMockStore()
+	bus := events.NewBus(100)
+	p, err := pool.New(ms, bus)
+	if err != nil {
+		t.Fatalf("pool.New() error = %v", err)
+	}
+
+	if err := p.SaveCell(&domain.EgressCell{
+		ID:        "cell-fr-linode-02",
+		Name:      "FR Linode 02",
+		Status:    domain.EgressCellActive,
+		Proxy:     &domain.ProxyConfig{Type: "socks5", Host: "127.0.0.1", Port: 11082},
+		CreatedAt: time.Now().UTC(),
+		UpdatedAt: time.Now().UTC(),
+	}); err != nil {
+		t.Fatalf("SaveCell() error = %v", err)
+	}
+
+	stub := &exchangeStubDriver{
+		provider: domain.ProviderClaude,
+		authURL:  "https://example.com/oauth",
+		session: driver.OAuthSession{
+			CodeVerifier: "verifier-123",
+			State:        "state-123",
+		},
+	}
+
+	srv := &Server{
+		cfg:          &config.Config{},
+		store:        ms,
+		pool:         p,
+		bus:          bus,
+		oauthDrivers: map[domain.Provider]driver.OAuthDriver{domain.ProviderClaude: stub},
+	}
+
+	req := adminRequest("POST", "/admin/accounts/generate-auth-url")
+	req.Body = io.NopCloser(bytes.NewReader([]byte(`{"provider":"claude","cell_id":"cell-fr-linode-02"}`)))
+	w := httptest.NewRecorder()
+
+	srv.handleGenerateAuthURL(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", w.Code, w.Body.String())
+	}
+
+	var resp struct {
+		SessionID string `json:"session_id"`
+		AuthURL   string `json:"auth_url"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("json.Unmarshal() error = %v", err)
+	}
+	if resp.AuthURL != "https://example.com/oauth" {
+		t.Fatalf("auth_url = %q", resp.AuthURL)
+	}
+
+	sessionJSON, ok, err := p.GetDelOAuthSession(context.Background(), resp.SessionID)
+	if err != nil {
+		t.Fatalf("GetDelOAuthSession() error = %v", err)
+	}
+	if !ok {
+		t.Fatal("expected oauth session to be stored")
+	}
+
+	var envelope oauthSessionEnvelope
+	if err := json.Unmarshal([]byte(sessionJSON), &envelope); err != nil {
+		t.Fatalf("json.Unmarshal(session) error = %v", err)
+	}
+	if envelope.Provider != "claude" {
+		t.Fatalf("provider = %q", envelope.Provider)
+	}
+	if envelope.CellID != "cell-fr-linode-02" {
+		t.Fatalf("cell_id = %q", envelope.CellID)
+	}
+	if envelope.CodeVerifier != "verifier-123" || envelope.State != "state-123" {
+		t.Fatalf("oauth session = %#v", envelope.OAuthSession)
+	}
+}
+
+func TestHandleExchangeCodeCreatesAccountBoundToCell(t *testing.T) {
+	ms := store.NewMockStore()
+	bus := events.NewBus(100)
+	p, err := pool.New(ms, bus)
+	if err != nil {
+		t.Fatalf("pool.New() error = %v", err)
+	}
+
+	if err := p.SaveCell(&domain.EgressCell{
+		ID:        "cell-fr-linode-03",
+		Name:      "FR Linode 03",
+		Status:    domain.EgressCellActive,
+		Proxy:     &domain.ProxyConfig{Type: "socks5", Host: "127.0.0.1", Port: 11083},
+		CreatedAt: time.Now().UTC(),
+		UpdatedAt: time.Now().UTC(),
+	}); err != nil {
+		t.Fatalf("SaveCell() error = %v", err)
+	}
+
+	c := crypto.New("test-encryption-key")
+	tm := tokens.NewManager(p, c, nil, time.Minute, 0, nil)
+	tp := transport.NewPool(time.Minute)
+	stub := &exchangeStubDriver{
+		provider: domain.ProviderClaude,
+		result: &driver.ExchangeResult{
+			AccessToken:  "access-token",
+			RefreshToken: "refresh-token",
+			ExpiresIn:    3600,
+			Subject:      "sub-123",
+			Email:        "bound@example.com",
+			Identity:     map[string]string{"sub": "sub-123"},
+		},
+	}
+	p.SetDrivers(map[domain.Provider]driver.SchedulerDriver{
+		domain.ProviderClaude: stub,
+	})
+
+	srv := &Server{
+		cfg:           &config.Config{},
+		store:         ms,
+		pool:          p,
+		tokens:        tm,
+		transportPool: tp,
+		bus:           bus,
+		oauthDrivers:  map[domain.Provider]driver.OAuthDriver{domain.ProviderClaude: stub},
+	}
+
+	if err := p.SetOAuthSession(context.Background(), "session-1", `{"provider":"claude","cell_id":"cell-fr-linode-03","code_verifier":"verifier","state":"state"}`, 10*time.Minute); err != nil {
+		t.Fatalf("SetOAuthSession() error = %v", err)
+	}
+
+	req := adminRequest("POST", "/admin/accounts/exchange-code")
+	req.Body = io.NopCloser(bytes.NewReader([]byte(`{"session_id":"session-1","callback_url":"https://example.com/callback?code=auth-code"}`)))
+	w := httptest.NewRecorder()
+
+	srv.handleExchangeCode(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", w.Code, w.Body.String())
+	}
+
+	var resp exchangeAccountResponse
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("json.Unmarshal() error = %v", err)
+	}
+	acct := p.Get(resp.ID)
+	if acct == nil {
+		t.Fatal("account not found after exchange")
+	}
+	if acct.CellID != "cell-fr-linode-03" {
+		t.Fatalf("CellID = %q", acct.CellID)
+	}
+
+	expectedTransport := tp.ClientForAccount(&domain.Account{
+		CellID: "cell-fr-linode-03",
+		Cell:   p.GetCell("cell-fr-linode-03"),
+	}).Transport
+	if stub.lastExchangeClient == nil {
+		t.Fatal("expected exchange client to be passed to driver")
+	}
+	if stub.lastExchangeClient.Transport != expectedTransport {
+		t.Fatalf("exchange transport = %#v, want %#v", stub.lastExchangeClient.Transport, expectedTransport)
+	}
+}
+
+func TestHandleExchangeCodeRejectsMissingCellIDForNewAccount(t *testing.T) {
+	ms := store.NewMockStore()
+	bus := events.NewBus(100)
+	p, err := pool.New(ms, bus)
+	if err != nil {
+		t.Fatalf("pool.New() error = %v", err)
+	}
+
+	c := crypto.New("test-encryption-key")
+	tm := tokens.NewManager(p, c, nil, time.Minute, 0, nil)
+	tp := transport.NewPool(time.Minute)
+	stub := &exchangeStubDriver{
+		provider: domain.ProviderClaude,
+		result: &driver.ExchangeResult{
+			AccessToken:  "access-token",
+			RefreshToken: "refresh-token",
+			ExpiresIn:    3600,
+			Subject:      "sub-123",
+			Email:        "bound@example.com",
+			Identity:     map[string]string{"sub": "sub-123"},
+		},
+	}
+	p.SetDrivers(map[domain.Provider]driver.SchedulerDriver{
+		domain.ProviderClaude: stub,
+	})
+
+	srv := &Server{
+		cfg:           &config.Config{},
+		store:         ms,
+		pool:          p,
+		tokens:        tm,
+		transportPool: tp,
+		bus:           bus,
+		oauthDrivers:  map[domain.Provider]driver.OAuthDriver{domain.ProviderClaude: stub},
+	}
+
+	req := adminRequest("POST", "/admin/accounts/exchange-code")
+	req.Body = io.NopCloser(bytes.NewReader([]byte(`{"provider":"claude","code":"auth-code","code_verifier":"verifier","state":"state"}`)))
+	w := httptest.NewRecorder()
+
+	srv.handleExchangeCode(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, body = %s", w.Code, w.Body.String())
+	}
+	if !bytes.Contains(w.Body.Bytes(), []byte("cell_id is required")) {
+		t.Fatalf("body = %s", w.Body.String())
+	}
+}
+
 func TestHandleExchangeCodePreservesExistingRefreshTokenOnRebind(t *testing.T) {
 	ms := store.NewMockStore()
 	bus := events.NewBus(100)
@@ -101,6 +321,7 @@ func TestHandleExchangeCodePreservesExistingRefreshTokenOnRebind(t *testing.T) {
 
 	c := crypto.New("test-encryption-key")
 	tm := tokens.NewManager(p, c, nil, time.Minute, 0, nil)
+	tp := transport.NewPool(time.Minute)
 	oldRefreshEnc, err := tm.EncryptToken("old-refresh")
 	if err != nil {
 		t.Fatalf("EncryptToken(old refresh) error = %v", err)
@@ -118,9 +339,20 @@ func TestHandleExchangeCodePreservesExistingRefreshTokenOnRebind(t *testing.T) {
 		Status:          domain.StatusActive,
 		Priority:        50,
 		PriorityMode:    "auto",
+		CellID:          "cell-uk-linode-02",
 		RefreshTokenEnc: oldRefreshEnc,
 		AccessTokenEnc:  oldAccessEnc,
 		CreatedAt:       time.Now().UTC(),
+	}
+	if err := p.SaveCell(&domain.EgressCell{
+		ID:        "cell-uk-linode-02",
+		Name:      "UK Linode 02(local)",
+		Status:    domain.EgressCellActive,
+		Proxy:     &domain.ProxyConfig{Type: "socks5", Host: "127.0.0.1", Port: 11082},
+		CreatedAt: time.Now().UTC(),
+		UpdatedAt: time.Now().UTC(),
+	}); err != nil {
+		t.Fatalf("SaveCell() error = %v", err)
 	}
 	if err := p.Add(existing); err != nil {
 		t.Fatalf("pool.Add() error = %v", err)
@@ -142,15 +374,16 @@ func TestHandleExchangeCodePreservesExistingRefreshTokenOnRebind(t *testing.T) {
 		domain.ProviderGemini: stub,
 	})
 	srv := &Server{
-		cfg:          &config.Config{},
-		store:        ms,
-		pool:         p,
-		tokens:       tm,
-		bus:          bus,
-		oauthDrivers: map[domain.Provider]driver.OAuthDriver{domain.ProviderGemini: stub},
+		cfg:           &config.Config{},
+		store:         ms,
+		pool:          p,
+		tokens:        tm,
+		transportPool: tp,
+		bus:           bus,
+		oauthDrivers:  map[domain.Provider]driver.OAuthDriver{domain.ProviderGemini: stub},
 	}
 
-	body := []byte(`{"provider":"gemini","code":"auth-code","code_verifier":"verifier","state":"state"}`)
+	body := []byte(`{"provider":"gemini","cell_id":"cell-uk-linode-02","code":"auth-code","code_verifier":"verifier","state":"state"}`)
 	req := adminRequest("POST", "/admin/accounts/exchange-code")
 	req.Body = io.NopCloser(bytes.NewReader(body))
 	w := httptest.NewRecorder()

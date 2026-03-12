@@ -1,6 +1,7 @@
 package driver
 
 import (
+	"net/http"
 	"net/url"
 	"strconv"
 	"strings"
@@ -49,4 +50,11 @@ func truncate(s string, maxLen int) string {
 		return s
 	}
 	return s[:maxLen] + "..."
+}
+
+func httpClientOrDefault(client *http.Client, timeout time.Duration) *http.Client {
+	if client != nil {
+		return client
+	}
+	return &http.Client{Timeout: timeout}
 }

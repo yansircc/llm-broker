@@ -21,13 +21,22 @@ func (s *Server) handleListProviders(w http.ResponseWriter, r *http.Request) {
 
 // handleGenerateAuthURL generates a PKCE-secured auth URL for manual browser-based OAuth.
 func (s *Server) handleGenerateAuthURL(w http.ResponseWriter, r *http.Request) {
-	provider := r.URL.Query().Get("provider")
-	if provider == "" {
-		writeAdminError(w, http.StatusBadRequest, "invalid_request", "provider is required")
+	req, err := decodeGenerateAuthURLRequest(r)
+	if err != nil {
+		writeAdminError(w, http.StatusBadRequest, "invalid_request", "invalid JSON body")
 		return
 	}
 
-	drv, ok := s.oauthDriverByID(provider)
+	if req.Provider == "" {
+		writeAdminError(w, http.StatusBadRequest, "invalid_request", "provider is required")
+		return
+	}
+	if req.CellID == "" {
+		writeAdminError(w, http.StatusBadRequest, "invalid_request", "cell_id is required")
+		return
+	}
+
+	drv, ok := s.oauthDriverByID(req.Provider)
 	if !ok {
 		writeAdminError(w, http.StatusBadRequest, "invalid_request", "unknown provider")
 		return
@@ -38,13 +47,18 @@ func (s *Server) handleGenerateAuthURL(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	sessionID, err := s.storeOAuthSession(r.Context(), provider, session)
+	if err := s.validateExchangeCellSelection(nil, req.CellID); err != nil {
+		writeAdminError(w, http.StatusBadRequest, "invalid_request", err.Error())
+		return
+	}
+
+	sessionID, err := s.storeOAuthSession(r.Context(), req.Provider, req.CellID, session)
 	if err != nil {
 		writeAdminError(w, http.StatusInternalServerError, "internal_error", "failed to store oauth session")
 		return
 	}
 
-	slog.Info("oauth auth URL generated", "sessionId", sessionID, "provider", provider)
+	slog.Info("oauth auth URL generated", "sessionId", sessionID, "provider", req.Provider, "cellId", req.CellID)
 	writeJSON(w, http.StatusOK, map[string]string{
 		"session_id": sessionID,
 		"auth_url":   authURL,
@@ -80,6 +94,10 @@ func (s *Server) handleExchangeCode(w http.ResponseWriter, r *http.Request) {
 		writeAdminError(w, http.StatusBadRequest, "invalid_request", "provider is required")
 		return
 	}
+	if req.CellID == "" {
+		writeAdminError(w, http.StatusBadRequest, "invalid_request", "cell_id is required")
+		return
+	}
 
 	drv, ok := s.oauthDriverByID(req.Provider)
 	if !ok {
@@ -91,7 +109,13 @@ func (s *Server) handleExchangeCode(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	result, err := drv.ExchangeCode(r.Context(), req.Code, req.CodeVerifier, req.State)
+	client, err := s.oauthClientForCell(req.CellID)
+	if err != nil {
+		writeAdminError(w, http.StatusBadRequest, "invalid_request", err.Error())
+		return
+	}
+
+	result, err := drv.ExchangeCode(r.Context(), client, req.Code, req.CodeVerifier, req.State)
 	if err != nil {
 		slog.Error("exchange code failed", "provider", req.Provider, "error", err)
 		writeAdminError(w, http.StatusBadGateway, "oauth_error", err.Error())
@@ -102,11 +126,17 @@ func (s *Server) handleExchangeCode(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	resp, err := s.upsertExchangedAccount(drv, result)
+	existing := s.pool.FindBySubject(drv.Provider(), result.Subject)
+	if err := s.validateExchangeCellSelection(existing, req.CellID); err != nil {
+		writeAdminError(w, http.StatusBadRequest, "invalid_request", err.Error())
+		return
+	}
+
+	resp, err := s.upsertExchangedAccount(drv, result, req.CellID)
 	if err != nil {
 		writeAdminError(w, http.StatusInternalServerError, "internal_error", "failed to persist exchanged account")
 		return
 	}
-	slog.Info("account persisted via code exchange", "id", resp.ID, "email", resp.Email, "provider", req.Provider)
+	slog.Info("account persisted via code exchange", "id", resp.ID, "email", resp.Email, "provider", req.Provider, "cellId", req.CellID)
 	writeJSON(w, http.StatusOK, resp)
 }

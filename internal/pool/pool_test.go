@@ -64,7 +64,7 @@ func (m *mockDriver) InterceptRequest(_ http.ResponseWriter, _ map[string]interf
 func (m *mockDriver) GenerateAuthURL() (string, driver.OAuthSession, error) {
 	return "", driver.OAuthSession{}, nil
 }
-func (m *mockDriver) ExchangeCode(_ context.Context, _, _, _ string) (*driver.ExchangeResult, error) {
+func (m *mockDriver) ExchangeCode(_ context.Context, _ *http.Client, _, _, _ string) (*driver.ExchangeResult, error) {
 	return nil, nil
 }
 func (m *mockDriver) RefreshToken(_ context.Context, _ *http.Client, _ string) (*driver.TokenResponse, error) {

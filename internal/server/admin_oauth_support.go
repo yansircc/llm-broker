@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"strings"
@@ -22,11 +24,18 @@ var (
 type oauthSessionEnvelope struct {
 	driver.OAuthSession
 	Provider string `json:"provider"`
+	CellID   string `json:"cell_id,omitempty"`
+}
+
+type generateAuthURLRequest struct {
+	Provider string `json:"provider"`
+	CellID   string `json:"cell_id"`
 }
 
 type exchangeCodeRequest struct {
 	Provider     string `json:"provider"`
 	SessionID    string `json:"session_id"`
+	CellID       string `json:"cell_id"`
 	CallbackURL  string `json:"callback_url"`
 	Code         string `json:"code"`
 	CodeVerifier string `json:"code_verifier"`
@@ -39,11 +48,34 @@ type exchangeAccountResponse struct {
 	Status string `json:"status"`
 }
 
-func (s *Server) storeOAuthSession(ctx context.Context, provider string, session driver.OAuthSession) (string, error) {
+func decodeGenerateAuthURLRequest(r *http.Request) (*generateAuthURLRequest, error) {
+	req := &generateAuthURLRequest{
+		Provider: strings.TrimSpace(r.URL.Query().Get("provider")),
+		CellID:   strings.TrimSpace(r.URL.Query().Get("cell_id")),
+	}
+	if r.Body == nil {
+		return req, nil
+	}
+
+	var bodyReq generateAuthURLRequest
+	if err := json.NewDecoder(r.Body).Decode(&bodyReq); err != nil && !errors.Is(err, io.EOF) {
+		return nil, err
+	}
+	if provider := strings.TrimSpace(bodyReq.Provider); provider != "" {
+		req.Provider = provider
+	}
+	if cellID := strings.TrimSpace(bodyReq.CellID); cellID != "" {
+		req.CellID = cellID
+	}
+	return req, nil
+}
+
+func (s *Server) storeOAuthSession(ctx context.Context, provider, cellID string, session driver.OAuthSession) (string, error) {
 	sessionID := uuid.New().String()
 	payload, err := json.Marshal(oauthSessionEnvelope{
 		OAuthSession: session,
 		Provider:     provider,
+		CellID:       cellID,
 	})
 	if err != nil {
 		return "", err
@@ -82,24 +114,79 @@ func (s *Server) hydrateExchangeCodeRequest(ctx context.Context, req *exchangeCo
 		if session.Provider != "" {
 			req.Provider = session.Provider
 		}
+		if req.CellID == "" && session.CellID != "" {
+			req.CellID = session.CellID
+		}
 		if req.CallbackURL != "" && req.Code == "" {
 			req.Code = extractCodeFromCallback(req.CallbackURL)
 		}
 	}
+	req.Provider = strings.TrimSpace(req.Provider)
+	req.SessionID = strings.TrimSpace(req.SessionID)
+	req.CellID = strings.TrimSpace(req.CellID)
+	req.CallbackURL = strings.TrimSpace(req.CallbackURL)
+	req.CodeVerifier = strings.TrimSpace(req.CodeVerifier)
+	req.State = strings.TrimSpace(req.State)
 	if req.Code != "" {
 		req.Code = extractCodeFromCallback(req.Code)
 	}
 	return nil
 }
 
-func (s *Server) upsertExchangedAccount(drv driver.OAuthDriver, result *driver.ExchangeResult) (exchangeAccountResponse, error) {
-	if existing := s.pool.FindBySubject(drv.Provider(), result.Subject); existing != nil {
-		return s.updateExchangedAccount(existing, result)
+func (s *Server) validateExchangeCellSelection(existing *domain.Account, requestedCellID string) error {
+	requestedCellID = strings.TrimSpace(requestedCellID)
+	if requestedCellID == "" {
+		return fmt.Errorf("cell_id is required")
 	}
-	return s.createExchangedAccount(drv, result)
+
+	currentAccountID := ""
+	currentCellID := ""
+	if existing != nil {
+		currentAccountID = existing.ID
+		currentCellID = existing.CellID
+	}
+	if requestedCellID == currentCellID {
+		return nil
+	}
+
+	cell := s.pool.GetCell(requestedCellID)
+	if reason := accountCellBindError(cell, time.Now().UTC()); reason != "" {
+		return fmt.Errorf("%s", reason)
+	}
+	if accountOwnsCell(s.pool.List(), currentAccountID, requestedCellID) {
+		return fmt.Errorf("cell is already bound to another account")
+	}
+	return nil
 }
 
-func (s *Server) updateExchangedAccount(existing *domain.Account, result *driver.ExchangeResult) (exchangeAccountResponse, error) {
+func (s *Server) oauthClientForCell(cellID string) (*http.Client, error) {
+	cellID = strings.TrimSpace(cellID)
+	if cellID == "" {
+		return nil, fmt.Errorf("cell_id is required")
+	}
+
+	cell := s.pool.GetCell(cellID)
+	if reason := accountCellBindError(cell, time.Now().UTC()); reason != "" {
+		return nil, fmt.Errorf("%s", reason)
+	}
+	if s.transportPool == nil {
+		return nil, fmt.Errorf("oauth transport is unavailable")
+	}
+
+	return s.transportPool.ClientForAccount(&domain.Account{
+		CellID: cellID,
+		Cell:   cell,
+	}), nil
+}
+
+func (s *Server) upsertExchangedAccount(drv driver.OAuthDriver, result *driver.ExchangeResult, cellID string) (exchangeAccountResponse, error) {
+	if existing := s.pool.FindBySubject(drv.Provider(), result.Subject); existing != nil {
+		return s.updateExchangedAccount(existing, result, cellID)
+	}
+	return s.createExchangedAccount(drv, result, cellID)
+}
+
+func (s *Server) updateExchangedAccount(existing *domain.Account, result *driver.ExchangeResult, cellID string) (exchangeAccountResponse, error) {
 	encAccess, encRefresh, err := s.encryptExchangeTokens(result.AccessToken, result.RefreshToken, existing.RefreshTokenEnc)
 	if err != nil {
 		return exchangeAccountResponse{}, err
@@ -115,6 +202,7 @@ func (s *Server) updateExchangedAccount(existing *domain.Account, result *driver
 		a.Status = domain.StatusActive
 		a.Identity = result.Identity
 		a.Subject = result.Subject
+		a.CellID = cellID
 		if len(result.ProviderState) > 0 {
 			a.ProviderStateJSON = string(result.ProviderState)
 		}
@@ -127,7 +215,7 @@ func (s *Server) updateExchangedAccount(existing *domain.Account, result *driver
 	}, nil
 }
 
-func (s *Server) createExchangedAccount(drv driver.OAuthDriver, result *driver.ExchangeResult) (exchangeAccountResponse, error) {
+func (s *Server) createExchangedAccount(drv driver.OAuthDriver, result *driver.ExchangeResult, cellID string) (exchangeAccountResponse, error) {
 	encAccess, encRefresh, err := s.encryptExchangeTokens(result.AccessToken, result.RefreshToken, "")
 	if err != nil {
 		return exchangeAccountResponse{}, err
@@ -142,6 +230,7 @@ func (s *Server) createExchangedAccount(drv driver.OAuthDriver, result *driver.E
 		Status:          domain.StatusActive,
 		Priority:        50,
 		PriorityMode:    "auto",
+		CellID:          cellID,
 		RefreshTokenEnc: encRefresh,
 		AccessTokenEnc:  encAccess,
 		ExpiresAt:       now.Add(time.Duration(result.ExpiresIn) * time.Second).UnixMilli(),

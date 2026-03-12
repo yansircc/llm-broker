@@ -11,13 +11,14 @@ func (d *GeminiDriver) GenerateAuthURL() (string, OAuthSession, error) {
 	return generateGeminiAuthURL(d.cfg)
 }
 
-func (d *GeminiDriver) ExchangeCode(ctx context.Context, code, verifier, _ string) (*ExchangeResult, error) {
-	result, err := exchangeGeminiCode(ctx, d.cfg, code, verifier)
+func (d *GeminiDriver) ExchangeCode(ctx context.Context, client *http.Client, code, verifier, _ string) (*ExchangeResult, error) {
+	client = httpClientOrDefault(client, 30*time.Second)
+
+	result, err := exchangeGeminiCode(ctx, client, d.cfg, code, verifier)
 	if err != nil {
 		return nil, err
 	}
 
-	client := &http.Client{Timeout: 30 * time.Second}
 	identity := result.Identity
 	if identity == nil || identity.Subject == "" {
 		identity, err = fetchGeminiUserInfo(ctx, client, result.AccessToken)
