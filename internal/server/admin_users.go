@@ -63,17 +63,19 @@ func (s *Server) handleCreateUser(w http.ResponseWriter, r *http.Request) {
 
 	slog.Info("user created", "id", u.ID, "name", u.Name)
 	writeJSON(w, http.StatusOK, struct {
-		ID             string         `json:"id"`
-		Name           string         `json:"name"`
-		Token          string         `json:"token"`
-		AllowedSurface domain.Surface `json:"allowed_surface"`
-		BoundAccountID string         `json:"bound_account_id,omitempty"`
+		ID                string         `json:"id"`
+		Name              string         `json:"name"`
+		Token             string         `json:"token"`
+		AllowedSurface    domain.Surface `json:"allowed_surface"`
+		BoundAccountID    string         `json:"bound_account_id,omitempty"`
+		BoundAccountEmail string         `json:"bound_account_email,omitempty"`
 	}{
-		ID:             u.ID,
-		Name:           u.Name,
-		Token:          plaintext,
-		AllowedSurface: u.AllowedSurface,
-		BoundAccountID: u.BoundAccountID,
+		ID:                u.ID,
+		Name:              u.Name,
+		Token:             plaintext,
+		AllowedSurface:    u.AllowedSurface,
+		BoundAccountID:    u.BoundAccountID,
+		BoundAccountEmail: s.boundAccountEmail(u.BoundAccountID),
 	})
 }
 
@@ -194,13 +196,15 @@ func (s *Server) handleUpdateUserPolicy(w http.ResponseWriter, r *http.Request) 
 	}
 	slog.Info("user policy updated", "id", id, "allowedSurface", allowedSurface, "boundAccountId", req.BoundAccountID)
 	writeJSON(w, http.StatusOK, struct {
-		ID             string         `json:"id"`
-		AllowedSurface domain.Surface `json:"allowed_surface"`
-		BoundAccountID string         `json:"bound_account_id,omitempty"`
+		ID                string         `json:"id"`
+		AllowedSurface    domain.Surface `json:"allowed_surface"`
+		BoundAccountID    string         `json:"bound_account_id,omitempty"`
+		BoundAccountEmail string         `json:"bound_account_email,omitempty"`
 	}{
-		ID:             id,
-		AllowedSurface: allowedSurface,
-		BoundAccountID: req.BoundAccountID,
+		ID:                id,
+		AllowedSurface:    allowedSurface,
+		BoundAccountID:    req.BoundAccountID,
+		BoundAccountEmail: s.boundAccountEmail(req.BoundAccountID),
 	})
 }
 
@@ -293,16 +297,17 @@ func (s *Server) handleGetUser(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, UserDetailResponse{
-		ID:             user.ID,
-		Name:           user.Name,
-		TokenPrefix:    user.TokenPrefix,
-		Status:         user.Status,
-		AllowedSurface: user.AllowedSurface,
-		BoundAccountID: user.BoundAccountID,
-		CreatedAt:      user.CreatedAt,
-		LastActiveAt:   user.LastActiveAt,
-		Usage:          usage,
-		ModelUsage:     modelUsage,
-		RecentRequests: recentRequests,
+		ID:                user.ID,
+		Name:              user.Name,
+		TokenPrefix:       user.TokenPrefix,
+		Status:            user.Status,
+		AllowedSurface:    user.AllowedSurface,
+		BoundAccountID:    user.BoundAccountID,
+		BoundAccountEmail: s.boundAccountEmail(user.BoundAccountID),
+		CreatedAt:         user.CreatedAt,
+		LastActiveAt:      user.LastActiveAt,
+		Usage:             usage,
+		ModelUsage:        modelUsage,
+		RecentRequests:    recentRequests,
 	})
 }

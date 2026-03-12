@@ -168,6 +168,56 @@ func TestDashboard_AccountsIncludeCellID(t *testing.T) {
 	}
 }
 
+func TestDashboard_UsersIncludePolicy(t *testing.T) {
+	srv := newTestServer(t)
+
+	if err := srv.store.SaveAccount(context.Background(), &domain.Account{
+		ID:       "acct-compat-1",
+		Email:    "compat@example.com",
+		Provider: domain.ProviderClaude,
+		Status:   domain.StatusActive,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := srv.store.CreateUser(context.Background(), &domain.User{
+		ID:             "u-1",
+		Name:           "compat-user",
+		Status:         "active",
+		AllowedSurface: domain.SurfaceCompat,
+		BoundAccountID: "acct-compat-1",
+		CreatedAt:      time.Now().UTC(),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	srv.pool, _ = pool.New(srv.store, srv.bus)
+
+	w := httptest.NewRecorder()
+	srv.handleDashboard(w, adminRequest("GET", "/admin/dashboard"))
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status %d, body: %s", w.Code, w.Body.String())
+	}
+
+	var result struct {
+		Users []map[string]any `json:"users"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &result); err != nil {
+		t.Fatalf("json.Unmarshal: %v", err)
+	}
+	if len(result.Users) != 1 {
+		t.Fatalf("len(users) = %d, want 1", len(result.Users))
+	}
+	if got := result.Users[0]["allowed_surface"]; got != "compat" {
+		t.Fatalf("allowed_surface = %#v, want %q", got, "compat")
+	}
+	if got := result.Users[0]["bound_account_id"]; got != "acct-compat-1" {
+		t.Fatalf("bound_account_id = %#v, want %q", got, "acct-compat-1")
+	}
+	if got := result.Users[0]["bound_account_email"]; got != "compat@example.com" {
+		t.Fatalf("bound_account_email = %#v, want %q", got, "compat@example.com")
+	}
+}
+
 // ---------------------------------------------------------------------------
 // Account detail contract tests
 // ---------------------------------------------------------------------------
@@ -461,6 +511,46 @@ func TestGetUser_EmptyArrays(t *testing.T) {
 	assertJSONArray(t, body, "usage")
 	assertJSONArray(t, body, "model_usage")
 	assertJSONArray(t, body, "recent_requests")
+}
+
+func TestGetUser_IncludesBoundAccountEmail(t *testing.T) {
+	srv := newTestServer(t)
+
+	if err := srv.store.SaveAccount(context.Background(), &domain.Account{
+		ID:       "acct-compat-1",
+		Email:    "compat@example.com",
+		Provider: domain.ProviderClaude,
+		Status:   domain.StatusActive,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := srv.store.CreateUser(context.Background(), &domain.User{
+		ID:             "u-1",
+		Name:           "compat-user",
+		Status:         "active",
+		AllowedSurface: domain.SurfaceCompat,
+		BoundAccountID: "acct-compat-1",
+		CreatedAt:      time.Now().UTC(),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	srv.pool, _ = pool.New(srv.store, srv.bus)
+
+	w := httptest.NewRecorder()
+	r := adminRequest("GET", "/admin/users/u-1")
+	r.SetPathValue("id", "u-1")
+	srv.handleGetUser(w, r)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status %d, body: %s", w.Code, w.Body.String())
+	}
+
+	if got := jsonPath(t, w.Body.Bytes(), "allowed_surface"); got != "compat" {
+		t.Fatalf("allowed_surface = %#v, want %q", got, "compat")
+	}
+	if got := jsonPath(t, w.Body.Bytes(), "bound_account_email"); got != "compat@example.com" {
+		t.Fatalf("bound_account_email = %#v, want %q", got, "compat@example.com")
+	}
 }
 
 // ---------------------------------------------------------------------------

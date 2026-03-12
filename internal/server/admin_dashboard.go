@@ -66,11 +66,14 @@ func (s *Server) dashboardUsers(ctx context.Context) []DashboardUser {
 	views := make([]DashboardUser, 0, len(users))
 	for _, user := range users {
 		views = append(views, DashboardUser{
-			ID:           user.ID,
-			Name:         user.Name,
-			Status:       user.Status,
-			LastActiveAt: user.LastActiveAt,
-			TotalCost:    userCosts[user.ID],
+			ID:                user.ID,
+			Name:              user.Name,
+			Status:            user.Status,
+			AllowedSurface:    user.AllowedSurface,
+			BoundAccountID:    user.BoundAccountID,
+			BoundAccountEmail: s.boundAccountEmail(user.BoundAccountID),
+			LastActiveAt:      user.LastActiveAt,
+			TotalCost:         userCosts[user.ID],
 		})
 	}
 	return views

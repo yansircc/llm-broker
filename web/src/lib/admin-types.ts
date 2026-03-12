@@ -1,3 +1,5 @@
+export type UserSurface = 'native' | 'compat' | 'all';
+
 export interface UsagePeriod {
 	label: string;
 	requests: number;
@@ -23,6 +25,9 @@ export interface UserSummary {
 	id: string;
 	name: string;
 	status: string;
+	allowed_surface: UserSurface;
+	bound_account_id?: string;
+	bound_account_email?: string;
 	last_active_at: string | null;
 	total_cost: number;
 }

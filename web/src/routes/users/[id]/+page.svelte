@@ -3,6 +3,7 @@
 	import { goto } from '$app/navigation';
 	import { base } from '$app/paths';
 	import { api } from '$lib/api';
+	import type { AccountListItem, UserSurface } from '$lib/admin-types';
 	import { timeAgo, fmtNum, fmtCost, fmtDate, tagClass, statusColor, shortModel } from '$lib/format';
 	import ConfirmAction from '$lib/components/ConfirmAction.svelte';
 
@@ -44,6 +45,9 @@
 		name: string;
 		token_prefix: string;
 		status: string;
+		allowed_surface: UserSurface;
+		bound_account_id?: string;
+		bound_account_email?: string;
 		created_at: string;
 		last_active_at: string | null;
 		usage: UsagePeriod[];
@@ -52,18 +56,32 @@
 	}
 
 	let user = $state<UserDetail | null>(null);
+	let accounts = $state<AccountListItem[]>([]);
 	let error = $state('');
 	let loading = $state(true);
 	let newToken = $state('');
 	let actionError = $state('');
+	let selectedSurface = $state<UserSurface>('native');
+	let selectedBoundAccountID = $state('');
+	let savingPolicy = $state(false);
+	let policyError = $state('');
+	let policyResult = $state('');
 
 	$effect(() => {
 		loadUser();
 	});
 
 	async function loadUser() {
+		error = '';
 		try {
-			user = await api<UserDetail>('/users/' + $page.params.id);
+			const [userData, accountList] = await Promise.all([
+				api<UserDetail>('/users/' + $page.params.id),
+				api<AccountListItem[]>('/accounts').catch(() => [])
+			]);
+			user = userData;
+			accounts = [...accountList].sort((a, b) => a.email.localeCompare(b.email));
+			selectedSurface = userData.allowed_surface ?? 'native';
+			selectedBoundAccountID = userData.bound_account_id ?? '';
 		} catch (e: any) {
 			error = e.message;
 		} finally {
@@ -105,6 +123,52 @@
 			goto(`${base}/users`);
 		} catch (e: any) {
 			actionError = e.message;
+		}
+	}
+
+	function accountLabel(account: AccountListItem): string {
+		const parts = [account.email, account.provider];
+		if (account.cell?.name) {
+			parts.push(account.cell.name);
+		} else if (account.cell_id) {
+			parts.push(account.cell_id);
+		} else {
+			parts.push('legacy direct');
+		}
+		return parts.join(' / ');
+	}
+
+	function policyChanged(): boolean {
+		if (!user) return false;
+		return user.allowed_surface !== selectedSurface || (user.bound_account_id ?? '') !== selectedBoundAccountID;
+	}
+
+	async function savePolicy() {
+		if (!user) return;
+		savingPolicy = true;
+		policyError = '';
+		policyResult = '';
+		try {
+			const result = await api<{
+				id: string;
+				allowed_surface: UserSurface;
+				bound_account_id?: string;
+				bound_account_email?: string;
+			}>(`/users/${user.id}/policy`, {
+				method: 'POST',
+				body: JSON.stringify({
+					allowed_surface: selectedSurface,
+					bound_account_id: selectedBoundAccountID
+				})
+			});
+			user.allowed_surface = result.allowed_surface;
+			user.bound_account_id = result.bound_account_id;
+			user.bound_account_email = result.bound_account_email;
+			policyResult = 'policy saved';
+		} catch (e: any) {
+			policyError = e.message;
+		} finally {
+			savingPolicy = false;
 		}
 	}
 </script>
@@ -153,6 +217,53 @@
 		<dt>last active</dt>
 		<dd>{#if user.last_active_at}{timeAgo(user.last_active_at)} ({new Date(user.last_active_at).toLocaleTimeString('en-GB', { hour12: false })}){:else}<span class="muted">-</span>{/if}</dd>
 	</dl>
+
+	<h2>policy</h2>
+	<dl>
+		<dt>surface</dt>
+		<dd>
+			<select bind:value={selectedSurface} disabled={savingPolicy}>
+				<option value="native">native</option>
+				<option value="compat">compat</option>
+				<option value="all">all</option>
+			</select>
+		</dd>
+
+		<dt>bound account</dt>
+		<dd>
+			<select bind:value={selectedBoundAccountID} disabled={savingPolicy} style="max-width:420px;">
+				<option value="">[no bound account]</option>
+				{#if user.bound_account_id && !accounts.some((account) => account.id === user.bound_account_id)}
+					<option value={user.bound_account_id}>{user.bound_account_email || user.bound_account_id}</option>
+				{/if}
+				{#each accounts as account (account.id)}
+					<option value={account.id}>{accountLabel(account)}</option>
+				{/each}
+			</select>
+		</dd>
+	</dl>
+
+	<div class="actions" style="margin-top:0">
+		<button class="link" onclick={savePolicy} disabled={savingPolicy || !policyChanged()}>
+			{savingPolicy ? '[saving...]' : '[save policy]'}
+		</button>
+		<button
+			class="link"
+			onclick={() => {
+				if (!user) return;
+				selectedSurface = user.allowed_surface;
+				selectedBoundAccountID = user.bound_account_id ?? '';
+				policyError = '';
+				policyResult = '';
+			}}
+			disabled={savingPolicy || !policyChanged()}
+		>
+			[reset]
+		</button>
+	</div>
+
+	{#if policyError}<p class="error-msg">{policyError}</p>{/if}
+	{#if policyResult}<p class="muted">{policyResult}</p>{/if}
 
 	<!-- Usage periods -->
 	<h2>usage</h2>
