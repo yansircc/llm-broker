@@ -44,7 +44,10 @@ func (d *ClaudeDriver) BuildRequest(ctx context.Context, input *RelayInput, acct
 		return nil, fmt.Errorf("body re-parse: %w", err)
 	}
 
-	result := d.transformer.Transform(body, input.Headers, acct)
+	result, err := d.transformer.Transform(ctx, body, input.Headers, acct)
+	if err != nil {
+		return nil, fmt.Errorf("transform identity: %w", err)
+	}
 
 	upstreamBody, err := json.Marshal(result.Body)
 	if err != nil {

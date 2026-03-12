@@ -99,19 +99,10 @@ func newTestPool(t *testing.T, accounts ...*domain.Account) *Pool {
 	t.Helper()
 	ms := store.NewMockStore()
 	bus := events.NewBus(100)
-	p := &Pool{
-		accounts:      make(map[string]*domain.Account),
-		cells:         make(map[string]*domain.EgressCell),
-		buckets:       make(map[string]*domain.QuotaBucket),
-		store:         ms,
-		bus:           bus,
-		sessions:      store.NewTTLMap[SessionBinding](),
-		stainless:     store.NewTTLMap[string](),
-		oauthSessions: store.NewTTLMap[string](),
-		refreshLocks:  store.NewTTLMap[string](),
-	}
 	for _, a := range accounts {
-		p.accounts[a.ID] = a
+		if err := ms.SaveAccount(context.Background(), a); err != nil {
+			t.Fatalf("SaveAccount(%s): %v", a.ID, err)
+		}
 		key := a.BucketKey
 		if key == "" {
 			if a.Subject != "" {
@@ -120,13 +111,19 @@ func newTestPool(t *testing.T, accounts ...*domain.Account) *Pool {
 				key = string(a.Provider) + ":" + a.ID
 			}
 		}
-		p.buckets[key] = &domain.QuotaBucket{
+		if err := ms.SaveQuotaBucket(context.Background(), &domain.QuotaBucket{
 			BucketKey:     key,
 			Provider:      a.Provider,
 			CooldownUntil: a.CooldownUntil,
 			StateJSON:     a.ProviderStateJSON,
 			UpdatedAt:     time.Now().UTC(),
+		}); err != nil {
+			t.Fatalf("SaveQuotaBucket(%s): %v", key, err)
 		}
+	}
+	p, err := New(ms, bus)
+	if err != nil {
+		t.Fatalf("New(): %v", err)
 	}
 	return p
 }
@@ -190,21 +187,25 @@ func TestPick_SkipsUnavailableCell(t *testing.T) {
 	bad.CellID = "cell-bad"
 
 	p := newTestPool(t, good, bad)
-	p.cells["cell-good"] = &domain.EgressCell{
+	if err := p.SaveCell(&domain.EgressCell{
 		ID:        "cell-good",
 		Name:      "good",
 		Status:    domain.EgressCellActive,
 		Proxy:     &domain.ProxyConfig{Type: "socks5", Host: "10.0.0.2", Port: 11081},
 		CreatedAt: time.Now().UTC(),
 		UpdatedAt: time.Now().UTC(),
+	}); err != nil {
+		t.Fatalf("SaveCell(cell-good): %v", err)
 	}
-	p.cells["cell-bad"] = &domain.EgressCell{
+	if err := p.SaveCell(&domain.EgressCell{
 		ID:        "cell-bad",
 		Name:      "bad",
 		Status:    domain.EgressCellDisabled,
 		Proxy:     &domain.ProxyConfig{Type: "socks5", Host: "10.0.0.3", Port: 11082},
 		CreatedAt: time.Now().UTC(),
 		UpdatedAt: time.Now().UTC(),
+	}); err != nil {
+		t.Fatalf("SaveCell(cell-bad): %v", err)
 	}
 
 	acct, err := p.Pick(testDriver, nil, "claude-haiku", "")
@@ -224,13 +225,15 @@ func TestCooldownCellForAccount(t *testing.T) {
 	acct.CellID = "cell-a"
 
 	p := newTestPool(t, acct)
-	p.cells["cell-a"] = &domain.EgressCell{
+	if err := p.SaveCell(&domain.EgressCell{
 		ID:        "cell-a",
 		Name:      "cell-a",
 		Status:    domain.EgressCellActive,
 		Proxy:     &domain.ProxyConfig{Type: "socks5", Host: "127.0.0.1", Port: 11080},
 		CreatedAt: time.Now().UTC(),
 		UpdatedAt: time.Now().UTC(),
+	}); err != nil {
+		t.Fatalf("SaveCell(cell-a): %v", err)
 	}
 
 	until := time.Now().Add(2 * time.Minute)
@@ -257,7 +260,7 @@ func TestClearCellCooldown(t *testing.T) {
 	until := time.Now().Add(2 * time.Minute).UTC()
 
 	p := newTestPool(t, acct)
-	p.cells["cell-a"] = &domain.EgressCell{
+	if err := p.SaveCell(&domain.EgressCell{
 		ID:            "cell-a",
 		Name:          "cell-a",
 		Status:        domain.EgressCellActive,
@@ -265,6 +268,8 @@ func TestClearCellCooldown(t *testing.T) {
 		CooldownUntil: &until,
 		CreatedAt:     time.Now().UTC(),
 		UpdatedAt:     time.Now().UTC(),
+	}); err != nil {
+		t.Fatalf("SaveCell(cell-a): %v", err)
 	}
 
 	if !p.ClearCellCooldown("cell-a") {
@@ -277,6 +282,43 @@ func TestClearCellCooldown(t *testing.T) {
 	}
 	if cell.CooldownUntil != nil {
 		t.Fatalf("cell cooldown = %v, want nil", cell.CooldownUntil)
+	}
+}
+
+func TestPoolReadsFreshStateFromStore(t *testing.T) {
+	ms := store.NewMockStore()
+	acct := activeAccount("acct-1", "old@example.com")
+	acct.CreatedAt = time.Now().UTC()
+	if err := ms.SaveAccount(context.Background(), acct); err != nil {
+		t.Fatalf("SaveAccount(initial): %v", err)
+	}
+
+	bus := events.NewBus(100)
+	p, err := New(ms, bus)
+	if err != nil {
+		t.Fatalf("New(): %v", err)
+	}
+
+	updated := *acct
+	updated.Email = "new@example.com"
+	updated.Status = domain.StatusDisabled
+	if err := ms.SaveAccount(context.Background(), &updated); err != nil {
+		t.Fatalf("SaveAccount(updated): %v", err)
+	}
+
+	got := p.Get(acct.ID)
+	if got == nil {
+		t.Fatal("Get() returned nil")
+	}
+	if got.Email != "new@example.com" {
+		t.Fatalf("Get().Email = %q, want new@example.com", got.Email)
+	}
+	if got.Status != domain.StatusDisabled {
+		t.Fatalf("Get().Status = %q, want disabled", got.Status)
+	}
+
+	if _, err := p.Pick(testDriver, nil, "claude-haiku", ""); err == nil {
+		t.Fatal("Pick() = nil error, want no available accounts after external disable")
 	}
 }
 
@@ -555,7 +597,14 @@ func TestPick_ReturnsBucketProjectedAccount(t *testing.T) {
 		ProviderStateJSON: `{}`,
 	}
 	p := newTestPool(t, g1)
-	p.buckets["gemini:google-sub:proj-1"].StateJSON = `{"project_id":"proj-1","rpm":1}`
+	if err := p.store.SaveQuotaBucket(context.Background(), &domain.QuotaBucket{
+		BucketKey: "gemini:google-sub:proj-1",
+		Provider:  domain.ProviderGemini,
+		StateJSON: `{"project_id":"proj-1","rpm":1}`,
+		UpdatedAt: time.Now().UTC(),
+	}); err != nil {
+		t.Fatalf("SaveQuotaBucket(): %v", err)
+	}
 	p.SetDrivers(map[domain.Provider]driver.SchedulerDriver{
 		domain.ProviderGemini: &mockDriver{provider: domain.ProviderGemini},
 	})

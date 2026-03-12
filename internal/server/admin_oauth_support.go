@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -38,7 +39,7 @@ type exchangeAccountResponse struct {
 	Status string `json:"status"`
 }
 
-func (s *Server) storeOAuthSession(provider string, session driver.OAuthSession) (string, error) {
+func (s *Server) storeOAuthSession(ctx context.Context, provider string, session driver.OAuthSession) (string, error) {
 	sessionID := uuid.New().String()
 	payload, err := json.Marshal(oauthSessionEnvelope{
 		OAuthSession: session,
@@ -47,7 +48,9 @@ func (s *Server) storeOAuthSession(provider string, session driver.OAuthSession)
 	if err != nil {
 		return "", err
 	}
-	s.pool.SetOAuthSession(sessionID, string(payload), 10*time.Minute)
+	if err := s.pool.SetOAuthSession(ctx, sessionID, string(payload), 10*time.Minute); err != nil {
+		return "", err
+	}
 	return sessionID, nil
 }
 
@@ -59,9 +62,12 @@ func decodeExchangeCodeRequest(r *http.Request) (*exchangeCodeRequest, error) {
 	return &req, nil
 }
 
-func (s *Server) hydrateExchangeCodeRequest(req *exchangeCodeRequest) error {
+func (s *Server) hydrateExchangeCodeRequest(ctx context.Context, req *exchangeCodeRequest) error {
 	if req.SessionID != "" {
-		sessionJSON, ok := s.pool.GetDelOAuthSession(req.SessionID)
+		sessionJSON, ok, err := s.pool.GetDelOAuthSession(ctx, req.SessionID)
+		if err != nil {
+			return err
+		}
 		if !ok {
 			return errInvalidOAuthSession
 		}

@@ -70,12 +70,18 @@ func (p *Pool) cellAvailableLocked(cell *domain.EgressCell, now time.Time) bool 
 }
 
 func (p *Pool) GetCell(id string) *domain.EgressCell {
+	if err := p.refreshState(context.Background()); err != nil {
+		slog.Warn("pool refresh failed", "op", "get_cell", "error", err)
+	}
 	p.mu.RLock()
 	defer p.mu.RUnlock()
 	return cloneCell(p.cellLocked(id))
 }
 
 func (p *Pool) ListCells() []*domain.EgressCell {
+	if err := p.refreshState(context.Background()); err != nil {
+		slog.Warn("pool refresh failed", "op", "list_cells", "error", err)
+	}
 	p.mu.RLock()
 	defer p.mu.RUnlock()
 	result := make([]*domain.EgressCell, 0, len(p.cells))
@@ -92,6 +98,9 @@ func (p *Pool) SaveCell(cell *domain.EgressCell) error {
 
 	p.mu.Lock()
 	defer p.mu.Unlock()
+	if err := p.reloadStateLocked(context.Background()); err != nil {
+		return fmt.Errorf("refresh pool state: %w", err)
+	}
 
 	copy := cloneCell(cell)
 	copy.PersistRuntime()
@@ -147,6 +156,9 @@ func (p *Pool) applyCellCooldownLocked(cell *domain.EgressCell, proposed time.Ti
 func (p *Pool) CooldownCell(cellID string, proposed time.Time, message string) bool {
 	p.mu.Lock()
 	defer p.mu.Unlock()
+	if err := p.reloadStateLocked(context.Background()); err != nil {
+		slog.Warn("pool refresh failed", "op", "cooldown_cell", "cellId", cellID, "error", err)
+	}
 
 	cell := p.cellLocked(cellID)
 	if !p.applyCellCooldownLocked(cell, proposed) {
@@ -179,6 +191,9 @@ func (p *Pool) CooldownCellForAccount(accountID string, proposed time.Time, mess
 func (p *Pool) ClearCellCooldown(cellID string) bool {
 	p.mu.Lock()
 	defer p.mu.Unlock()
+	if err := p.reloadStateLocked(context.Background()); err != nil {
+		slog.Warn("pool refresh failed", "op", "clear_cell_cooldown", "cellId", cellID, "error", err)
+	}
 
 	cell := p.cellLocked(cellID)
 	if cell == nil || cell.CooldownUntil == nil {

@@ -13,12 +13,6 @@ import (
 	"github.com/yansircc/llm-broker/internal/store"
 )
 
-type SessionBinding struct {
-	AccountID  string
-	CreatedAt  time.Time
-	LastUsedAt time.Time
-}
-
 type Exclusion struct {
 	AccountID string
 	BucketKey string
@@ -40,11 +34,6 @@ type Pool struct {
 	store    store.Store
 	bus      *events.Bus
 
-	sessions      *store.TTLMap[SessionBinding]
-	stainless     *store.TTLMap[string]
-	oauthSessions *store.TTLMap[string]
-	refreshLocks  *store.TTLMap[string]
-
 	onAuthFailure func(accountID string)
 	drivers       map[domain.Provider]driver.SchedulerDriver
 }
@@ -55,54 +44,85 @@ func (p *Pool) SetOnAuthFailure(fn func(accountID string)) {
 
 func New(s store.Store, bus *events.Bus) (*Pool, error) {
 	p := &Pool{
-		accounts:      make(map[string]*domain.Account),
-		cells:         make(map[string]*domain.EgressCell),
-		buckets:       make(map[string]*domain.QuotaBucket),
-		store:         s,
-		bus:           bus,
-		sessions:      store.NewTTLMap[SessionBinding](),
-		stainless:     store.NewTTLMap[string](),
-		oauthSessions: store.NewTTLMap[string](),
-		refreshLocks:  store.NewTTLMap[string](),
+		accounts: make(map[string]*domain.Account),
+		cells:    make(map[string]*domain.EgressCell),
+		buckets:  make(map[string]*domain.QuotaBucket),
+		store:    s,
+		bus:      bus,
 	}
 
-	accounts, err := s.ListAccounts(context.Background())
-	if err != nil {
-		return nil, fmt.Errorf("load accounts: %w", err)
-	}
-	for _, acct := range accounts {
-		acct.HydrateRuntime()
-		p.accounts[acct.ID] = acct
-	}
-
-	cells, err := s.ListEgressCells(context.Background())
-	if err != nil {
-		return nil, fmt.Errorf("load egress cells: %w", err)
-	}
-	for _, cell := range cells {
-		cell.HydrateRuntime()
-		p.cells[cell.ID] = cell
-	}
-
-	buckets, err := s.ListQuotaBuckets(context.Background())
-	if err != nil {
-		return nil, fmt.Errorf("load quota buckets: %w", err)
-	}
-	for _, bucket := range buckets {
-		if bucket.StateJSON == "" {
-			bucket.StateJSON = "{}"
-		}
-		p.buckets[bucket.BucketKey] = bucket
-	}
-	for _, acct := range p.accounts {
-		p.ensureBucketLocked(acct)
+	if err := p.refreshState(context.Background()); err != nil {
+		return nil, fmt.Errorf("load pool state: %w", err)
 	}
 
 	slog.Info("pool loaded", "accounts", len(p.accounts))
 	return p, nil
 }
 
+func (p *Pool) refreshState(ctx context.Context) error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.reloadStateLocked(ctx)
+}
+
+func (p *Pool) reloadStateLocked(ctx context.Context) error {
+	accounts, err := p.store.ListAccounts(ctx)
+	if err != nil {
+		return fmt.Errorf("list accounts: %w", err)
+	}
+	accountMap := make(map[string]*domain.Account, len(accounts))
+	for _, acct := range accounts {
+		acct.HydrateRuntime()
+		accountMap[acct.ID] = acct
+	}
+
+	cells, err := p.store.ListEgressCells(ctx)
+	if err != nil {
+		return fmt.Errorf("list egress cells: %w", err)
+	}
+	cellMap := make(map[string]*domain.EgressCell, len(cells))
+	for _, cell := range cells {
+		cell.HydrateRuntime()
+		cellMap[cell.ID] = cell
+	}
+
+	buckets, err := p.store.ListQuotaBuckets(ctx)
+	if err != nil {
+		return fmt.Errorf("list quota buckets: %w", err)
+	}
+	bucketMap := make(map[string]*domain.QuotaBucket, len(buckets))
+	for _, bucket := range buckets {
+		if bucket.StateJSON == "" {
+			bucket.StateJSON = "{}"
+		}
+		bucketMap[bucket.BucketKey] = bucket
+	}
+
+	p.accounts = accountMap
+	p.cells = cellMap
+	p.buckets = bucketMap
+	for _, acct := range p.accounts {
+		key := p.bucketKeyLocked(acct)
+		if key == "" {
+			continue
+		}
+		if _, ok := p.buckets[key]; ok {
+			continue
+		}
+		p.buckets[key] = &domain.QuotaBucket{
+			BucketKey: key,
+			Provider:  acct.Provider,
+			StateJSON: "{}",
+			UpdatedAt: time.Now().UTC(),
+		}
+	}
+	return nil
+}
+
 func (p *Pool) Get(id string) *domain.Account {
+	if err := p.refreshState(context.Background()); err != nil {
+		slog.Warn("pool refresh failed", "op", "get", "error", err)
+	}
 	p.mu.RLock()
 	defer p.mu.RUnlock()
 	acct, ok := p.accounts[id]
@@ -113,6 +133,9 @@ func (p *Pool) Get(id string) *domain.Account {
 }
 
 func (p *Pool) List() []*domain.Account {
+	if err := p.refreshState(context.Background()); err != nil {
+		slog.Warn("pool refresh failed", "op", "list", "error", err)
+	}
 	p.mu.RLock()
 	defer p.mu.RUnlock()
 	result := make([]*domain.Account, 0, len(p.accounts))

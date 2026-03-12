@@ -217,6 +217,31 @@ func TestNew_AllowsRequestLogColumnOrderDrift(t *testing.T) {
 			cooldown_until INTEGER,
 			state_json TEXT NOT NULL DEFAULT '{}',
 			updated_at INTEGER NOT NULL
+		);
+		CREATE TABLE session_bindings (
+			session_uuid TEXT PRIMARY KEY,
+			account_id TEXT NOT NULL,
+			created_at INTEGER NOT NULL,
+			last_used_at INTEGER NOT NULL,
+			expires_at INTEGER NOT NULL
+		);
+		CREATE TABLE stainless_bindings (
+			account_id TEXT PRIMARY KEY,
+			headers_json TEXT NOT NULL,
+			created_at INTEGER NOT NULL,
+			expires_at INTEGER NOT NULL
+		);
+		CREATE TABLE oauth_sessions (
+			session_id TEXT PRIMARY KEY,
+			data_json TEXT NOT NULL,
+			created_at INTEGER NOT NULL,
+			expires_at INTEGER NOT NULL
+		);
+		CREATE TABLE refresh_locks (
+			account_id TEXT PRIMARY KEY,
+			lock_id TEXT NOT NULL,
+			created_at INTEGER NOT NULL,
+			expires_at INTEGER NOT NULL
 		)
 	`); err != nil {
 		t.Fatalf("create schema with request_log order drift: %v", err)
@@ -309,5 +334,348 @@ func TestSaveEgressCell_RoundTrip(t *testing.T) {
 	}
 	if saved.Labels["city"] != "Paris" {
 		t.Fatalf("saved Labels = %#v, want city=Paris", saved.Labels)
+	}
+}
+
+func TestSessionBindings_RoundTripAndPurge(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "session-bindings.db")
+	if err := Migrate(dbPath); err != nil {
+		t.Fatalf("Migrate(): %v", err)
+	}
+
+	store, err := New(dbPath)
+	if err != nil {
+		t.Fatalf("New(): %v", err)
+	}
+
+	now := time.Now().UTC().Truncate(time.Second)
+	active := &domain.SessionBinding{
+		SessionUUID: "sess-active",
+		AccountID:   "acct-1",
+		CreatedAt:   now.Add(-2 * time.Minute),
+		LastUsedAt:  now.Add(-1 * time.Minute),
+		ExpiresAt:   now.Add(10 * time.Minute),
+	}
+	expired := &domain.SessionBinding{
+		SessionUUID: "sess-expired",
+		AccountID:   "acct-1",
+		CreatedAt:   now.Add(-20 * time.Minute),
+		LastUsedAt:  now.Add(-15 * time.Minute),
+		ExpiresAt:   now.Add(-1 * time.Minute),
+	}
+
+	if err := store.SaveSessionBinding(context.Background(), active); err != nil {
+		t.Fatalf("SaveSessionBinding(active): %v", err)
+	}
+	if err := store.SaveSessionBinding(context.Background(), expired); err != nil {
+		t.Fatalf("SaveSessionBinding(expired): %v", err)
+	}
+
+	got, err := store.GetSessionBinding(context.Background(), active.SessionUUID)
+	if err != nil {
+		t.Fatalf("GetSessionBinding(active): %v", err)
+	}
+	if got == nil || got.AccountID != active.AccountID {
+		t.Fatalf("GetSessionBinding(active) = %#v, want account %q", got, active.AccountID)
+	}
+
+	gotExpired, err := store.GetSessionBinding(context.Background(), expired.SessionUUID)
+	if err != nil {
+		t.Fatalf("GetSessionBinding(expired): %v", err)
+	}
+	if gotExpired != nil {
+		t.Fatalf("GetSessionBinding(expired) = %#v, want nil", gotExpired)
+	}
+
+	list, err := store.ListSessionBindingsByAccount(context.Background(), "acct-1")
+	if err != nil {
+		t.Fatalf("ListSessionBindingsByAccount(): %v", err)
+	}
+	if len(list) != 1 || list[0].SessionUUID != active.SessionUUID {
+		t.Fatalf("ListSessionBindingsByAccount() = %#v, want only %q", list, active.SessionUUID)
+	}
+
+	purged, err := store.PurgeExpiredSessionBindings(context.Background(), now)
+	if err != nil {
+		t.Fatalf("PurgeExpiredSessionBindings(): %v", err)
+	}
+	if purged != 1 {
+		t.Fatalf("PurgeExpiredSessionBindings() purged %d, want 1", purged)
+	}
+
+	if err := store.Close(); err != nil {
+		t.Fatalf("Close(): %v", err)
+	}
+
+	store, err = New(dbPath)
+	if err != nil {
+		t.Fatalf("New() after reopen: %v", err)
+	}
+	defer store.Close()
+
+	got, err = store.GetSessionBinding(context.Background(), active.SessionUUID)
+	if err != nil {
+		t.Fatalf("GetSessionBinding(active) after reopen: %v", err)
+	}
+	if got == nil || got.SessionUUID != active.SessionUUID {
+		t.Fatalf("GetSessionBinding(active) after reopen = %#v, want %q", got, active.SessionUUID)
+	}
+
+	if err := store.DeleteSessionBinding(context.Background(), active.SessionUUID); err != nil {
+		t.Fatalf("DeleteSessionBinding(): %v", err)
+	}
+	got, err = store.GetSessionBinding(context.Background(), active.SessionUUID)
+	if err != nil {
+		t.Fatalf("GetSessionBinding(active) after delete: %v", err)
+	}
+	if got != nil {
+		t.Fatalf("GetSessionBinding(active) after delete = %#v, want nil", got)
+	}
+}
+
+func TestStainlessBindings_SetNXAndPurge(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "stainless-bindings.db")
+	if err := Migrate(dbPath); err != nil {
+		t.Fatalf("Migrate(): %v", err)
+	}
+
+	store, err := New(dbPath)
+	if err != nil {
+		t.Fatalf("New(): %v", err)
+	}
+	defer store.Close()
+
+	now := time.Now().UTC().Truncate(time.Second)
+	first := &domain.StainlessBinding{
+		AccountID:   "acct-1",
+		HeadersJSON: `{"x-stainless-os":"MacOS"}`,
+		CreatedAt:   now,
+		ExpiresAt:   now.Add(24 * time.Hour),
+	}
+	second := &domain.StainlessBinding{
+		AccountID:   "acct-1",
+		HeadersJSON: `{"x-stainless-os":"Linux"}`,
+		CreatedAt:   now.Add(1 * time.Minute),
+		ExpiresAt:   now.Add(24*time.Hour + time.Minute),
+	}
+	expiredReplacement := &domain.StainlessBinding{
+		AccountID:   "acct-1",
+		HeadersJSON: `{"x-stainless-os":"Linux"}`,
+		CreatedAt:   now.Add(2 * time.Hour),
+		ExpiresAt:   now.Add(26 * time.Hour),
+	}
+
+	ok, err := store.SetStainlessBindingNX(context.Background(), first)
+	if err != nil {
+		t.Fatalf("SetStainlessBindingNX(first): %v", err)
+	}
+	if !ok {
+		t.Fatal("SetStainlessBindingNX(first) = false, want true")
+	}
+
+	ok, err = store.SetStainlessBindingNX(context.Background(), second)
+	if err != nil {
+		t.Fatalf("SetStainlessBindingNX(second): %v", err)
+	}
+	if ok {
+		t.Fatal("SetStainlessBindingNX(second) = true, want false while binding is active")
+	}
+
+	got, err := store.GetStainlessBinding(context.Background(), "acct-1")
+	if err != nil {
+		t.Fatalf("GetStainlessBinding(active): %v", err)
+	}
+	if got == nil || got.HeadersJSON != first.HeadersJSON {
+		t.Fatalf("GetStainlessBinding(active) = %#v, want %q", got, first.HeadersJSON)
+	}
+
+	purged, err := store.PurgeExpiredStainlessBindings(context.Background(), now.Add(25*time.Hour))
+	if err != nil {
+		t.Fatalf("PurgeExpiredStainlessBindings(): %v", err)
+	}
+	if purged != 1 {
+		t.Fatalf("PurgeExpiredStainlessBindings() purged %d, want 1", purged)
+	}
+
+	ok, err = store.SetStainlessBindingNX(context.Background(), expiredReplacement)
+	if err != nil {
+		t.Fatalf("SetStainlessBindingNX(expiredReplacement): %v", err)
+	}
+	if !ok {
+		t.Fatal("SetStainlessBindingNX(expiredReplacement) = false, want true after expiry")
+	}
+
+	got, err = store.GetStainlessBinding(context.Background(), "acct-1")
+	if err != nil {
+		t.Fatalf("GetStainlessBinding(replaced): %v", err)
+	}
+	if got == nil || got.HeadersJSON != expiredReplacement.HeadersJSON {
+		t.Fatalf("GetStainlessBinding(replaced) = %#v, want %q", got, expiredReplacement.HeadersJSON)
+	}
+
+	if err := store.DeleteStainlessBinding(context.Background(), "acct-1"); err != nil {
+		t.Fatalf("DeleteStainlessBinding(): %v", err)
+	}
+	got, err = store.GetStainlessBinding(context.Background(), "acct-1")
+	if err != nil {
+		t.Fatalf("GetStainlessBinding(after delete): %v", err)
+	}
+	if got != nil {
+		t.Fatalf("GetStainlessBinding(after delete) = %#v, want nil", got)
+	}
+}
+
+func TestOAuthSessions_GetDeleteAndPurge(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "oauth-sessions.db")
+	if err := Migrate(dbPath); err != nil {
+		t.Fatalf("Migrate(): %v", err)
+	}
+
+	store, err := New(dbPath)
+	if err != nil {
+		t.Fatalf("New(): %v", err)
+	}
+	defer store.Close()
+
+	now := time.Now().UTC().Truncate(time.Second)
+	active := &domain.OAuthSessionState{
+		SessionID: "sess-active",
+		DataJSON:  `{"provider":"claude"}`,
+		CreatedAt: now,
+		ExpiresAt: now.Add(10 * time.Minute),
+	}
+	expired := &domain.OAuthSessionState{
+		SessionID: "sess-expired",
+		DataJSON:  `{"provider":"gemini"}`,
+		CreatedAt: now.Add(-20 * time.Minute),
+		ExpiresAt: now.Add(-10 * time.Minute),
+	}
+
+	if err := store.SaveOAuthSession(context.Background(), active); err != nil {
+		t.Fatalf("SaveOAuthSession(active): %v", err)
+	}
+	if err := store.SaveOAuthSession(context.Background(), expired); err != nil {
+		t.Fatalf("SaveOAuthSession(expired): %v", err)
+	}
+
+	got, err := store.GetAndDeleteOAuthSession(context.Background(), active.SessionID)
+	if err != nil {
+		t.Fatalf("GetAndDeleteOAuthSession(active): %v", err)
+	}
+	if got == nil || got.DataJSON != active.DataJSON {
+		t.Fatalf("GetAndDeleteOAuthSession(active) = %#v, want %q", got, active.DataJSON)
+	}
+
+	got, err = store.GetAndDeleteOAuthSession(context.Background(), active.SessionID)
+	if err != nil {
+		t.Fatalf("GetAndDeleteOAuthSession(active second read): %v", err)
+	}
+	if got != nil {
+		t.Fatalf("GetAndDeleteOAuthSession(active second read) = %#v, want nil", got)
+	}
+
+	got, err = store.GetAndDeleteOAuthSession(context.Background(), expired.SessionID)
+	if err != nil {
+		t.Fatalf("GetAndDeleteOAuthSession(expired): %v", err)
+	}
+	if got != nil {
+		t.Fatalf("GetAndDeleteOAuthSession(expired) = %#v, want nil", got)
+	}
+
+	purged, err := store.PurgeExpiredOAuthSessions(context.Background(), now)
+	if err != nil {
+		t.Fatalf("PurgeExpiredOAuthSessions(): %v", err)
+	}
+	if purged != 1 {
+		t.Fatalf("PurgeExpiredOAuthSessions() purged %d, want 1", purged)
+	}
+}
+
+func TestRefreshLocks_AcquireReleaseAndPurge(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "refresh-locks.db")
+	if err := Migrate(dbPath); err != nil {
+		t.Fatalf("Migrate(): %v", err)
+	}
+
+	store, err := New(dbPath)
+	if err != nil {
+		t.Fatalf("New(): %v", err)
+	}
+	defer store.Close()
+
+	now := time.Now().UTC().Truncate(time.Second)
+	first := &domain.RefreshLock{
+		AccountID: "acct-1",
+		LockID:    "lock-1",
+		CreatedAt: now,
+		ExpiresAt: now.Add(30 * time.Second),
+	}
+	second := &domain.RefreshLock{
+		AccountID: "acct-1",
+		LockID:    "lock-2",
+		CreatedAt: now.Add(1 * time.Second),
+		ExpiresAt: now.Add(31 * time.Second),
+	}
+	replacement := &domain.RefreshLock{
+		AccountID: "acct-1",
+		LockID:    "lock-3",
+		CreatedAt: now.Add(1 * time.Minute),
+		ExpiresAt: now.Add(90 * time.Second),
+	}
+
+	ok, err := store.AcquireRefreshLock(context.Background(), first)
+	if err != nil {
+		t.Fatalf("AcquireRefreshLock(first): %v", err)
+	}
+	if !ok {
+		t.Fatal("AcquireRefreshLock(first) = false, want true")
+	}
+
+	ok, err = store.AcquireRefreshLock(context.Background(), second)
+	if err != nil {
+		t.Fatalf("AcquireRefreshLock(second): %v", err)
+	}
+	if ok {
+		t.Fatal("AcquireRefreshLock(second) = true, want false while first lock is active")
+	}
+
+	if err := store.ReleaseRefreshLock(context.Background(), "acct-1", "wrong-lock"); err != nil {
+		t.Fatalf("ReleaseRefreshLock(wrong-lock): %v", err)
+	}
+
+	ok, err = store.AcquireRefreshLock(context.Background(), second)
+	if err != nil {
+		t.Fatalf("AcquireRefreshLock(second after wrong release): %v", err)
+	}
+	if ok {
+		t.Fatal("AcquireRefreshLock(second after wrong release) = true, want false")
+	}
+
+	if err := store.ReleaseRefreshLock(context.Background(), "acct-1", "lock-1"); err != nil {
+		t.Fatalf("ReleaseRefreshLock(lock-1): %v", err)
+	}
+
+	ok, err = store.AcquireRefreshLock(context.Background(), second)
+	if err != nil {
+		t.Fatalf("AcquireRefreshLock(second after release): %v", err)
+	}
+	if !ok {
+		t.Fatal("AcquireRefreshLock(second after release) = false, want true")
+	}
+
+	purged, err := store.PurgeExpiredRefreshLocks(context.Background(), now.Add(2*time.Minute))
+	if err != nil {
+		t.Fatalf("PurgeExpiredRefreshLocks(): %v", err)
+	}
+	if purged != 1 {
+		t.Fatalf("PurgeExpiredRefreshLocks() purged %d, want 1", purged)
+	}
+
+	ok, err = store.AcquireRefreshLock(context.Background(), replacement)
+	if err != nil {
+		t.Fatalf("AcquireRefreshLock(replacement): %v", err)
+	}
+	if !ok {
+		t.Fatal("AcquireRefreshLock(replacement) = false, want true after purge")
 	}
 }

@@ -89,9 +89,11 @@ func (p *refreshStubPool) StoreTokens(_ string, accessTokenEnc, refreshTokenEnc 
 	p.acct.ExpiresAt = expiresAt
 	return nil
 }
-func (p *refreshStubPool) MarkError(string, string)               {}
-func (p *refreshStubPool) AcquireRefreshLock(string, string) bool { return true }
-func (p *refreshStubPool) ReleaseRefreshLock(string, string)      {}
+func (p *refreshStubPool) MarkError(string, string) {}
+func (p *refreshStubPool) AcquireRefreshLock(context.Context, string, string) (bool, error) {
+	return true, nil
+}
+func (p *refreshStubPool) ReleaseRefreshLock(context.Context, string, string) error { return nil }
 func (p *refreshStubPool) CooldownCell(cellID string, until time.Time, message string) bool {
 	p.cooledCellID = cellID
 	p.cooldownUntil = until

@@ -161,7 +161,9 @@ func (r *Relay) finishRelaySuccess(
 	r.pool.Observe(acct.ID, effect)
 
 	if prepared.sessionUUID != "" {
-		r.pool.SetSessionBinding(prepared.sessionUUID, acct.ID, r.cfg.SessionBindingTTL)
+		if err := r.pool.SetSessionBinding(ctx, prepared.sessionUUID, acct.ID, r.cfg.SessionBindingTTL); err != nil {
+			slog.Warn("save session binding failed", "sessionUUID", prepared.sessionUUID, "accountId", acct.ID, "error", err)
+		}
 	}
 
 	startTime := time.Now()

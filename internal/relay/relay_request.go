@@ -1,6 +1,7 @@
 package relay
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -41,7 +42,7 @@ func (r *Relay) prepareRelayRequest(w http.ResponseWriter, req *http.Request, dr
 		return nil, true
 	}
 
-	sessionBoundAccountID, ok := r.resolveSessionBoundAccount(w, drv, input.Model, plan)
+	sessionBoundAccountID, ok := r.resolveSessionBoundAccount(req.Context(), w, drv, input.Model, plan)
 	if !ok {
 		return nil, true
 	}
@@ -94,17 +95,24 @@ func (r *Relay) parseRelayInput(w http.ResponseWriter, req *http.Request, drv dr
 	return input, plan, true
 }
 
-func (r *Relay) resolveSessionBoundAccount(w http.ResponseWriter, drv driver.ExecutionDriver, model string, plan driver.RelayPlan) (string, bool) {
+func (r *Relay) resolveSessionBoundAccount(ctx context.Context, w http.ResponseWriter, drv driver.ExecutionDriver, model string, plan driver.RelayPlan) (string, bool) {
 	if plan.SessionUUID == "" {
 		return "", true
 	}
 
-	boundID, ok := r.pool.GetSessionBinding(plan.SessionUUID)
+	boundID, ok, err := r.pool.GetSessionBinding(ctx, plan.SessionUUID)
+	if err != nil {
+		slog.Error("load session binding failed", "sessionUUID", plan.SessionUUID, "error", err)
+		drv.WriteError(w, http.StatusServiceUnavailable, "session state unavailable")
+		return "", false
+	}
 	if !ok {
 		return "", true
 	}
 	if r.pool.IsAvailableFor(boundID, drv, model) {
-		r.pool.RenewSessionBinding(plan.SessionUUID, r.cfg.SessionBindingTTL)
+		if err := r.pool.RenewSessionBinding(ctx, plan.SessionUUID, r.cfg.SessionBindingTTL); err != nil {
+			slog.Warn("renew session binding failed", "sessionUUID", plan.SessionUUID, "accountId", boundID, "error", err)
+		}
 		return boundID, true
 	}
 	if plan.RejectUnavailableSession {

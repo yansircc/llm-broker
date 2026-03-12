@@ -78,6 +78,35 @@ var desiredQuotaBucketColumns = []string{
 	"updated_at",
 }
 
+var desiredSessionBindingColumns = []string{
+	"session_uuid",
+	"account_id",
+	"created_at",
+	"last_used_at",
+	"expires_at",
+}
+
+var desiredStainlessBindingColumns = []string{
+	"account_id",
+	"headers_json",
+	"created_at",
+	"expires_at",
+}
+
+var desiredOAuthSessionColumns = []string{
+	"session_id",
+	"data_json",
+	"created_at",
+	"expires_at",
+}
+
+var desiredRefreshLockColumns = []string{
+	"account_id",
+	"lock_id",
+	"created_at",
+	"expires_at",
+}
+
 // Migrate creates or upgrades the database to the current schema.
 func Migrate(dbPath string) error {
 	db, err := openSQLite(dbPath)
@@ -113,6 +142,10 @@ func (s *SQLiteStore) validateCurrentSchema(ctx context.Context) error {
 		{table: "users", want: desiredUserColumns},
 		{table: "request_log", want: desiredRequestLogColumns},
 		{table: "quota_buckets", want: desiredQuotaBucketColumns},
+		{table: "session_bindings", want: desiredSessionBindingColumns},
+		{table: "stainless_bindings", want: desiredStainlessBindingColumns},
+		{table: "oauth_sessions", want: desiredOAuthSessionColumns},
+		{table: "refresh_locks", want: desiredRefreshLockColumns},
 	}
 
 	for _, check := range checks {

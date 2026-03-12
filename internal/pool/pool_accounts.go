@@ -20,6 +20,9 @@ func sameTime(a, b *time.Time) bool {
 func (p *Pool) ClearCooldown(accountID string) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
+	if err := p.reloadStateLocked(context.Background()); err != nil {
+		slog.Warn("pool refresh failed", "op", "clear_cooldown", "accountId", accountID, "error", err)
+	}
 	acct, ok := p.accounts[accountID]
 	if !ok {
 		return
@@ -52,6 +55,9 @@ func (p *Pool) applyBucketCooldown(bucket *domain.QuotaBucket, proposed time.Tim
 func (p *Pool) Update(accountID string, fn func(*domain.Account)) error {
 	p.mu.Lock()
 	defer p.mu.Unlock()
+	if err := p.reloadStateLocked(context.Background()); err != nil {
+		return fmt.Errorf("refresh pool state: %w", err)
+	}
 	acct, ok := p.accounts[accountID]
 	if !ok {
 		return fmt.Errorf("account %s not found", accountID)
@@ -98,6 +104,9 @@ func (p *Pool) Update(accountID string, fn func(*domain.Account)) error {
 func (p *Pool) Add(acct *domain.Account) error {
 	p.mu.Lock()
 	defer p.mu.Unlock()
+	if err := p.reloadStateLocked(context.Background()); err != nil {
+		return fmt.Errorf("refresh pool state: %w", err)
+	}
 	stateJSON := acct.ProviderStateJSON
 	if stateJSON == "" {
 		stateJSON = "{}"
@@ -124,6 +133,9 @@ func (p *Pool) Add(acct *domain.Account) error {
 func (p *Pool) Delete(accountID string) error {
 	p.mu.Lock()
 	defer p.mu.Unlock()
+	if err := p.reloadStateLocked(context.Background()); err != nil {
+		return fmt.Errorf("refresh pool state: %w", err)
+	}
 	acct, ok := p.accounts[accountID]
 	if !ok {
 		return fmt.Errorf("account %s not found", accountID)
@@ -143,6 +155,9 @@ func (p *Pool) Delete(accountID string) error {
 func (p *Pool) StoreTokens(accountID, accessTokenEnc, refreshTokenEnc string, expiresAt int64) error {
 	p.mu.Lock()
 	defer p.mu.Unlock()
+	if err := p.reloadStateLocked(context.Background()); err != nil {
+		return fmt.Errorf("refresh pool state: %w", err)
+	}
 	acct, ok := p.accounts[accountID]
 	if !ok {
 		return fmt.Errorf("account %s not found", accountID)
@@ -182,6 +197,9 @@ func (p *Pool) bucketHasMembersLocked(bucketKey string) bool {
 func (p *Pool) MarkError(accountID, msg string) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
+	if err := p.reloadStateLocked(context.Background()); err != nil {
+		slog.Warn("pool refresh failed", "op", "mark_error", "accountId", accountID, "error", err)
+	}
 	acct, ok := p.accounts[accountID]
 	if !ok {
 		return
@@ -194,6 +212,9 @@ func (p *Pool) MarkError(accountID, msg string) {
 func (p *Pool) FindBySubject(provider domain.Provider, subject string) *domain.Account {
 	if subject == "" {
 		return nil
+	}
+	if err := p.refreshState(context.Background()); err != nil {
+		slog.Warn("pool refresh failed", "op", "find_by_subject", "provider", provider, "error", err)
 	}
 	p.mu.RLock()
 	defer p.mu.RUnlock()

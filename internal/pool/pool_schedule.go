@@ -1,6 +1,7 @@
 package pool
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"log/slog"
@@ -39,6 +40,9 @@ func timeOrZero(t *time.Time) time.Time {
 }
 
 func (p *Pool) IsAvailableFor(accountID string, drv driver.SchedulerDriver, model string) bool {
+	if err := p.refreshState(context.Background()); err != nil {
+		slog.Warn("pool refresh failed", "op", "is_available_for", "error", err)
+	}
 	p.mu.RLock()
 	defer p.mu.RUnlock()
 	acct, ok := p.accounts[accountID]
@@ -49,6 +53,9 @@ func (p *Pool) IsAvailableFor(accountID string, drv driver.SchedulerDriver, mode
 }
 
 func (p *Pool) Pick(drv driver.SchedulerDriver, exclusions []Exclusion, model string, boundAccountID string) (*domain.Account, error) {
+	if err := p.refreshState(context.Background()); err != nil {
+		return nil, fmt.Errorf("refresh pool state: %w", err)
+	}
 	p.mu.RLock()
 	defer p.mu.RUnlock()
 

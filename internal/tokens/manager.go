@@ -21,8 +21,8 @@ type PoolAccess interface {
 	Get(accountID string) *domain.Account
 	StoreTokens(accountID, accessTokenEnc, refreshTokenEnc string, expiresAt int64) error
 	MarkError(accountID, msg string)
-	AcquireRefreshLock(accountID, lockID string) bool
-	ReleaseRefreshLock(accountID, lockID string)
+	AcquireRefreshLock(ctx context.Context, accountID, lockID string) (bool, error)
+	ReleaseRefreshLock(ctx context.Context, accountID, lockID string) error
 	CooldownCell(cellID string, until time.Time, message string) bool
 }
 
@@ -84,7 +84,10 @@ func (tm *Manager) EnsureValidToken(ctx context.Context, accountID string) (stri
 func (tm *Manager) refresh(ctx context.Context, accountID string) (string, error) {
 	lockID := uuid.New().String()
 
-	acquired := tm.pool.AcquireRefreshLock(accountID, lockID)
+	acquired, err := tm.pool.AcquireRefreshLock(ctx, accountID, lockID)
+	if err != nil {
+		return "", fmt.Errorf("acquire refresh lock: %w", err)
+	}
 	if !acquired {
 		slog.Info("token refresh locked, waiting", "accountId", accountID)
 		time.Sleep(2 * time.Second)
@@ -102,7 +105,11 @@ func (tm *Manager) refresh(ctx context.Context, accountID string) (string, error
 		return "", fmt.Errorf("token refresh in progress by another process")
 	}
 
-	defer tm.pool.ReleaseRefreshLock(accountID, lockID)
+	defer func() {
+		if err := tm.pool.ReleaseRefreshLock(context.Background(), accountID, lockID); err != nil {
+			slog.Warn("release refresh lock failed", "accountId", accountID, "lockId", lockID, "error", err)
+		}
+	}()
 
 	acct := tm.pool.Get(accountID)
 	if acct == nil {

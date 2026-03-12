@@ -60,11 +60,20 @@ func (s *Server) handleGetAccount(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var stainless map[string]interface{}
-	if hdrs, ok := s.pool.GetStainless(id); ok {
+	hdrs, ok, err := s.pool.GetStainless(r.Context(), id)
+	if err != nil {
+		writeAdminError(w, http.StatusInternalServerError, "internal_error", "failed to load stainless binding")
+		return
+	}
+	if ok {
 		json.Unmarshal([]byte(hdrs), &stainless)
 	}
 
-	sessions := s.pool.ListSessionBindingsForAccount(id)
+	sessions, err := s.pool.ListSessionBindingsForAccount(r.Context(), id)
+	if err != nil {
+		writeAdminError(w, http.StatusInternalServerError, "internal_error", "failed to load session bindings")
+		return
+	}
 	if sessions == nil {
 		sessions = []domain.SessionBindingInfo{}
 	}
@@ -247,7 +256,10 @@ func (s *Server) handleUnbindSession(w http.ResponseWriter, r *http.Request) {
 		writeAdminError(w, http.StatusBadRequest, "invalid_request", "uuid is required")
 		return
 	}
-	s.pool.UnbindSession(uuid)
+	if err := s.pool.UnbindSession(r.Context(), uuid); err != nil {
+		writeAdminError(w, http.StatusInternalServerError, "internal_error", "failed to unbind session")
+		return
+	}
 	slog.Info("session unbound", "uuid", uuid)
 	writeJSON(w, http.StatusOK, map[string]string{"unbound": uuid})
 }

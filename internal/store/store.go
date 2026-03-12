@@ -12,7 +12,7 @@ var ErrNotFound = errors.New("not found")
 
 // Store is the persistence interface for broker.
 // Account operations use typed structs instead of map[string]string.
-// Ephemeral state (sessions, stainless, locks, OAuth) lives in Pool or Server memory.
+// Session, stainless, OAuth, and refresh-lock coordination state are durable.
 type Store interface {
 	Ping(ctx context.Context) error
 	Close() error
@@ -30,6 +30,21 @@ type Store interface {
 	ListQuotaBuckets(ctx context.Context) ([]*domain.QuotaBucket, error)
 	SaveQuotaBucket(ctx context.Context, bucket *domain.QuotaBucket) error
 	DeleteQuotaBucket(ctx context.Context, bucketKey string) error
+	GetSessionBinding(ctx context.Context, sessionUUID string) (*domain.SessionBinding, error)
+	ListSessionBindingsByAccount(ctx context.Context, accountID string) ([]domain.SessionBinding, error)
+	SaveSessionBinding(ctx context.Context, binding *domain.SessionBinding) error
+	DeleteSessionBinding(ctx context.Context, sessionUUID string) error
+	PurgeExpiredSessionBindings(ctx context.Context, before time.Time) (int64, error)
+	GetStainlessBinding(ctx context.Context, accountID string) (*domain.StainlessBinding, error)
+	SetStainlessBindingNX(ctx context.Context, binding *domain.StainlessBinding) (bool, error)
+	DeleteStainlessBinding(ctx context.Context, accountID string) error
+	PurgeExpiredStainlessBindings(ctx context.Context, before time.Time) (int64, error)
+	SaveOAuthSession(ctx context.Context, session *domain.OAuthSessionState) error
+	GetAndDeleteOAuthSession(ctx context.Context, sessionID string) (*domain.OAuthSessionState, error)
+	PurgeExpiredOAuthSessions(ctx context.Context, before time.Time) (int64, error)
+	AcquireRefreshLock(ctx context.Context, lock *domain.RefreshLock) (bool, error)
+	ReleaseRefreshLock(ctx context.Context, accountID, lockID string) error
+	PurgeExpiredRefreshLocks(ctx context.Context, before time.Time) (int64, error)
 
 	// Users
 	CreateUser(ctx context.Context, u *domain.User) error

@@ -10,12 +10,16 @@ import (
 
 // MockStore implements Store for testing.
 type MockStore struct {
-	mu       sync.Mutex
-	accounts map[string]*domain.Account
-	cells    map[string]*domain.EgressCell
-	buckets  map[string]*domain.QuotaBucket
-	users    map[string]*domain.User
-	logs     []*domain.RequestLog
+	mu              sync.Mutex
+	accounts        map[string]*domain.Account
+	cells           map[string]*domain.EgressCell
+	buckets         map[string]*domain.QuotaBucket
+	sessionBindings map[string]*domain.SessionBinding
+	stainless       map[string]*domain.StainlessBinding
+	oauthSessions   map[string]*domain.OAuthSessionState
+	refreshLocks    map[string]*domain.RefreshLock
+	users           map[string]*domain.User
+	logs            []*domain.RequestLog
 
 	// Error injection
 	SaveAccountErr   error
@@ -28,10 +32,14 @@ type MockStore struct {
 
 func NewMockStore() *MockStore {
 	return &MockStore{
-		accounts: make(map[string]*domain.Account),
-		cells:    make(map[string]*domain.EgressCell),
-		buckets:  make(map[string]*domain.QuotaBucket),
-		users:    make(map[string]*domain.User),
+		accounts:        make(map[string]*domain.Account),
+		cells:           make(map[string]*domain.EgressCell),
+		buckets:         make(map[string]*domain.QuotaBucket),
+		sessionBindings: make(map[string]*domain.SessionBinding),
+		stainless:       make(map[string]*domain.StainlessBinding),
+		oauthSessions:   make(map[string]*domain.OAuthSessionState),
+		refreshLocks:    make(map[string]*domain.RefreshLock),
+		users:           make(map[string]*domain.User),
 	}
 }
 
@@ -159,6 +167,167 @@ func (m *MockStore) DeleteQuotaBucket(_ context.Context, bucketKey string) error
 	defer m.mu.Unlock()
 	delete(m.buckets, bucketKey)
 	return nil
+}
+
+func (m *MockStore) GetSessionBinding(_ context.Context, sessionUUID string) (*domain.SessionBinding, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	binding, ok := m.sessionBindings[sessionUUID]
+	if !ok || !binding.ExpiresAt.After(time.Now()) {
+		return nil, nil
+	}
+	copy := *binding
+	return &copy, nil
+}
+
+func (m *MockStore) ListSessionBindingsByAccount(_ context.Context, accountID string) ([]domain.SessionBinding, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	now := time.Now()
+	var result []domain.SessionBinding
+	for _, binding := range m.sessionBindings {
+		if binding.AccountID != accountID || !binding.ExpiresAt.After(now) {
+			continue
+		}
+		result = append(result, *binding)
+	}
+	return result, nil
+}
+
+func (m *MockStore) SaveSessionBinding(_ context.Context, binding *domain.SessionBinding) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	copy := *binding
+	m.sessionBindings[binding.SessionUUID] = &copy
+	return nil
+}
+
+func (m *MockStore) DeleteSessionBinding(_ context.Context, sessionUUID string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	delete(m.sessionBindings, sessionUUID)
+	return nil
+}
+
+func (m *MockStore) PurgeExpiredSessionBindings(_ context.Context, before time.Time) (int64, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var purged int64
+	for sessionUUID, binding := range m.sessionBindings {
+		if !binding.ExpiresAt.After(before) {
+			delete(m.sessionBindings, sessionUUID)
+			purged++
+		}
+	}
+	return purged, nil
+}
+
+func (m *MockStore) GetStainlessBinding(_ context.Context, accountID string) (*domain.StainlessBinding, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	binding, ok := m.stainless[accountID]
+	if !ok || !binding.ExpiresAt.After(time.Now()) {
+		return nil, nil
+	}
+	copy := *binding
+	return &copy, nil
+}
+
+func (m *MockStore) SetStainlessBindingNX(_ context.Context, binding *domain.StainlessBinding) (bool, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if existing, ok := m.stainless[binding.AccountID]; ok && existing.ExpiresAt.After(binding.CreatedAt) {
+		return false, nil
+	}
+	copy := *binding
+	m.stainless[binding.AccountID] = &copy
+	return true, nil
+}
+
+func (m *MockStore) DeleteStainlessBinding(_ context.Context, accountID string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	delete(m.stainless, accountID)
+	return nil
+}
+
+func (m *MockStore) PurgeExpiredStainlessBindings(_ context.Context, before time.Time) (int64, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var purged int64
+	for accountID, binding := range m.stainless {
+		if !binding.ExpiresAt.After(before) {
+			delete(m.stainless, accountID)
+			purged++
+		}
+	}
+	return purged, nil
+}
+
+func (m *MockStore) SaveOAuthSession(_ context.Context, session *domain.OAuthSessionState) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	copy := *session
+	m.oauthSessions[session.SessionID] = &copy
+	return nil
+}
+
+func (m *MockStore) GetAndDeleteOAuthSession(_ context.Context, sessionID string) (*domain.OAuthSessionState, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	session, ok := m.oauthSessions[sessionID]
+	if !ok || !session.ExpiresAt.After(time.Now()) {
+		return nil, nil
+	}
+	copy := *session
+	delete(m.oauthSessions, sessionID)
+	return &copy, nil
+}
+
+func (m *MockStore) PurgeExpiredOAuthSessions(_ context.Context, before time.Time) (int64, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var purged int64
+	for sessionID, session := range m.oauthSessions {
+		if !session.ExpiresAt.After(before) {
+			delete(m.oauthSessions, sessionID)
+			purged++
+		}
+	}
+	return purged, nil
+}
+
+func (m *MockStore) AcquireRefreshLock(_ context.Context, lock *domain.RefreshLock) (bool, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if existing, ok := m.refreshLocks[lock.AccountID]; ok && existing.ExpiresAt.After(lock.CreatedAt) {
+		return false, nil
+	}
+	copy := *lock
+	m.refreshLocks[lock.AccountID] = &copy
+	return true, nil
+}
+
+func (m *MockStore) ReleaseRefreshLock(_ context.Context, accountID, lockID string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if existing, ok := m.refreshLocks[accountID]; ok && existing.LockID == lockID {
+		delete(m.refreshLocks, accountID)
+	}
+	return nil
+}
+
+func (m *MockStore) PurgeExpiredRefreshLocks(_ context.Context, before time.Time) (int64, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var purged int64
+	for accountID, lock := range m.refreshLocks {
+		if !lock.ExpiresAt.After(before) {
+			delete(m.refreshLocks, accountID)
+			purged++
+		}
+	}
+	return purged, nil
 }
 
 func (m *MockStore) CreateUser(_ context.Context, u *domain.User) error {

@@ -38,7 +38,7 @@ func (s *Server) handleGenerateAuthURL(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	sessionID, err := s.storeOAuthSession(provider, session)
+	sessionID, err := s.storeOAuthSession(r.Context(), provider, session)
 	if err != nil {
 		writeAdminError(w, http.StatusInternalServerError, "internal_error", "failed to store oauth session")
 		return
@@ -59,12 +59,14 @@ func (s *Server) handleExchangeCode(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := s.hydrateExchangeCodeRequest(req); err != nil {
+	if err := s.hydrateExchangeCodeRequest(r.Context(), req); err != nil {
 		switch err {
 		case errInvalidOAuthSession:
 			writeAdminError(w, http.StatusBadRequest, "invalid_request", "invalid or expired session_id")
 		case errCorruptOAuthSession:
 			writeAdminError(w, http.StatusInternalServerError, "internal_error", "corrupt session data")
+		default:
+			writeAdminError(w, http.StatusInternalServerError, "internal_error", "failed to load oauth session")
 		}
 		return
 	}

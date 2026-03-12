@@ -1,6 +1,7 @@
 package identity
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"net/http"
@@ -14,7 +15,7 @@ var billingHeaderPattern = regexp.MustCompile(`(?i)x-anthropic-billing-header`)
 
 // StainlessBinder captures and replays stainless headers per account.
 type StainlessBinder interface {
-	BindStainlessFromRequest(accountID string, reqHeaders http.Header, outHeaders http.Header)
+	BindStainlessFromRequest(ctx context.Context, accountID string, reqHeaders http.Header, outHeaders http.Header) error
 }
 
 // Transformer applies all identity transformations to a request.
@@ -36,10 +37,11 @@ type TransformResult struct {
 
 // Transform applies all identity transformations to a request.
 func (t *Transformer) Transform(
+	ctx context.Context,
 	body map[string]interface{},
 	reqHeaders http.Header,
 	acct *domain.Account,
-) *TransformResult {
+) (*TransformResult, error) {
 	result := &TransformResult{
 		Body:    body,
 		Headers: FilterHeaders(reqHeaders),
@@ -64,9 +66,11 @@ func (t *Transformer) Transform(
 
 	// 5. Bind/restore stainless headers
 	RemoveAllStainless(result.Headers)
-	t.stainless.BindStainlessFromRequest(acct.ID, reqHeaders, result.Headers)
+	if err := t.stainless.BindStainlessFromRequest(ctx, acct.ID, reqHeaders, result.Headers); err != nil {
+		return nil, err
+	}
 
-	return result
+	return result, nil
 }
 
 func (t *Transformer) stripBillingHeaders(body map[string]interface{}) {

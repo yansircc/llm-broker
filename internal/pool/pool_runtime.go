@@ -1,6 +1,7 @@
 package pool
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"time"
@@ -8,82 +9,116 @@ import (
 	"github.com/yansircc/llm-broker/internal/domain"
 )
 
-func (p *Pool) GetSessionBinding(sessionUUID string) (string, bool) {
-	b, ok := p.sessions.Get(sessionUUID)
-	if !ok {
-		return "", false
+func (p *Pool) GetSessionBinding(ctx context.Context, sessionUUID string) (string, bool, error) {
+	binding, err := p.store.GetSessionBinding(ctx, sessionUUID)
+	if err != nil {
+		return "", false, err
 	}
-	return b.AccountID, true
-}
-
-func (p *Pool) SetSessionBinding(sessionUUID, accountID string, ttl time.Duration) {
-	now := time.Now()
-	p.sessions.Set(sessionUUID, SessionBinding{
-		AccountID:  accountID,
-		CreatedAt:  now,
-		LastUsedAt: now,
-	}, ttl)
-}
-
-func (p *Pool) RenewSessionBinding(sessionUUID string, ttl time.Duration) {
-	p.sessions.Update(sessionUUID, func(b *SessionBinding) {
-		b.LastUsedAt = time.Now()
-	}, ttl)
-}
-
-func (p *Pool) ListSessionBindingsForAccount(accountID string) []domain.SessionBindingInfo {
-	entries := p.sessions.Entries()
-	var result []domain.SessionBindingInfo
-	for _, e := range entries {
-		if e.Value.AccountID == accountID {
-			result = append(result, domain.SessionBindingInfo{
-				SessionUUID: e.Key,
-				AccountID:   e.Value.AccountID,
-				CreatedAt:   e.Value.CreatedAt.Format(time.RFC3339),
-				LastUsedAt:  e.Value.LastUsedAt.Format(time.RFC3339),
-				ExpiresAt:   e.ExpiresAt,
-			})
-		}
+	if binding == nil {
+		return "", false, nil
 	}
-	return result
+	return binding.AccountID, true, nil
 }
 
-func (p *Pool) UnbindSession(sessionUUID string) {
-	p.sessions.Delete(sessionUUID)
-}
-
-func (p *Pool) GetStainless(accountID string) (string, bool) {
-	return p.stainless.Get(accountID)
-}
-
-func (p *Pool) SetStainlessNX(accountID, headersJSON string) bool {
-	if _, ok := p.stainless.Get(accountID); ok {
-		return false
-	}
-	p.stainless.Set(accountID, headersJSON, 24*time.Hour)
-	return true
-}
-
-func (p *Pool) SetOAuthSession(state, data string, ttl time.Duration) {
-	p.oauthSessions.Set(state, data, ttl)
-}
-
-func (p *Pool) GetDelOAuthSession(state string) (string, bool) {
-	return p.oauthSessions.GetAndDelete(state)
-}
-
-func (p *Pool) AcquireRefreshLock(accountID, lockID string) bool {
-	return p.refreshLocks.SetNX(accountID, lockID, 30*time.Second)
-}
-
-func (p *Pool) ReleaseRefreshLock(accountID, lockID string) {
-	p.refreshLocks.DeleteIf(accountID, func(held string) bool {
-		return held == lockID
+func (p *Pool) SetSessionBinding(ctx context.Context, sessionUUID, accountID string, ttl time.Duration) error {
+	now := time.Now().UTC()
+	return p.store.SaveSessionBinding(ctx, &domain.SessionBinding{
+		SessionUUID: sessionUUID,
+		AccountID:   accountID,
+		CreatedAt:   now,
+		LastUsedAt:  now,
+		ExpiresAt:   now.Add(ttl),
 	})
 }
 
-func (p *Pool) BindStainlessFromRequest(accountID string, reqHeaders http.Header, outHeaders http.Header) {
-	stored, ok := p.GetStainless(accountID)
+func (p *Pool) RenewSessionBinding(ctx context.Context, sessionUUID string, ttl time.Duration) error {
+	binding, err := p.store.GetSessionBinding(ctx, sessionUUID)
+	if err != nil || binding == nil {
+		return err
+	}
+	now := time.Now().UTC()
+	binding.LastUsedAt = now
+	binding.ExpiresAt = now.Add(ttl)
+	return p.store.SaveSessionBinding(ctx, binding)
+}
+
+func (p *Pool) ListSessionBindingsForAccount(ctx context.Context, accountID string) ([]domain.SessionBindingInfo, error) {
+	bindings, err := p.store.ListSessionBindingsByAccount(ctx, accountID)
+	if err != nil {
+		return nil, err
+	}
+	result := make([]domain.SessionBindingInfo, 0, len(bindings))
+	for _, binding := range bindings {
+		result = append(result, binding.Info())
+	}
+	return result, nil
+}
+
+func (p *Pool) UnbindSession(ctx context.Context, sessionUUID string) error {
+	return p.store.DeleteSessionBinding(ctx, sessionUUID)
+}
+
+func (p *Pool) GetStainless(ctx context.Context, accountID string) (string, bool, error) {
+	binding, err := p.store.GetStainlessBinding(ctx, accountID)
+	if err != nil {
+		return "", false, err
+	}
+	if binding == nil {
+		return "", false, nil
+	}
+	return binding.HeadersJSON, true, nil
+}
+
+func (p *Pool) SetStainlessNX(ctx context.Context, accountID, headersJSON string, ttl time.Duration) (bool, error) {
+	now := time.Now().UTC()
+	return p.store.SetStainlessBindingNX(ctx, &domain.StainlessBinding{
+		AccountID:   accountID,
+		HeadersJSON: headersJSON,
+		CreatedAt:   now,
+		ExpiresAt:   now.Add(ttl),
+	})
+}
+
+func (p *Pool) SetOAuthSession(ctx context.Context, state, data string, ttl time.Duration) error {
+	now := time.Now().UTC()
+	return p.store.SaveOAuthSession(ctx, &domain.OAuthSessionState{
+		SessionID: state,
+		DataJSON:  data,
+		CreatedAt: now,
+		ExpiresAt: now.Add(ttl),
+	})
+}
+
+func (p *Pool) GetDelOAuthSession(ctx context.Context, state string) (string, bool, error) {
+	session, err := p.store.GetAndDeleteOAuthSession(ctx, state)
+	if err != nil {
+		return "", false, err
+	}
+	if session == nil {
+		return "", false, nil
+	}
+	return session.DataJSON, true, nil
+}
+
+func (p *Pool) AcquireRefreshLock(ctx context.Context, accountID, lockID string) (bool, error) {
+	now := time.Now().UTC()
+	return p.store.AcquireRefreshLock(ctx, &domain.RefreshLock{
+		AccountID: accountID,
+		LockID:    lockID,
+		CreatedAt: now,
+		ExpiresAt: now.Add(30 * time.Second),
+	})
+}
+
+func (p *Pool) ReleaseRefreshLock(ctx context.Context, accountID, lockID string) error {
+	return p.store.ReleaseRefreshLock(ctx, accountID, lockID)
+}
+
+func (p *Pool) BindStainlessFromRequest(ctx context.Context, accountID string, reqHeaders http.Header, outHeaders http.Header) error {
+	stored, ok, err := p.GetStainless(ctx, accountID)
+	if err != nil {
+		return err
+	}
 
 	if ok {
 		var headers map[string]string
@@ -102,8 +137,14 @@ func (p *Pool) BindStainlessFromRequest(accountID string, reqHeaders http.Header
 		}
 		if len(captured) > 0 {
 			data, _ := json.Marshal(captured)
-			if !p.SetStainlessNX(accountID, string(data)) {
-				if reread, ok := p.GetStainless(accountID); ok {
+			won, err := p.SetStainlessNX(ctx, accountID, string(data), 24*time.Hour)
+			if err != nil {
+				return err
+			}
+			if !won {
+				if reread, ok, err := p.GetStainless(ctx, accountID); err != nil {
+					return err
+				} else if ok {
 					var headers map[string]string
 					if json.Unmarshal([]byte(reread), &headers) == nil {
 						for k, v := range headers {
@@ -120,6 +161,7 @@ func (p *Pool) BindStainlessFromRequest(accountID string, reqHeaders http.Header
 			outHeaders.Set(key, v)
 		}
 	}
+	return nil
 }
 
 var boundStainlessKeys = []string{

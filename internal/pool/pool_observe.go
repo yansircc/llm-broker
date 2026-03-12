@@ -25,10 +25,18 @@ func (p *Pool) RunCleanup(ctx context.Context, interval time.Duration) {
 		case <-ticker.C:
 			p.cleanup()
 		case <-ttlTicker.C:
-			p.sessions.Cleanup()
-			p.stainless.Cleanup()
-			p.oauthSessions.Cleanup()
-			p.refreshLocks.Cleanup()
+			if _, err := p.store.PurgeExpiredSessionBindings(ctx, time.Now().UTC()); err != nil && ctx.Err() == nil {
+				slog.Warn("purge expired session bindings failed", "error", err)
+			}
+			if _, err := p.store.PurgeExpiredStainlessBindings(ctx, time.Now().UTC()); err != nil && ctx.Err() == nil {
+				slog.Warn("purge expired stainless bindings failed", "error", err)
+			}
+			if _, err := p.store.PurgeExpiredOAuthSessions(ctx, time.Now().UTC()); err != nil && ctx.Err() == nil {
+				slog.Warn("purge expired oauth sessions failed", "error", err)
+			}
+			if _, err := p.store.PurgeExpiredRefreshLocks(ctx, time.Now().UTC()); err != nil && ctx.Err() == nil {
+				slog.Warn("purge expired refresh locks failed", "error", err)
+			}
 		}
 	}
 }
@@ -36,6 +44,9 @@ func (p *Pool) RunCleanup(ctx context.Context, interval time.Duration) {
 func (p *Pool) cleanup() {
 	p.mu.Lock()
 	defer p.mu.Unlock()
+	if err := p.reloadStateLocked(context.Background()); err != nil {
+		slog.Warn("pool refresh failed", "op", "cleanup", "error", err)
+	}
 
 	now := time.Now()
 
@@ -105,6 +116,9 @@ func (p *Pool) computeExhaustedCooldown(acct *domain.Account, now int64) int64 {
 func (p *Pool) SetDrivers(drivers map[domain.Provider]driver.SchedulerDriver) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
+	if err := p.reloadStateLocked(context.Background()); err != nil {
+		slog.Warn("pool refresh failed", "op", "set_drivers", "error", err)
+	}
 	p.drivers = drivers
 	for _, acct := range p.accounts {
 		prev := acct.BucketKey
@@ -119,6 +133,9 @@ func (p *Pool) SetDrivers(drivers map[domain.Provider]driver.SchedulerDriver) {
 func (p *Pool) Observe(accountID string, effect driver.Effect) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
+	if err := p.reloadStateLocked(context.Background()); err != nil {
+		slog.Warn("pool refresh failed", "op", "observe", "accountId", accountID, "error", err)
+	}
 
 	acct, ok := p.accounts[accountID]
 	if !ok {

@@ -53,6 +53,10 @@ type Config struct {
 
 	// Logging
 	LogLevel string
+
+	// Runtime
+	BackgroundJobsMode       string
+	BackgroundLeaderLockPath string
 }
 
 func Load() *Config {
@@ -93,6 +97,9 @@ func Load() *Config {
 		MaxCacheControls: envInt("MAX_CACHE_CONTROLS", 4),
 
 		LogLevel: envOr("LOG_LEVEL", "info"),
+
+		BackgroundJobsMode:       envOr("BACKGROUND_JOBS_MODE", "all"),
+		BackgroundLeaderLockPath: envOr("BACKGROUND_LEADER_LOCK_PATH", "/var/run/llm-broker/background.lock"),
 	}
 }
 
@@ -108,6 +115,11 @@ func (c *Config) Validate() error {
 			return errMissing("GEMINI_OAUTH_CLIENT_ID")
 		}
 		return errMissing("GEMINI_OAUTH_CLIENT_SECRET")
+	}
+	switch c.BackgroundJobsMode {
+	case "all", "leader", "off":
+	default:
+		return &configError{field: "BACKGROUND_JOBS_MODE (must be all, leader, or off)"}
 	}
 	return nil
 }

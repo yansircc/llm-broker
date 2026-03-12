@@ -67,3 +67,41 @@ CREATE TABLE IF NOT EXISTS quota_buckets (
     state_json TEXT NOT NULL DEFAULT '{}',
     updated_at INTEGER NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS session_bindings (
+    session_uuid TEXT PRIMARY KEY,
+    account_id TEXT NOT NULL,
+    created_at INTEGER NOT NULL,
+    last_used_at INTEGER NOT NULL,
+    expires_at INTEGER NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_session_bindings_account ON session_bindings(account_id, last_used_at DESC);
+CREATE INDEX IF NOT EXISTS idx_session_bindings_expires ON session_bindings(expires_at);
+
+CREATE TABLE IF NOT EXISTS stainless_bindings (
+    account_id TEXT PRIMARY KEY,
+    headers_json TEXT NOT NULL,
+    created_at INTEGER NOT NULL,
+    expires_at INTEGER NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_stainless_bindings_expires ON stainless_bindings(expires_at);
+
+CREATE TABLE IF NOT EXISTS oauth_sessions (
+    session_id TEXT PRIMARY KEY,
+    data_json TEXT NOT NULL,
+    created_at INTEGER NOT NULL,
+    expires_at INTEGER NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_oauth_sessions_expires ON oauth_sessions(expires_at);
+
+CREATE TABLE IF NOT EXISTS refresh_locks (
+    account_id TEXT PRIMARY KEY,
+    lock_id TEXT NOT NULL,
+    created_at INTEGER NOT NULL,
+    expires_at INTEGER NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_refresh_locks_expires ON refresh_locks(expires_at);
