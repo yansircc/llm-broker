@@ -29,8 +29,17 @@ labels_json() {
     fi
 
     printf '%s\n' "$@" | jq -Rn '
-        [inputs | select(length > 0) | split("="; 2)] as $pairs
-        | reduce $pairs[] as $pair ({}; .[$pair[0]] = ($pair[1] // ""))
+        [inputs | select(length > 0) | split("=")] as $pairs
+        | reduce $pairs[] as $pair (
+            {};
+            .[$pair[0]] = (
+                if ($pair | length) > 1 then
+                    ($pair[1:] | join("="))
+                else
+                    ""
+                end
+            )
+        )
     '
 }
 

@@ -21,10 +21,6 @@ detect_service() {
         printf 'llm-broker\n'
         return
     fi
-    if ssh "$REMOTE" "systemctl cat cc-relayer >/dev/null 2>&1 || test -f /etc/cc-relayer.env || test -f /usr/local/bin/cc-relayer"; then
-        printf 'cc-relayer\n'
-        return
-    fi
     printf 'llm-broker\n'
 }
 
@@ -38,14 +34,6 @@ TMP_LOCAL="${TMP_LOCAL:-/tmp/${SERVICE}-new}"
 TMP_REMOTE="${TMP_REMOTE:-/tmp/${SERVICE}-new}"
 ARTIFACT_PREFIX="${ARTIFACT_PREFIX:-${SERVICE}}"
 ALT_ARTIFACT_PREFIX="${ALT_ARTIFACT_PREFIX:-}"
-
-if [[ -z "$ALT_ARTIFACT_PREFIX" ]]; then
-    if [[ "$ARTIFACT_PREFIX" == "llm-broker" ]]; then
-        ALT_ARTIFACT_PREFIX="cc-relayer"
-    else
-        ALT_ARTIFACT_PREFIX="llm-broker"
-    fi
-fi
 
 BLUEGREEN_STATE_DIR="${BLUEGREEN_STATE_DIR:-/var/lib/${SERVICE}/bluegreen}"
 BLUEGREEN_LAYOUT_FILE="${BLUEGREEN_LAYOUT_FILE:-${BLUEGREEN_STATE_DIR}/layout.env}"

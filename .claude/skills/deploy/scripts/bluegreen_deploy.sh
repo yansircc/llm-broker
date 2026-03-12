@@ -113,7 +113,11 @@ verify_db_invariants
 show_recent_restart_events "$ACTIVE_SERVICE_NAME" "$INACTIVE_SERVICE_NAME"
 
 echo "==> stopping previous active slot..."
-ssh "$REMOTE" "systemctl stop $ACTIVE_SERVICE_NAME >/dev/null 2>&1 || true"
+if ssh "$REMOTE" "systemctl stop $ACTIVE_SERVICE_NAME >/dev/null 2>&1 || true"; then
+    echo "    previous active slot stopped"
+else
+    echo "    warning: failed to stop previous active slot; continuing with new slot live"
+fi
 
 run_nonfatal_smoke_suite "$SNAPSHOT_ID"
 

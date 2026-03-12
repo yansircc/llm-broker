@@ -19,7 +19,9 @@ Use display names, not IDs, for the human naming convention.
 
 - Format: `COUNTRY Provider NN`
 - Local broker cells: `COUNTRY Provider NN(local)`
-- Keep IDs stable and technical even if an old ID is already in production
+- Keep IDs stable and technical
+- Do not encode control-plane topology into IDs
+- In particular, do not append `-local` to IDs; keep `local` only in display names or labels
 
 Current naming baseline:
 
@@ -51,7 +53,7 @@ What the wrapper does:
 
 ```bash
 bash .claude/skills/cells/scripts/add_cell.sh local \
-  --id cell-uk-linode-02-local \
+  --id cell-uk-linode-02 \
   --name "UK Linode 02(local)" \
   --listen-port 11082 \
   --ipv6 2600:3c13:e001:ae::101 \
