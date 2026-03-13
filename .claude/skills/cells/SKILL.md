@@ -13,6 +13,10 @@ Treat cell creation as an ops workflow:
 2. Register the endpoint as an egress cell in broker admin API
 3. Verify egress from the broker host before binding any account
 
+For per-cell IPv6 source addresses, default to `--ipv6-prefixlen 128`.
+This is the safe default for routed single-address egress on Linode and similar hosts.
+Only override it if the provider explicitly requires a different prefix length.
+
 ### Naming
 
 Use display names, not IDs, for the human naming convention.
@@ -57,6 +61,7 @@ bash .claude/skills/cells/scripts/add_cell.sh local \
   --name "UK Linode 02(local)" \
   --listen-port 11082 \
   --ipv6 2600:3c13:e001:ae::101 \
+  --ipv6-prefixlen 128 \
   --label site=core-local \
   --label ipv6=2600:3c13:e001:ae::101
 ```
@@ -72,12 +77,13 @@ bash .claude/skills/cells/scripts/add_cell.sh remote \
   --proxy-host 10.77.0.2 \
   --wg-bind-ip 10.77.0.2 \
   --allow-from 10.77.0.1/32 \
-  --ipv6 2600:3c1a::101 \
+  --ipv6 2600:3c1a:e001:16::101 \
+  --ipv6-prefixlen 128 \
   --install-package \
   --label country=FR \
   --label city=Paris \
   --label transport=wg-direct \
-  --label ipv6=2600:3c1a::101
+  --label ipv6=2600:3c1a:e001:16::101
 ```
 
 ### Underlying scripts

@@ -15,6 +15,7 @@ Shared options:
   --name "Cell Name"
   --listen-port PORT
   --ipv6 IPV6
+  --ipv6-prefixlen PREFIXLEN
   --label key=value          Repeatable
   --expect-ip IPV6           Optional verification target
   --leave-disabled           Do not activate after verification
@@ -49,6 +50,7 @@ cell_id=""
 name=""
 listen_port=""
 ipv6=""
+ipv6_prefixlen="128"
 expect_ip=""
 leave_disabled=0
 labels=()
@@ -67,6 +69,7 @@ while [[ "$#" -gt 0 ]]; do
         --name) name="${2:-}"; shift 2 ;;
         --listen-port) listen_port="${2:-}"; shift 2 ;;
         --ipv6) ipv6="${2:-}"; shift 2 ;;
+        --ipv6-prefixlen) ipv6_prefixlen="${2:-}"; shift 2 ;;
         --label) labels+=("${2:-}"); shift 2 ;;
         --expect-ip) expect_ip="${2:-}"; shift 2 ;;
         --leave-disabled) leave_disabled=1; shift 1 ;;
@@ -87,6 +90,7 @@ done
 [[ -n "$name" ]] || die "--name is required"
 [[ -n "$listen_port" ]] || die "--listen-port is required"
 [[ -n "$ipv6" ]] || die "--ipv6 is required"
+[[ "$ipv6_prefixlen" =~ ^[0-9]+$ ]] || die "--ipv6-prefixlen must be numeric"
 
 for label in "${labels[@]}"; do
     [[ "$label" == *=* ]] || die "--label must use key=value format: $label"
@@ -98,6 +102,7 @@ case "$mode" in
             --id "$cell_id"
             --listen-port "$listen_port"
             --ipv6 "$ipv6"
+            --ipv6-prefixlen "$ipv6_prefixlen"
             --iface "$iface"
             --listen-host "$listen_host"
         )
@@ -118,6 +123,7 @@ case "$mode" in
             --wg-bind-ip "$wg_bind_ip"
             --allow-from "$allow_from"
             --ipv6 "$ipv6"
+            --ipv6-prefixlen "$ipv6_prefixlen"
             --iface "$iface"
         )
         if [[ -n "$service_name" ]]; then

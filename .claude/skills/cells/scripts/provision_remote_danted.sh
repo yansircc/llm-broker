@@ -14,6 +14,7 @@ Usage:
     --wg-bind-ip WG_IP \
     --allow-from CIDR \
     --ipv6 IPV6 \
+    [--ipv6-prefixlen 128] \
     [--iface eth0] \
     [--service-name danted-...] \
     [--install-package]
@@ -28,6 +29,7 @@ listen_port=""
 wg_bind_ip=""
 allow_from="10.77.0.1/32"
 ipv6=""
+ipv6_prefixlen="128"
 iface="eth0"
 service_name=""
 install_package=0
@@ -40,6 +42,7 @@ while [[ "$#" -gt 0 ]]; do
         --wg-bind-ip) wg_bind_ip="${2:-}"; shift 2 ;;
         --allow-from) allow_from="${2:-}"; shift 2 ;;
         --ipv6) ipv6="${2:-}"; shift 2 ;;
+        --ipv6-prefixlen) ipv6_prefixlen="${2:-}"; shift 2 ;;
         --iface) iface="${2:-}"; shift 2 ;;
         --service-name) service_name="${2:-}"; shift 2 ;;
         --install-package) install_package=1; shift 1 ;;
@@ -54,6 +57,7 @@ done
 [[ -n "$wg_bind_ip" ]] || die "--wg-bind-ip is required"
 [[ -n "$ipv6" ]] || die "--ipv6 is required"
 [[ "$listen_port" =~ ^[0-9]+$ ]] || die "--listen-port must be numeric"
+[[ "$ipv6_prefixlen" =~ ^[0-9]+$ ]] || die "--ipv6-prefixlen must be numeric"
 
 if [[ -z "$service_name" ]]; then
     service_name="danted-$(slugify "$cell_id")"
@@ -69,6 +73,7 @@ ssh "$target" env \
     WG_BIND_IP="$wg_bind_ip" \
     ALLOW_FROM="$allow_from" \
     IPV6="$ipv6" \
+    IPV6_PREFIXLEN="$ipv6_prefixlen" \
     IFACE="$iface" \
     SERVICE_NAME="$service_name" \
     CONF_PATH="$conf_path" \
@@ -135,9 +140,9 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-ExecStartPre=/bin/sh -c 'ip -6 addr show dev $IFACE | grep -q "$IPV6" || ip -6 addr add $IPV6/64 dev $IFACE nodad'
+ExecStartPre=/bin/sh -c 'ip -6 addr show dev $IFACE | grep -q "$IPV6" || ip -6 addr add $IPV6/$IPV6_PREFIXLEN dev $IFACE nodad'
 ExecStart=$danted_bin -f $CONF_PATH
-ExecStopPost=/bin/sh -c 'ip -6 addr show dev $IFACE | grep -q "$IPV6" && ip -6 addr del $IPV6/64 dev $IFACE || true'
+ExecStopPost=/bin/sh -c 'ip -6 addr show dev $IFACE | grep -q "$IPV6" && ip -6 addr del $IPV6/$IPV6_PREFIXLEN dev $IFACE || true'
 Restart=always
 RestartSec=3
 
