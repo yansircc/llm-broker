@@ -759,52 +759,6 @@ func TestHandleCompatOpenAIChatCompletions_GeminiStreamLoop(t *testing.T) {
 	}
 }
 
-func TestHandleCompatOpenAIChatCompletions_RateLimited(t *testing.T) {
-	upstreamClient := &http.Client{
-		Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
-			respBody := `{
-				"id":"msg_compat_1",
-				"model":"claude-sonnet-4-5",
-				"stop_reason":"end_turn",
-				"content":[{"type":"text","text":"compat ok"}]
-			}`
-			return &http.Response{
-				StatusCode: http.StatusOK,
-				Header:     make(http.Header),
-				Body:       io.NopCloser(strings.NewReader(respBody)),
-			}, nil
-		}),
-	}
-	srv := newCompatTestServer(t, upstreamClient)
-	srv.compatLimiter = newCompatRateLimiter(1, 1)
-
-	reqBody := `{
-		"model":"claude/claude-sonnet-4-5",
-		"messages":[{"role":"user","content":"hello"}]
-	}`
-	makeReq := func() *http.Request {
-		req := httptest.NewRequest(http.MethodPost, "/compat/v1/chat/completions", strings.NewReader(reqBody))
-		req.Header.Set("Content-Type", "application/json")
-		ctx := context.WithValue(req.Context(), auth.KeyInfoKey, &auth.KeyInfo{ID: "user-1", Name: "test"})
-		return req.WithContext(ctx)
-	}
-
-	first := httptest.NewRecorder()
-	srv.handleCompatOpenAIChatCompletions(first, makeReq())
-	if first.Code != http.StatusOK {
-		t.Fatalf("first status = %d, body = %s", first.Code, first.Body.String())
-	}
-
-	second := httptest.NewRecorder()
-	srv.handleCompatOpenAIChatCompletions(second, makeReq())
-	if second.Code != http.StatusTooManyRequests {
-		t.Fatalf("second status = %d, want %d, body = %s", second.Code, http.StatusTooManyRequests, second.Body.String())
-	}
-	if !strings.Contains(second.Body.String(), "rate limit") {
-		t.Fatalf("second body = %s", second.Body.String())
-	}
-}
-
 func newCompatTestServer(t *testing.T, upstreamClient *http.Client) *Server {
 	return newCompatMultiProviderTestServer(t, map[domain.Provider]*http.Client{
 		domain.ProviderClaude: upstreamClient,

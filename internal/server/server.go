@@ -33,7 +33,6 @@ type Server struct {
 	httpServer     *http.Server
 	version        string
 	startTime      time.Time
-	compatLimiter  *compatRateLimiter
 	catalogDrivers map[domain.Provider]driver.Descriptor
 	oauthDrivers   map[domain.Provider]driver.OAuthDriver
 	adminDrivers   map[domain.Provider]driver.AdminDriver
@@ -65,7 +64,6 @@ func New(
 		bus:            bus,
 		version:        version,
 		startTime:      time.Now(),
-		compatLimiter:  newCompatRateLimiter(cfg.CompatMaxRequestsPerMinute, cfg.CompatMaxConcurrent),
 		catalogDrivers: drivers.Catalog,
 		oauthDrivers:   drivers.OAuth,
 		adminDrivers:   drivers.Admin,

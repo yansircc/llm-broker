@@ -8,7 +8,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/yansircc/llm-broker/internal/auth"
 	"github.com/yansircc/llm-broker/internal/config"
 	"github.com/yansircc/llm-broker/internal/domain"
 )
@@ -646,17 +645,6 @@ func (s *Server) handleCompatListModels(w http.ResponseWriter, r *http.Request) 
 
 func (s *Server) handleCompatOpenAIChatCompletions(w http.ResponseWriter, r *http.Request) {
 	r.Body = http.MaxBytesReader(w, r.Body, compatRequestBodyLimitBytes(s.cfg))
-
-	releaseCompatSlot := func() {}
-	if ki := auth.GetKeyInfo(r.Context()); ki != nil && !ki.IsAdmin {
-		release, err := s.compatLimiter.Acquire(ki.ID, time.Now())
-		if err != nil {
-			writeCompatOpenAIError(w, http.StatusTooManyRequests, "rate_limit_error", err.Error())
-			return
-		}
-		releaseCompatSlot = release
-	}
-	defer releaseCompatSlot()
 
 	var req compatOpenAIChatRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
