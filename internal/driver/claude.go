@@ -145,6 +145,13 @@ func (d *ClaudeDriver) Interpret(statusCode int, headers http.Header, body []byt
 			CooldownUntil: time.Now().Add(d.cfg.Pauses.Pause401Refresh),
 			UpdatedState:  mustMarshalJSON(state),
 		}
+
+	case 500:
+		return Effect{
+			Kind:         EffectServerError,
+			Scope:        EffectScopeBucket,
+			UpdatedState: mustMarshalJSON(state),
+		}
 	}
 
 	return Effect{Kind: EffectSuccess, Scope: EffectScopeBucket, UpdatedState: mustMarshalJSON(state)}

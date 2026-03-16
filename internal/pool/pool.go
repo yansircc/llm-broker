@@ -27,12 +27,13 @@ func ExcludeBucket(bucketKey string) Exclusion {
 }
 
 type Pool struct {
-	mu       sync.RWMutex
-	accounts map[string]*domain.Account
-	cells    map[string]*domain.EgressCell
-	buckets  map[string]*domain.QuotaBucket
-	store    store.Store
-	bus      *events.Bus
+	mu             sync.RWMutex
+	accounts       map[string]*domain.Account
+	cells          map[string]*domain.EgressCell
+	buckets        map[string]*domain.QuotaBucket
+	serverErrCount map[string]int // consecutive upstream 500s per bucket key
+	store          store.Store
+	bus            *events.Bus
 
 	onAuthFailure func(accountID string)
 	drivers       map[domain.Provider]driver.SchedulerDriver
@@ -44,11 +45,12 @@ func (p *Pool) SetOnAuthFailure(fn func(accountID string)) {
 
 func New(s store.Store, bus *events.Bus) (*Pool, error) {
 	p := &Pool{
-		accounts: make(map[string]*domain.Account),
-		cells:    make(map[string]*domain.EgressCell),
-		buckets:  make(map[string]*domain.QuotaBucket),
-		store:    s,
-		bus:      bus,
+		accounts:       make(map[string]*domain.Account),
+		cells:          make(map[string]*domain.EgressCell),
+		buckets:        make(map[string]*domain.QuotaBucket),
+		serverErrCount: make(map[string]int),
+		store:          s,
+		bus:            bus,
 	}
 
 	if err := p.refreshState(context.Background()); err != nil {

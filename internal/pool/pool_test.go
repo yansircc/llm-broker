@@ -717,3 +717,60 @@ func TestObserve_BucketScopeSyncsCooldownAndState(t *testing.T) {
 		}
 	}
 }
+
+func TestCircuitBreakerOnServerError(t *testing.T) {
+	acct := activeAccount("cb-1", "cb@test.com")
+	p := newTestPool(t, acct)
+	p.SetDrivers(map[domain.Provider]driver.SchedulerDriver{
+		domain.ProviderClaude: testDriver,
+	})
+
+	bucketKey := testDriver.BucketKey(acct)
+
+	// First two EffectServerError should NOT trigger cooldown.
+	for i := 0; i < 2; i++ {
+		p.Observe(acct.ID, driver.Effect{Kind: driver.EffectServerError, Scope: driver.EffectScopeBucket})
+		bucket := p.buckets[bucketKey]
+		if bucket != nil && bucket.CooldownUntil != nil {
+			t.Fatalf("unexpected cooldown after %d server errors", i+1)
+		}
+	}
+
+	// Third should trigger cooldown.
+	p.Observe(acct.ID, driver.Effect{Kind: driver.EffectServerError, Scope: driver.EffectScopeBucket})
+	bucket := p.buckets[bucketKey]
+	if bucket == nil || bucket.CooldownUntil == nil {
+		t.Fatal("expected cooldown after 3 consecutive server errors")
+	}
+	if bucket.CooldownUntil.Before(time.Now()) {
+		t.Fatal("cooldown should be in the future")
+	}
+}
+
+func TestCircuitBreakerResetOnSuccess(t *testing.T) {
+	acct := activeAccount("cb-2", "cb2@test.com")
+	p := newTestPool(t, acct)
+	p.SetDrivers(map[domain.Provider]driver.SchedulerDriver{
+		domain.ProviderClaude: testDriver,
+	})
+
+	bucketKey := testDriver.BucketKey(acct)
+
+	// Two server errors, then a success should reset the counter.
+	p.Observe(acct.ID, driver.Effect{Kind: driver.EffectServerError, Scope: driver.EffectScopeBucket})
+	p.Observe(acct.ID, driver.Effect{Kind: driver.EffectServerError, Scope: driver.EffectScopeBucket})
+	p.Observe(acct.ID, driver.Effect{Kind: driver.EffectSuccess, Scope: driver.EffectScopeBucket})
+
+	if count := p.serverErrCount[bucketKey]; count != 0 {
+		t.Fatalf("expected counter reset after success, got %d", count)
+	}
+
+	// After reset, need 3 more errors to trigger cooldown.
+	for i := 0; i < 2; i++ {
+		p.Observe(acct.ID, driver.Effect{Kind: driver.EffectServerError, Scope: driver.EffectScopeBucket})
+	}
+	bucket := p.buckets[bucketKey]
+	if bucket != nil && bucket.CooldownUntil != nil {
+		t.Fatal("unexpected cooldown after only 2 server errors post-reset")
+	}
+}

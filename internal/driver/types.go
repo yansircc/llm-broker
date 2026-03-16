@@ -20,11 +20,12 @@ type ErrorPauses struct {
 type EffectKind int
 
 const (
-	EffectSuccess  EffectKind = iota
-	EffectCooldown            // 429, 403 non-ban
-	EffectOverload            // 529
-	EffectBlock               // 403 ban
-	EffectAuthFail            // 401
+	EffectSuccess     EffectKind = iota
+	EffectCooldown               // 429, 403 non-ban
+	EffectOverload               // 529
+	EffectBlock                  // 403 ban
+	EffectAuthFail               // 401
+	EffectServerError            // 500
 )
 
 // EffectScope determines whether an effect applies to one credential or an entire bucket.

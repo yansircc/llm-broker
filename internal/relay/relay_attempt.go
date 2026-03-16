@@ -170,7 +170,14 @@ func (r *Relay) executeRelayAttempt(
 			CreatedAt:  time.Now().UTC(),
 		})
 
-		effect := drv.Interpret(http.StatusOK, resp.Header, nil, prepared.input.Model, json.RawMessage(acct.ProviderStateJSON))
+		// Pass real status for 500 so the driver can return EffectServerError
+		// for circuit-breaker tracking. Other non-retriable codes keep using
+		// StatusOK so Interpret just captures rate-limit headers as before.
+		interpretStatus := http.StatusOK
+		if resp.StatusCode == http.StatusInternalServerError {
+			interpretStatus = resp.StatusCode
+		}
+		effect := drv.Interpret(interpretStatus, resp.Header, nil, prepared.input.Model, json.RawMessage(acct.ProviderStateJSON))
 		r.pool.Observe(acct.ID, effect)
 
 		slog.Warn("upstream non-retriable error",
