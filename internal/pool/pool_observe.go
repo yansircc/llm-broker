@@ -77,7 +77,6 @@ func (p *Pool) cleanup() {
 					if result.Applied {
 						p.bus.Publish(events.Event{
 							Type:          events.EventRateLimit,
-							AccountID:     acct.ID,
 							BucketKey:     bucket.BucketKey,
 							CooldownUntil: &result.Actual,
 							Message:       "exhausted cooldown enforced",

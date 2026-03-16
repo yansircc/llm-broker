@@ -64,6 +64,9 @@ func (b *Bus) Publish(e Event) {
 	if e.AccountID != "" {
 		attrs = append(attrs, "accountId", e.AccountID)
 	}
+	if e.UserID != "" {
+		attrs = append(attrs, "userId", e.UserID)
+	}
 	if e.BucketKey != "" {
 		attrs = append(attrs, "bucketKey", e.BucketKey)
 	}

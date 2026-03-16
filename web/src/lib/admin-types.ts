@@ -35,6 +35,7 @@ export interface UserSummary {
 export interface DashboardEvent {
 	type: string;
 	account_id?: string;
+	user_id?: string;
 	bucket_key?: string;
 	cell_id?: string;
 	cooldown_until?: string;

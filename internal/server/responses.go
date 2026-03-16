@@ -71,6 +71,7 @@ type DashboardUser struct {
 type DashboardEvent struct {
 	Type          string     `json:"type"`
 	AccountID     string     `json:"account_id,omitempty"`
+	UserID        string     `json:"user_id,omitempty"`
 	BucketKey     string     `json:"bucket_key,omitempty"`
 	CellID        string     `json:"cell_id,omitempty"`
 	CooldownUntil *time.Time `json:"cooldown_until,omitempty"`

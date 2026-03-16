@@ -87,6 +87,7 @@ func (s *Server) dashboardEvents(limit int) []DashboardEvent {
 		views = append(views, DashboardEvent{
 			Type:          string(event.Type),
 			AccountID:     event.AccountID,
+			UserID:        event.UserID,
 			BucketKey:     event.BucketKey,
 			CellID:        event.CellID,
 			CooldownUntil: event.CooldownUntil,
