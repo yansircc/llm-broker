@@ -25,10 +25,10 @@ func (r *Relay) handleWithDriver(w http.ResponseWriter, req *http.Request, drv d
 		case relayAttemptDone:
 			return
 		case relayAttemptStop:
-			r.finishRelayFailure(w, drv, prepared.input.IsStream, attempts)
+			r.finishRelayFailure(w, drv, prepared, attempts)
 			return
 		}
 	}
 
-	r.finishRelayFailure(w, drv, prepared.input.IsStream, attempts)
+	r.finishRelayFailure(w, drv, prepared, attempts)
 }

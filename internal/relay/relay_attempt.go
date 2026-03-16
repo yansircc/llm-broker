@@ -265,16 +265,20 @@ func (r *Relay) logUsageAsync(userID, accountID, model string, usage *driver.Usa
 	})
 }
 
-func (r *Relay) finishRelayFailure(w http.ResponseWriter, drv driver.ExecutionDriver, isStream bool, state *relayAttemptState) {
+func (r *Relay) finishRelayFailure(w http.ResponseWriter, drv driver.ExecutionDriver, prepared *preparedRelayRequest, state *relayAttemptState) {
 	if state.lastErr != nil {
 		slog.Error("all relay attempts failed", "error", state.lastErr, "provider", drv.Provider())
-		r.bus.Publish(events.Event{
+		evt := events.Event{
 			Type:    events.EventRelayError,
 			Message: fmt.Sprintf("%s: all relay attempts failed: %s", drv.Provider(), state.lastErr.Error()),
-		})
+		}
+		if prepared != nil && prepared.keyInfo != nil {
+			evt.UserID = prepared.keyInfo.ID
+		}
+		r.bus.Publish(evt)
 	}
 	if state.lastUpstreamBody != nil {
-		drv.WriteUpstreamError(w, state.lastUpstreamStatus, state.lastUpstreamBody, isStream)
+		drv.WriteUpstreamError(w, state.lastUpstreamStatus, state.lastUpstreamBody, prepared.input.IsStream)
 		return
 	}
 	drv.WriteError(w, http.StatusServiceUnavailable, "no available accounts")

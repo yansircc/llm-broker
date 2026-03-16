@@ -145,6 +145,17 @@ func main() {
 		defer cancel()
 		if _, err := tokMgr.ForceRefresh(ctx, accountID); err != nil {
 			slog.Error("401 background refresh failed", "accountId", accountID, "error", err)
+			bus.Publish(events.Event{
+				Type:      events.EventRefresh,
+				AccountID: accountID,
+				Message:   "background refresh failed: " + err.Error(),
+			})
+		} else {
+			bus.Publish(events.Event{
+				Type:      events.EventRecover,
+				AccountID: accountID,
+				Message:   "background refresh succeeded",
+			})
 		}
 	})
 
