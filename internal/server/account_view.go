@@ -8,19 +8,19 @@ import (
 )
 
 type accountProjection struct {
-	effectivePriority int
-	autoScore         int
-	windows           []UtilizationWindowResponse
-	probeLabel        string
-	providerFields    []AccountFieldResponse
+	effectiveWeight int
+	autoWeight      int
+	windows         []UtilizationWindowResponse
+	probeLabel      string
+	providerFields  []AccountFieldResponse
 }
 
 func (s *Server) projectAccount(acct *domain.Account) accountProjection {
 	proj := accountProjection{
-		effectivePriority: acct.Priority,
-		windows:           []UtilizationWindowResponse{},
-		probeLabel:        string(acct.Provider),
-		providerFields:    []AccountFieldResponse{},
+		effectiveWeight: acct.Priority,
+		windows:         []UtilizationWindowResponse{},
+		probeLabel:      string(acct.Provider),
+		providerFields:  []AccountFieldResponse{},
 	}
 
 	drv, ok := s.adminDrivers[acct.Provider]
@@ -34,8 +34,8 @@ func (s *Server) projectAccount(acct *domain.Account) accountProjection {
 	proj.providerFields = toFieldResponses(drv.DescribeAccount(acct))
 
 	if acct.PriorityMode == "auto" {
-		proj.autoScore = drv.AutoPriority(state)
-		proj.effectivePriority = proj.autoScore
+		proj.autoWeight = drv.AutoPriority(state)
+		proj.effectiveWeight = proj.autoWeight
 	}
 
 	return proj

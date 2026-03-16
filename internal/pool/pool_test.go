@@ -3,6 +3,8 @@ package pool
 import (
 	"context"
 	"encoding/json"
+	"math"
+	"math/rand"
 	"net/http"
 	"strings"
 	"sync"
@@ -150,17 +152,17 @@ func TestPick_NeverReturnsUnavailable(t *testing.T) {
 	opusLimited := activeAccount("op", "op@x")
 	opusLimited.ProviderStateJSON = `{"deny_opus":true}`
 	good := activeAccount("g", "g@x")
-	good.Priority = 99 // highest priority to ensure deterministic selection
+	good.Priority = 99
 
 	p := newTestPool(t, blocked, cooling, overloaded, opusLimited, good)
 
-	// Pick should return "good" (highest priority, others filtered)
+	// Non-opus may choose any available account, but never an unavailable one.
 	acct, err := p.Pick(testDriver, nil, "claude-haiku", "")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if acct.ID != "g" {
-		t.Fatalf("expected g, got %s", acct.ID)
+	if acct.ID != "g" && acct.ID != "op" {
+		t.Fatalf("expected an available account, got %s", acct.ID)
 	}
 
 	// With opus, opusLimited should also be excluded, still get "good"
@@ -573,39 +575,54 @@ func TestUpdate_PersistsUnderLock(t *testing.T) {
 	}
 }
 
-// Test 8: Pick sorts by priority DESC, lastUsedAt ASC
-func TestPick_PrioritySort(t *testing.T) {
-	a1 := activeAccount("a1", "a1@x")
-	a1.Priority = 80
+func TestPick_SameBucketUsesLeastRecentlyUsed(t *testing.T) {
 	now := time.Now()
-	a1.LastUsedAt = &now
+	recent := activeAccount("recent", "recent@x")
+	recent.BucketKey = "shared"
+	recent.LastUsedAt = &now
 
-	a2 := activeAccount("a2", "a2@x")
-	a2.Priority = 80
+	older := activeAccount("older", "older@x")
+	older.BucketKey = "shared"
 	past := now.Add(-1 * time.Hour)
-	a2.LastUsedAt = &past
+	older.LastUsedAt = &past
 
-	a3 := activeAccount("a3", "a3@x")
-	a3.Priority = 90
+	p := newTestPool(t, recent, older)
 
-	p := newTestPool(t, a1, a2, a3)
-
-	// a3 should win (highest priority)
 	acct, err := p.Pick(testDriver, nil, "claude-haiku", "")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if acct.ID != "a3" {
-		t.Fatalf("expected a3 (highest priority), got %s", acct.ID)
+	if acct.ID != "older" {
+		t.Fatalf("expected older account from shared bucket, got %s", acct.ID)
+	}
+}
+
+func TestPickBucketCandidate_UsesSqrtWeightedLottery(t *testing.T) {
+	candidates := make([]bucketCandidate, 0, 15)
+	for i := 0; i < 14; i++ {
+		candidates = append(candidates, bucketCandidate{key: "old", priority: 20})
+	}
+	candidates = append(candidates, bucketCandidate{key: "new", priority: 100})
+
+	rng := rand.New(rand.NewSource(1))
+	const draws = 20000
+	newHits := 0
+	for i := 0; i < draws; i++ {
+		chosen := pickBucketCandidate(candidates, func(totalWeight float64) float64 {
+			return rng.Float64() * totalWeight
+		})
+		if chosen.key == "new" {
+			newHits++
+		}
 	}
 
-	// Exclude a3, then a2 should win (same priority, older lastUsedAt)
-	acct, err = p.Pick(testDriver, []Exclusion{ExcludeAccount("a3")}, "claude-haiku", "")
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
+	share := float64(newHits) / draws
+	want := bucketPriorityWeight(100) / (14*bucketPriorityWeight(20) + bucketPriorityWeight(100))
+	if math.Abs(share-want) > 0.02 {
+		t.Fatalf("new bucket share = %.4f, want around %.4f", share, want)
 	}
-	if acct.ID != "a2" {
-		t.Fatalf("expected a2 (older lastUsedAt), got %s", acct.ID)
+	if share >= 0.20 {
+		t.Fatalf("new bucket share = %.4f, want well below monopoly", share)
 	}
 }
 

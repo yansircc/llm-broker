@@ -16,9 +16,9 @@
 		subject: string;
 		status: string;
 		probe_label: string;
-		priority: number;
-		priority_mode: string;
-		auto_score: number;
+		weight: number;
+		weight_mode: string;
+		auto_weight: number;
 		error_message: string;
 		provider_fields: { label: string; value: string }[];
 		created_at: string;
@@ -130,10 +130,10 @@
 		}
 	}
 
-	function handlePriorityUpdate(mode: string, priority: number) {
+	function handleWeightUpdate(mode: string, weight: number) {
 		if (!acct) return;
-		acct.priority_mode = mode;
-		acct.priority = priority;
+		acct.weight_mode = mode;
+		acct.weight = weight;
 	}
 
 	function cooldownActive(cell: EgressCellSummary | EgressCellView | null | undefined): boolean {
@@ -319,14 +319,14 @@
 			{/each}
 		{/if}
 
-		<dt>priority</dt>
+		<dt>weight</dt>
 		<dd>
 			<PriorityEditor
 				accountId={acct.id}
-				priority={acct.priority}
-				priorityMode={acct.priority_mode}
-				autoScore={acct.auto_score}
-				onupdate={handlePriorityUpdate}
+				weight={acct.weight}
+				weightMode={acct.weight_mode}
+				autoWeight={acct.auto_weight}
+				onupdate={handleWeightUpdate}
 			/>
 		</dd>
 

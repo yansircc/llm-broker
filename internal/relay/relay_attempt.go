@@ -170,7 +170,7 @@ func (r *Relay) executeRelayAttempt(
 			CreatedAt:  time.Now().UTC(),
 		})
 
-		effect := drv.Interpret(resp.StatusCode, resp.Header, nil, prepared.input.Model, json.RawMessage(acct.ProviderStateJSON))
+		effect := drv.Interpret(resp.StatusCode, resp.Header, errBody, prepared.input.Model, json.RawMessage(acct.ProviderStateJSON))
 		r.pool.Observe(acct.ID, effect)
 
 		slog.Warn("upstream non-retriable error",

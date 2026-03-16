@@ -51,7 +51,7 @@ func (s *Server) registerAdminRoutes(mux *http.ServeMux) {
 	mux.Handle("DELETE /admin/accounts/{id}", admin(s.handleDeleteAccount))
 	mux.Handle("POST /admin/accounts/{id}/email", admin(s.handleUpdateAccountEmail))
 	mux.Handle("POST /admin/accounts/{id}/status", admin(s.handleUpdateAccountStatus))
-	mux.Handle("POST /admin/accounts/{id}/priority", admin(s.handleUpdateAccountPriority))
+	mux.Handle("POST /admin/accounts/{id}/weight", admin(s.handleUpdateAccountWeight))
 	mux.Handle("POST /admin/accounts/{id}/cell", admin(s.handleBindAccountCell))
 	mux.Handle("POST /admin/accounts/{id}/refresh", admin(s.handleRefreshAccount))
 	mux.Handle("POST /admin/accounts/{id}/test", admin(s.handleTestAccount))

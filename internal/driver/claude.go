@@ -138,6 +138,17 @@ func (d *ClaudeDriver) Interpret(statusCode int, headers http.Header, body []byt
 			UpdatedState:  mustMarshalJSON(state),
 		}
 
+	case 400:
+		if banSignalPattern.MatchString(string(body)) {
+			return Effect{
+				Kind:          EffectBlock,
+				Scope:         EffectScopeBucket,
+				CooldownUntil: time.Now().Add(d.cfg.Pauses.Pause401),
+				ErrorMessage:  fmt.Sprintf("ban signal detected: %s", truncate(string(body), 200)),
+				UpdatedState:  mustMarshalJSON(state),
+			}
+		}
+
 	case 401:
 		return Effect{
 			Kind:          EffectAuthFail,

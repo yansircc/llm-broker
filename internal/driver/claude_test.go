@@ -1,8 +1,12 @@
 package driver
 
 import (
+	"encoding/json"
 	"math"
+	"net/http"
+	"strings"
 	"testing"
+	"time"
 )
 
 func TestClaudeCalcCost(t *testing.T) {
@@ -52,5 +56,31 @@ func TestClaudeCalcCost(t *testing.T) {
 				t.Fatalf("CalcCost(%q) = %v, want %v", tc.model, got, tc.want)
 			}
 		})
+	}
+}
+
+func TestClaudeInterpret_400DisabledOrganizationBlocks(t *testing.T) {
+	d := NewClaudeDriver(ClaudeConfig{
+		Pauses: ErrorPauses{Pause401: time.Minute},
+	}, nil)
+
+	before := time.Now()
+	body := []byte(`{"type":"error","error":{"type":"invalid_request_error","message":"This organization has been disabled."}}`)
+	effect := d.Interpret(http.StatusBadRequest, make(http.Header), body, "claude-sonnet-4-6", json.RawMessage(`{}`))
+
+	if effect.Kind != EffectBlock {
+		t.Fatalf("Kind = %v, want block", effect.Kind)
+	}
+	if effect.Scope != EffectScopeBucket {
+		t.Fatalf("Scope = %v, want bucket", effect.Scope)
+	}
+	if effect.CooldownUntil.Before(before.Add(50 * time.Second)) {
+		t.Fatalf("CooldownUntil = %s, want around now+1m", effect.CooldownUntil.Format(time.RFC3339))
+	}
+	if !strings.Contains(effect.ErrorMessage, "organization has been disabled") {
+		t.Fatalf("ErrorMessage = %q, want disabled signal", effect.ErrorMessage)
+	}
+	if !json.Valid(effect.UpdatedState) {
+		t.Fatalf("UpdatedState = %q, want valid JSON", string(effect.UpdatedState))
 	}
 }

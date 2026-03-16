@@ -49,8 +49,8 @@ type DashboardAccount struct {
 	Email         string                      `json:"email"`
 	Provider      string                      `json:"provider"`
 	Status        string                      `json:"status"`
-	PriorityMode  string                      `json:"priority_mode"`
-	Priority      int                         `json:"priority"`
+	WeightMode    string                      `json:"weight_mode"`
+	Weight        int                         `json:"weight"`
 	CooldownUntil *time.Time                  `json:"cooldown_until,omitempty"`
 	LastUsedAt    *time.Time                  `json:"last_used_at,omitempty"`
 	CellID        string                      `json:"cell_id,omitempty"`
@@ -97,9 +97,9 @@ type AccountDetailResponse struct {
 	Subject        string                      `json:"subject"`
 	Status         domain.Status               `json:"status"`
 	ProbeLabel     string                      `json:"probe_label"`
-	Priority       int                         `json:"priority"`
-	PriorityMode   string                      `json:"priority_mode"`
-	AutoScore      int                         `json:"auto_score"`
+	Weight         int                         `json:"weight"`
+	WeightMode     string                      `json:"weight_mode"`
+	AutoWeight     int                         `json:"auto_weight"`
 	ErrorMessage   string                      `json:"error_message,omitempty"`
 	ProviderFields []AccountFieldResponse      `json:"provider_fields"`
 	CreatedAt      time.Time                   `json:"created_at"`
@@ -123,8 +123,8 @@ type AccountListItem struct {
 	Email         string                      `json:"email"`
 	Provider      string                      `json:"provider"`
 	Status        string                      `json:"status"`
-	Priority      int                         `json:"priority"`
-	PriorityMode  string                      `json:"priority_mode"`
+	Weight        int                         `json:"weight"`
+	WeightMode    string                      `json:"weight_mode"`
 	LastUsedAt    *time.Time                  `json:"last_used_at,omitempty"`
 	CooldownUntil *time.Time                  `json:"cooldown_until,omitempty"`
 	CellID        string                      `json:"cell_id,omitempty"`

@@ -23,8 +23,8 @@ func (s *Server) handleListAccounts(w http.ResponseWriter, r *http.Request) {
 			Email:         a.Email,
 			Provider:      string(a.Provider),
 			Status:        string(a.Status),
-			Priority:      proj.effectivePriority,
-			PriorityMode:  a.PriorityMode,
+			Weight:        proj.effectiveWeight,
+			WeightMode:    a.PriorityMode,
 			LastUsedAt:    a.LastUsedAt,
 			CooldownUntil: a.CooldownUntil,
 			CellID:        a.CellID,
@@ -88,9 +88,9 @@ func (s *Server) handleGetAccount(w http.ResponseWriter, r *http.Request) {
 		Subject:        acct.Subject,
 		Status:         acct.Status,
 		ProbeLabel:     proj.probeLabel,
-		Priority:       acct.Priority,
-		PriorityMode:   acct.PriorityMode,
-		AutoScore:      proj.autoScore,
+		Weight:         acct.Priority,
+		WeightMode:     acct.PriorityMode,
+		AutoWeight:     proj.autoWeight,
 		ErrorMessage:   acct.ErrorMessage,
 		ProviderFields: proj.providerFields,
 		CreatedAt:      acct.CreatedAt,
@@ -156,11 +156,11 @@ func (s *Server) handleUpdateAccountStatus(w http.ResponseWriter, r *http.Reques
 	writeJSON(w, http.StatusOK, map[string]string{"id": id, "status": req.Status})
 }
 
-func (s *Server) handleUpdateAccountPriority(w http.ResponseWriter, r *http.Request) {
+func (s *Server) handleUpdateAccountWeight(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	var req struct {
-		Mode     string `json:"mode"`
-		Priority int    `json:"priority"`
+		Mode   string `json:"mode"`
+		Weight int    `json:"weight"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeAdminError(w, http.StatusBadRequest, "invalid_request", "invalid JSON body")
@@ -173,23 +173,23 @@ func (s *Server) handleUpdateAccountPriority(w http.ResponseWriter, r *http.Requ
 		writeAdminError(w, http.StatusBadRequest, "invalid_request", "mode must be 'auto' or 'manual'")
 		return
 	}
-	priority := req.Priority
+	weight := req.Weight
 	mode := req.Mode
 	if err := s.pool.Update(id, func(a *domain.Account) {
 		a.PriorityMode = mode
 		if mode == "manual" {
-			a.Priority = priority
+			a.Priority = weight
 		}
 	}); err != nil {
 		writeAdminError(w, http.StatusNotFound, "not_found", "account not found")
 		return
 	}
-	slog.Info("account priority updated", "id", id, "mode", mode, "priority", priority)
+	slog.Info("account weight updated", "id", id, "mode", mode, "weight", weight)
 	writeJSON(w, http.StatusOK, struct {
-		ID       string `json:"id"`
-		Mode     string `json:"mode"`
-		Priority int    `json:"priority"`
-	}{id, mode, priority})
+		ID     string `json:"id"`
+		Mode   string `json:"mode"`
+		Weight int    `json:"weight"`
+	}{id, mode, weight})
 }
 
 func (s *Server) handleBindAccountCell(w http.ResponseWriter, r *http.Request) {

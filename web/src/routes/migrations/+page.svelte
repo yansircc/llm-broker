@@ -265,7 +265,7 @@
 						<th>email</th>
 						<th>provider</th>
 						<th>status</th>
-						<th>pri</th>
+						<th>weight</th>
 						<th>last used</th>
 						<th></th>
 					</tr>
@@ -276,7 +276,7 @@
 							<td><a href="{base}/accounts/{account.id}">{account.email}</a></td>
 							<td>{account.provider}</td>
 							<td><span class={dotClass(account.status)}>{account.status}</span></td>
-							<td>{account.priority}{#if account.priority_mode === 'auto'} <span class="muted">(a)</span>{/if}</td>
+							<td>{account.weight}{#if account.weight_mode === 'auto'} <span class="muted">(auto)</span>{/if}</td>
 							<td>{timeAgo(account.last_used_at ?? '')}</td>
 							<td><a href="{base}/accounts/{account.id}">open</a></td>
 						</tr>

@@ -1,15 +1,15 @@
 <script lang="ts">
 	import { api } from '$lib/api';
 
-	let { accountId, priority, priorityMode, autoScore, onupdate }:
-		{ accountId: string; priority: number; priorityMode: string; autoScore: number; onupdate: (mode: string, priority: number) => void } = $props();
+	let { accountId, weight, weightMode, autoWeight, onupdate }:
+		{ accountId: string; weight: number; weightMode: string; autoWeight: number; onupdate: (mode: string, weight: number) => void } = $props();
 
-	let isAuto = $derived(priorityMode === 'auto');
+	let isAuto = $derived(weightMode === 'auto');
 	let input = $state('');
 	let saving = $state(false);
 	let error = $state('');
 
-	$effect(() => { input = String(priority); });
+	$effect(() => { input = String(weight); });
 
 	async function save() {
 		const val = parseInt(input);
@@ -17,9 +17,9 @@
 		saving = true;
 		error = '';
 		try {
-			await api(`/accounts/${accountId}/priority`, {
+			await api(`/accounts/${accountId}/weight`, {
 				method: 'POST',
-				body: JSON.stringify({ mode: 'manual', priority: val })
+				body: JSON.stringify({ mode: 'manual', weight: val })
 			});
 			onupdate('manual', val);
 		} catch (e: any) {
@@ -32,11 +32,11 @@
 	async function switchToAuto() {
 		error = '';
 		try {
-			await api(`/accounts/${accountId}/priority`, {
+			await api(`/accounts/${accountId}/weight`, {
 				method: 'POST',
 				body: JSON.stringify({ mode: 'auto' })
 			});
-			onupdate('auto', priority);
+			onupdate('auto', weight);
 		} catch (e: any) {
 			error = e.message;
 		}
@@ -45,11 +45,11 @@
 	async function switchToManual() {
 		error = '';
 		try {
-			await api(`/accounts/${accountId}/priority`, {
+			await api(`/accounts/${accountId}/weight`, {
 				method: 'POST',
-				body: JSON.stringify({ mode: 'manual', priority })
+				body: JSON.stringify({ mode: 'manual', weight })
 			});
-			onupdate('manual', priority);
+			onupdate('manual', weight);
 		} catch (e: any) {
 			error = e.message;
 		}
@@ -57,7 +57,7 @@
 </script>
 
 {#if isAuto}
-	<span class="g">auto</span> <span class="muted">(score: {autoScore})</span>
+	<span class="g">auto</span> <span class="muted">(weight: {autoWeight})</span>
 	<button class="link" style="font-size:12px;margin-left:6px" onclick={switchToManual}>[switch to manual]</button>
 {:else}
 	<input
@@ -71,6 +71,7 @@
 	</button>
 	<button class="link" style="font-size:12px;margin-left:6px" onclick={switchToAuto}>[switch to auto]</button>
 {/if}
+<div class="hint muted">higher weight = higher pick probability</div>
 {#if error}<span class="error-msg">{error}</span>{/if}
 
 <style>
@@ -79,6 +80,10 @@
 		font: 13px monospace;
 		border: 1px solid #ccc;
 		padding: 0 4px;
+	}
+	.hint {
+		font-size: 12px;
+		margin-top: 4px;
 	}
 	@media (prefers-color-scheme: dark) {
 		.pri-edit { background: #252525; color: #ccc; border-color: #555; }

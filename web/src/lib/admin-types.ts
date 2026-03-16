@@ -57,8 +57,8 @@ export interface AccountListItem {
 	email: string;
 	provider: string;
 	status: string;
-	priority: number;
-	priority_mode: string;
+	weight: number;
+	weight_mode: string;
 	last_used_at: string | null;
 	cooldown_until: string | null;
 	cell_id?: string;

@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"math"
+	"math/rand"
 	"sort"
 	"time"
 
@@ -26,6 +28,12 @@ func (p *Pool) isAvailable(acct *domain.Account, drv driver.SchedulerDriver, mod
 		return false
 	}
 	return true
+}
+
+type bucketCandidate struct {
+	key      string
+	accts    []*domain.Account
+	priority int
 }
 
 func cellLane(cell *domain.EgressCell) domain.Surface {
@@ -133,11 +141,6 @@ func (p *Pool) PickForSurface(drv driver.SchedulerDriver, exclusions []Exclusion
 		}
 	}
 
-	type bucketCandidate struct {
-		key      string
-		accts    []*domain.Account
-		priority int
-	}
 	buckets := make(map[string]*bucketCandidate)
 	for _, acct := range p.accounts {
 		if _, excluded := excludedAccounts[acct.ID]; excluded {
@@ -179,17 +182,15 @@ func (p *Pool) PickForSurface(drv driver.SchedulerDriver, exclusions []Exclusion
 	}
 
 	sort.Slice(candidates, func(i, j int) bool {
-		if candidates[i].priority != candidates[j].priority {
-			return candidates[i].priority > candidates[j].priority
-		}
-		ti := timeOrZero(leastRecentlyUsed(candidates[i].accts).LastUsedAt)
-		tj := timeOrZero(leastRecentlyUsed(candidates[j].accts).LastUsedAt)
-		return ti.Before(tj)
+		return candidates[i].key < candidates[j].key
 	})
 
-	selected := leastRecentlyUsed(candidates[0].accts)
+	chosen := pickBucketCandidate(candidates, func(totalWeight float64) float64 {
+		return rand.Float64() * totalWeight
+	})
+	selected := leastRecentlyUsed(chosen.accts)
 	slog.Debug("account selected (driver)", "accountId", selected.ID, "email", selected.Email,
-		"priority", candidates[0].priority, "mode", selected.PriorityMode, "bucketKey", candidates[0].key)
+		"priority", chosen.priority, "weight", bucketPriorityWeight(chosen.priority), "mode", selected.PriorityMode, "bucketKey", chosen.key)
 	return p.projectAccountLocked(selected), nil
 }
 
@@ -206,4 +207,45 @@ func leastRecentlyUsed(accounts []*domain.Account) *domain.Account {
 		}
 	}
 	return best
+}
+
+func bucketPriorityWeight(priority int) float64 {
+	if priority < 0 {
+		priority = 0
+	}
+	return 1 + math.Sqrt(float64(priority))
+}
+
+func pickBucketCandidate(candidates []bucketCandidate, draw func(totalWeight float64) float64) *bucketCandidate {
+	if len(candidates) == 0 {
+		return nil
+	}
+	if len(candidates) == 1 {
+		return &candidates[0]
+	}
+
+	totalWeight := 0.0
+	for _, candidate := range candidates {
+		totalWeight += bucketPriorityWeight(candidate.priority)
+	}
+	if totalWeight <= 0 {
+		return &candidates[0]
+	}
+
+	offset := draw(totalWeight)
+	switch {
+	case offset < 0:
+		offset = 0
+	case offset >= totalWeight:
+		offset = math.Nextafter(totalWeight, 0)
+	}
+
+	cursor := 0.0
+	for i := range candidates {
+		cursor += bucketPriorityWeight(candidates[i].priority)
+		if offset < cursor {
+			return &candidates[i]
+		}
+	}
+	return &candidates[len(candidates)-1]
 }

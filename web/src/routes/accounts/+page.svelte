@@ -115,7 +115,7 @@
 							<th>email</th>
 							<th>status</th>
 							<th>cell</th>
-							<th>pri</th>
+							<th>weight</th>
 							<th>cooldown</th>
 							<th>last used</th>
 							{#each group.window_labels as label, index (`${group.provider}:${label}:${index}`)}
@@ -135,7 +135,7 @@
 										<span class="muted">legacy direct</span>
 									{/if}
 								</td>
-								<td>{account.priority}{#if account.priority_mode === 'auto'} <span class="muted">(a)</span>{/if}</td>
+								<td>{account.weight}{#if account.weight_mode === 'auto'} <span class="muted">(auto)</span>{/if}</td>
 								<Countdown until={account.cooldown_until} tag="td" variant="cooldown" />
 								<td>{timeAgo(account.last_used_at ?? '')}</td>
 								{#each group.window_labels as label, index (`${account.id}:${label}:${index}`)}

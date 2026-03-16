@@ -21,8 +21,10 @@ import (
 )
 
 type relayTestDriver struct {
-	provider       domain.Provider
-	interpretCalls []int
+	provider        domain.Provider
+	interpretCalls  []int
+	interpretBodies [][]byte
+	interpretFn     func(statusCode int, body []byte) driver.Effect
 }
 
 func (d *relayTestDriver) Provider() domain.Provider { return d.provider }
@@ -33,8 +35,12 @@ func (d *relayTestDriver) BuildRequest(ctx context.Context, _ *driver.RelayInput
 	return http.NewRequestWithContext(ctx, http.MethodPost, "https://upstream.test/v1/messages", strings.NewReader(`{}`))
 }
 
-func (d *relayTestDriver) Interpret(statusCode int, _ http.Header, _ []byte, _ string, _ json.RawMessage) driver.Effect {
+func (d *relayTestDriver) Interpret(statusCode int, _ http.Header, body []byte, _ string, _ json.RawMessage) driver.Effect {
 	d.interpretCalls = append(d.interpretCalls, statusCode)
+	d.interpretBodies = append(d.interpretBodies, append([]byte(nil), body...))
+	if d.interpretFn != nil {
+		return d.interpretFn(statusCode, body)
+	}
 	if statusCode == http.StatusOK {
 		return driver.Effect{Kind: driver.EffectSuccess, Scope: driver.EffectScopeBucket}
 	}
@@ -396,5 +402,117 @@ func TestExecuteRelayAttemptPassesRealStatusToInterpretOnNonRetriableError(t *te
 	bucket := p.List()[0]
 	if bucket.CooldownUntil == nil {
 		t.Fatal("expected cooldown after non-retriable 500 interpretation")
+	}
+}
+
+func TestExecuteRelayAttemptPassesBodyToInterpretOnNonRetriable400(t *testing.T) {
+	mockStore := store.NewMockStore()
+	account := &domain.Account{
+		ID:        "acct-400",
+		Email:     "acct400@example.com",
+		Provider:  domain.ProviderClaude,
+		Status:    domain.StatusActive,
+		Subject:   "subject-400",
+		CreatedAt: time.Now().UTC(),
+	}
+	if err := mockStore.SaveAccount(context.Background(), account); err != nil {
+		t.Fatalf("SaveAccount: %v", err)
+	}
+	if err := mockStore.SaveQuotaBucket(context.Background(), &domain.QuotaBucket{
+		BucketKey: "claude:subject-400",
+		Provider:  domain.ProviderClaude,
+		StateJSON: "{}",
+		UpdatedAt: time.Now().UTC(),
+	}); err != nil {
+		t.Fatalf("SaveQuotaBucket: %v", err)
+	}
+
+	bus := events.NewBus(16)
+	p, err := pool.New(mockStore, bus)
+	if err != nil {
+		t.Fatalf("pool.New: %v", err)
+	}
+
+	driverStub := &relayTestDriver{
+		provider: domain.ProviderClaude,
+		interpretFn: func(statusCode int, body []byte) driver.Effect {
+			if statusCode == http.StatusBadRequest && strings.Contains(string(body), "organization has been disabled") {
+				return driver.Effect{
+					Kind:          driver.EffectBlock,
+					Scope:         driver.EffectScopeBucket,
+					CooldownUntil: time.Now().Add(time.Minute),
+					ErrorMessage:  "disabled org",
+				}
+			}
+			return driver.Effect{Kind: driver.EffectSuccess, Scope: driver.EffectScopeBucket}
+		},
+	}
+	transport := relayTestTransport{
+		client: &http.Client{
+			Transport: roundTripFunc(func(_ *http.Request) (*http.Response, error) {
+				return &http.Response{
+					StatusCode: http.StatusBadRequest,
+					Header:     make(http.Header),
+					Body: io.NopCloser(strings.NewReader(
+						`{"type":"error","error":{"type":"invalid_request_error","message":"This organization has been disabled."}}`,
+					)),
+				}, nil
+			}),
+		},
+	}
+	relaySvc := New(
+		p,
+		relayTestTokenProvider{},
+		mockStore,
+		Config{MaxRetryAccounts: 1},
+		transport,
+		bus,
+		map[domain.Provider]driver.ExecutionDriver{domain.ProviderClaude: driverStub},
+	)
+
+	prepared := &preparedRelayRequest{
+		keyInfo: &auth.KeyInfo{ID: "user-400", Name: "leo"},
+		input: &driver.RelayInput{
+			Headers: make(http.Header),
+			Path:    "/v1/messages",
+			Model:   "claude-sonnet-4-6",
+		},
+	}
+	recorder := httptest.NewRecorder()
+
+	outcome := relaySvc.executeRelayAttempt(
+		context.Background(),
+		recorder,
+		driverStub,
+		prepared,
+		newRelayAttemptState(),
+		0,
+	)
+	if outcome != relayAttemptDone {
+		t.Fatalf("executeRelayAttempt outcome = %v, want %v", outcome, relayAttemptDone)
+	}
+
+	if len(driverStub.interpretBodies) != 1 {
+		t.Fatalf("Interpret body count = %d, want 1", len(driverStub.interpretBodies))
+	}
+	if !strings.Contains(string(driverStub.interpretBodies[0]), "organization has been disabled") {
+		t.Fatalf("Interpret body = %q, want disabled signal", string(driverStub.interpretBodies[0]))
+	}
+
+	acct := p.Get(account.ID)
+	if acct == nil {
+		t.Fatal("expected account to remain readable")
+	}
+	if acct.Status != domain.StatusBlocked {
+		t.Fatalf("account status = %s, want blocked", acct.Status)
+	}
+	if acct.ErrorMessage != "disabled org" {
+		t.Fatalf("account error = %q, want disabled org", acct.ErrorMessage)
+	}
+	if recorder.Code != http.StatusBadRequest {
+		t.Fatalf("response status = %d, want %d", recorder.Code, http.StatusBadRequest)
+	}
+	if !strings.Contains(recorder.Body.String(), "organization has been disabled") {
+		t.Fatalf("response body = %q, want upstream body", recorder.Body.String())
 	}
 }
