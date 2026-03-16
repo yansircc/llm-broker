@@ -150,14 +150,18 @@ func (p *Pool) Observe(accountID string, effect driver.Effect) {
 		}
 	}
 
+	// Reset circuit breaker counter on any non-500 outcome.
+	// Only EffectServerError should accumulate; interleaved 429/401/etc.
+	// break the "consecutive" chain.
+	if effect.Kind != driver.EffectServerError && bucket != nil {
+		delete(p.serverErrCount, bucket.BucketKey)
+	}
+
 	switch effect.Kind {
 	case driver.EffectSuccess:
 		now := time.Now().UTC()
 		acct.LastUsedAt = &now
 		markPersist(acct)
-		if bucket != nil {
-			delete(p.serverErrCount, bucket.BucketKey)
-		}
 
 	case driver.EffectServerError:
 		now := time.Now().UTC()

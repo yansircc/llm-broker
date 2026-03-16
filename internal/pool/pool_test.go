@@ -774,3 +774,24 @@ func TestCircuitBreakerResetOnSuccess(t *testing.T) {
 		t.Fatal("unexpected cooldown after only 2 server errors post-reset")
 	}
 }
+
+func TestCircuitBreakerResetOnNon500Effect(t *testing.T) {
+	acct := activeAccount("cb-3", "cb3@test.com")
+	p := newTestPool(t, acct)
+	p.SetDrivers(map[domain.Provider]driver.SchedulerDriver{
+		domain.ProviderClaude: testDriver,
+	})
+
+	bucketKey := testDriver.BucketKey(acct)
+
+	// Sequence: 500 → 429 → 500 → 500 should NOT trigger circuit breaker
+	// because the 429 breaks the consecutive chain.
+	p.Observe(acct.ID, driver.Effect{Kind: driver.EffectServerError, Scope: driver.EffectScopeBucket})
+	p.Observe(acct.ID, driver.Effect{Kind: driver.EffectCooldown, Scope: driver.EffectScopeBucket, CooldownUntil: time.Now().Add(-time.Second)})
+	p.Observe(acct.ID, driver.Effect{Kind: driver.EffectServerError, Scope: driver.EffectScopeBucket})
+	p.Observe(acct.ID, driver.Effect{Kind: driver.EffectServerError, Scope: driver.EffectScopeBucket})
+
+	if count := p.serverErrCount[bucketKey]; count != 2 {
+		t.Fatalf("expected counter = 2 after 429 reset, got %d", count)
+	}
+}
