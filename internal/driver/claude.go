@@ -16,7 +16,7 @@ import (
 	"github.com/yansircc/llm-broker/internal/identity"
 )
 
-var banSignalPattern = regexp.MustCompile(`(?i)(organization has been disabled|account has been disabled|Too many active sessions|only authorized for use with claude code)`)
+var banSignalPattern = regexp.MustCompile(`(?i)(organization has been disabled|account has been disabled|Too many active sessions|only authorized for use with claude code|OAuth authentication is currently not allowed)`)
 
 // ---------------------------------------------------------------------------
 // Relay
