@@ -88,6 +88,15 @@
 		return cells.find((cell) => cell.id === selectedCellID);
 	}
 
+	function legacyAccounts(): AccountListItem[] {
+		return accounts.filter((acct) => !acct.cell_id);
+	}
+
+	function currentEgress(account: AccountListItem | undefined): string {
+		if (!account) return '-';
+		return account.cell?.name ?? account.cell_id ?? 'legacy direct';
+	}
+
 	async function bindAccount() {
 		const account = selectedAccount();
 		if (!account || !selectedCellID) return;
@@ -132,42 +141,86 @@
 {:else}
 	<span class="refresh"><button class="link" onclick={loadAll}>[refresh]</button> <span class="muted">{lastRefresh}</span></span>
 	<div class="bar">
-		<span>legacy direct {accounts.filter((acct) => !acct.cell_id).length}</span>
-		<span>cells {cells.length}</span>
+		<span>legacy queue {legacyAccounts().length}</span>
+		<span>available cells {availableCells().length}</span>
 		<span>cooling {cells.filter(cooldownActive).length}</span>
 	</div>
 
-	<h2>bind + test</h2>
-	<div class="bar">
-		<select bind:value={selectedAccountID} style="margin-right:8px;max-width:320px;">
-			<option value="">select account</option>
-			{#each accounts.filter((acct) => !acct.cell_id) as account (account.id)}
-				<option value={account.id}>{account.email}</option>
-			{/each}
-		</select>
-		<select bind:value={selectedCellID} style="margin-right:8px;max-width:240px;">
-			<option value="">select cell</option>
-			{#each availableCells() as cell (cell.id)}
-				<option value={cell.id}>{optionLabel(cell)}</option>
-			{/each}
-		</select>
-		<button class="link" onclick={bindAccount} disabled={binding || !selectedAccountID || !selectedCellID}>{binding ? '[binding...]' : '[bind account]'}</button>
-		<button class="link" onclick={testAccount} disabled={testing || !selectedAccountID}>{testing ? '[testing...]' : '[test account]'}</button>
+	<h2>migration workbench <span class="muted">temporary</span></h2>
+	<p class="hint">move one legacy direct account onto one empty active cell, then optionally probe it.</p>
+
+	<div class="bar workbench">
+		<div class="step">
+			<label for="migration-account">step 1: account</label>
+			<select id="migration-account" bind:value={selectedAccountID} style="max-width:320px;">
+				<option value="">select account</option>
+				{#each legacyAccounts() as account (account.id)}
+					<option value={account.id}>{account.email}</option>
+				{/each}
+			</select>
+		</div>
+
+		<div class="step">
+			<label for="migration-cell">step 2: target cell</label>
+			<select id="migration-cell" bind:value={selectedCellID} style="max-width:320px;">
+				<option value="">select cell</option>
+				{#each availableCells() as cell (cell.id)}
+					<option value={cell.id}>{optionLabel(cell)}</option>
+				{/each}
+			</select>
+		</div>
+
+		<div class="step actions-row">
+			<button class="link" onclick={bindAccount} disabled={binding || !selectedAccountID || !selectedCellID}>
+				{binding ? '[migrating...]' : '[migrate now]'}
+			</button>
+			<button class="link" onclick={testAccount} disabled={testing || !selectedAccountID}>
+				{testing ? '[testing...]' : '[test selected account]'}
+			</button>
+		</div>
 	</div>
 
 	{#if selectedAccountID || selectedCellID}
+		<div class="bar">
 		<dl>
 			<dt>account</dt>
-			<dd>{selectedAccount()?.email ?? '-'}</dd>
+			<dd>
+				{#if selectedAccount()}
+					<a href="{base}/accounts/{selectedAccount()!.id}">{selectedAccount()!.email}</a>
+				{:else}
+					-
+				{/if}
+			</dd>
+
+			<dt>status</dt>
+			<dd>
+				{#if selectedAccount()}
+					<span class={dotClass(selectedAccount()!.status)}>{selectedAccount()!.status}</span>
+				{:else}
+					<span class="muted">-</span>
+				{/if}
+			</dd>
 
 			<dt>current egress</dt>
-			<dd>{selectedAccount()?.cell?.name ?? selectedAccount()?.cell_id ?? 'legacy direct'}</dd>
+			<dd>{currentEgress(selectedAccount())}</dd>
+
+			<dt>last used</dt>
+			<dd>{selectedAccount() ? timeAgo(selectedAccount()!.last_used_at ?? '') : '-'}</dd>
 
 			<dt>target cell</dt>
-			<dd>{selectedCell()?.name ?? selectedCellID ?? '-'}</dd>
+			<dd>
+				{#if selectedCell()}
+					<a href="{base}/cells/{selectedCell()!.id}">{selectedCell()!.name ?? selectedCell()!.id}</a>
+				{:else}
+					{selectedCellID || '-'}
+				{/if}
+			</dd>
 
 			<dt>target region</dt>
 			<dd>{selectedCell() ? region(selectedCell()) : '-'}</dd>
+
+			<dt>target load</dt>
+			<dd>{selectedCell() ? cellAccounts(selectedCell()).length : '-'}</dd>
 
 			<dt>target status</dt>
 			<dd>
@@ -182,6 +235,7 @@
 				{/if}
 			</dd>
 		</dl>
+		</div>
 	{/if}
 
 	{#if bindResult}
@@ -200,67 +254,97 @@
 		<p class="error-msg">{actionError}</p>
 	{/if}
 
-	<h2>candidate accounts</h2>
-	{#if accounts.filter((acct) => !acct.cell_id).length === 0}
-		<p class="muted">no legacy direct accounts</p>
-	{:else}
-		<table>
-			<thead>
-				<tr>
-					<th>email</th>
-					<th>provider</th>
-					<th>status</th>
-					<th>pri</th>
-					<th>last used</th>
-					<th></th>
-				</tr>
-			</thead>
-			<tbody>
-				{#each accounts.filter((acct) => !acct.cell_id) as account (account.id)}
+	<details class="ops-details">
+		<summary>legacy queue ({legacyAccounts().length})</summary>
+		{#if legacyAccounts().length === 0}
+			<p class="muted">no legacy direct accounts</p>
+		{:else}
+			<table>
+				<thead>
 					<tr>
-						<td><a href="{base}/accounts/{account.id}">{account.email}</a></td>
-						<td>{account.provider}</td>
-						<td><span class={dotClass(account.status)}>{account.status}</span></td>
-						<td>{account.priority}{#if account.priority_mode === 'auto'} <span class="muted">(a)</span>{/if}</td>
-						<td>{timeAgo(account.last_used_at ?? '')}</td>
-						<td><a href="{base}/accounts/{account.id}">open</a></td>
+						<th>email</th>
+						<th>provider</th>
+						<th>status</th>
+						<th>pri</th>
+						<th>last used</th>
+						<th></th>
 					</tr>
-				{/each}
-			</tbody>
-		</table>
-	{/if}
+				</thead>
+				<tbody>
+					{#each legacyAccounts() as account (account.id)}
+						<tr>
+							<td><a href="{base}/accounts/{account.id}">{account.email}</a></td>
+							<td>{account.provider}</td>
+							<td><span class={dotClass(account.status)}>{account.status}</span></td>
+							<td>{account.priority}{#if account.priority_mode === 'auto'} <span class="muted">(a)</span>{/if}</td>
+							<td>{timeAgo(account.last_used_at ?? '')}</td>
+							<td><a href="{base}/accounts/{account.id}">open</a></td>
+						</tr>
+					{/each}
+				</tbody>
+			</table>
+		{/if}
+	</details>
 
-	<h2>target cells</h2>
-	{#if cells.length === 0}
-		<p class="muted">no cells</p>
-	{:else}
-		<table>
-			<thead>
-				<tr>
-					<th>cell</th>
-					<th>region</th>
-					<th class="num">load</th>
-					<th>status</th>
-					<th></th>
-				</tr>
-			</thead>
-			<tbody>
-				{#each cells as cell (cell.id)}
+	<details class="ops-details">
+		<summary>cell inventory ({cells.length})</summary>
+		{#if cells.length === 0}
+			<p class="muted">no cells</p>
+		{:else}
+			<table>
+				<thead>
 					<tr>
-						<td><a href="{base}/cells/{cell.id}">{cell.name || cell.id}</a></td>
-						<td>{region(cell)}</td>
-						<td class="num">{cellAccounts(cell).length}</td>
-						<td>
-							{#if cooldownActive(cell)}
-								<span class="o">cooling</span>
-							{:else}
-								<span class={cell.status === 'active' ? 'g' : cell.status === 'error' ? 'r' : 'muted'}>{cell.status}</span>
-							{/if}
-						</td>
-						<td><a href="{base}/cells/{cell.id}">open</a></td>
+						<th>cell</th>
+						<th>region</th>
+						<th class="num">load</th>
+						<th>status</th>
+						<th></th>
 					</tr>
-				{/each}
-			</tbody>
-		</table>
-	{/if}
+				</thead>
+				<tbody>
+					{#each cells as cell (cell.id)}
+						<tr>
+							<td><a href="{base}/cells/{cell.id}">{cell.name || cell.id}</a></td>
+							<td>{region(cell)}</td>
+							<td class="num">{cellAccounts(cell).length}</td>
+							<td>
+								{#if cooldownActive(cell)}
+									<span class="o">cooling</span>
+								{:else}
+									<span class={cell.status === 'active' ? 'g' : cell.status === 'error' ? 'r' : 'muted'}>{cell.status}</span>
+								{/if}
+							</td>
+							<td><a href="{base}/cells/{cell.id}">open</a></td>
+						</tr>
+					{/each}
+				</tbody>
+			</table>
+		{/if}
+	</details>
 {/if}
+
+<style>
+	.workbench {
+		display: flex;
+		flex-direction: column;
+		gap: 10px;
+	}
+	.step label {
+		display: block;
+		margin-bottom: 2px;
+	}
+	.actions-row {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 12px;
+		align-items: center;
+	}
+	.ops-details {
+		margin-top: 14px;
+	}
+	.ops-details summary {
+		cursor: pointer;
+		font-weight: bold;
+		margin-bottom: 8px;
+	}
+</style>

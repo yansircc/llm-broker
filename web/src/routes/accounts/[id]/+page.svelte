@@ -41,6 +41,7 @@
 	let testing = $state(false);
 	let actionError = $state('');
 	let selectedCellID = $state('');
+	let editingCellBinding = $state(false);
 	let savingCell = $state(false);
 	let cellResult = $state('');
 
@@ -59,6 +60,7 @@
 			acct = accountData;
 			cells = cellList;
 			selectedCellID = accountData.cell_id ?? '';
+			editingCellBinding = false;
 		} catch (e: any) {
 			error = e.message;
 		} finally {
@@ -170,6 +172,20 @@
 
 	function bindingChanged(): boolean {
 		return (acct?.cell_id ?? '') !== selectedCellID;
+	}
+
+	function startCellBindingEdit() {
+		selectedCellID = acct?.cell_id ?? '';
+		actionError = '';
+		cellResult = '';
+		editingCellBinding = true;
+	}
+
+	function cancelCellBindingEdit() {
+		selectedCellID = acct?.cell_id ?? '';
+		actionError = '';
+		cellResult = '';
+		editingCellBinding = false;
 	}
 
 	function optionLabel(cell: EgressCellView): string {
@@ -367,17 +383,29 @@
 
 	<h2>egress</h2>
 	<dl>
-		<dt>bind</dt>
+		<dt>binding</dt>
 		<dd>
-			<select bind:value={selectedCellID} style="margin-right:8px;max-width:320px;">
-				<option value="">legacy direct</option>
-				{#each bindableCells() as cell (cell.id)}
-					<option value={cell.id}>{optionLabel(cell)}</option>
-				{/each}
-			</select>
-			<button class="link" onclick={saveCellBinding} disabled={savingCell || !bindingChanged()}>
-				{savingCell ? '[saving...]' : selectedCellID ? '[bind cell]' : '[unbind cell]'}
-			</button>
+			{#if editingCellBinding}
+				<select bind:value={selectedCellID} style="margin-right:8px;max-width:320px;">
+					<option value="">legacy direct</option>
+					{#each bindableCells() as cell (cell.id)}
+						<option value={cell.id}>{optionLabel(cell)}</option>
+					{/each}
+				</select>
+				<button class="link" onclick={saveCellBinding} disabled={savingCell || !bindingChanged()}>
+					{savingCell ? '[saving...]' : '[save]'}
+				</button>
+				<button class="link" onclick={cancelCellBindingEdit} disabled={savingCell} style="margin-left:6px">
+					[cancel]
+				</button>
+			{:else}
+				{#if acct.cell_id}
+					<a href="{base}/cells/{acct.cell_id}">{acct.cell?.name ?? acct.cell_id}</a>
+				{:else}
+					<span class="muted">legacy direct</span>
+				{/if}
+				<button class="link" onclick={startCellBindingEdit} style="margin-left:6px">[edit]</button>
+			{/if}
 		</dd>
 
 		<dt>cell</dt>
@@ -389,36 +417,38 @@
 			{/if}
 		</dd>
 
-		<dt>target</dt>
-		<dd>
-			{#if selectedCell()}
-				{selectedCell()?.name || selectedCell()?.id}
-			{:else}
-				<span class="muted">legacy direct</span>
-			{/if}
-		</dd>
-
-		<dt>target region</dt>
-		<dd>
-			{#if selectedCell()}
-				{region(selectedCell())}
-			{:else}
-				<span class="muted">-</span>
-			{/if}
-		</dd>
-
-		<dt>target status</dt>
-		<dd>
-			{#if selectedCell()}
-				{#if cooldownActive(selectedCell())}
-					<span class="o">cooling</span>
+		{#if editingCellBinding}
+			<dt>target</dt>
+			<dd>
+				{#if selectedCell()}
+					{selectedCell()?.name || selectedCell()?.id}
 				{:else}
-					<span class={selectedCell()?.status === 'active' ? 'g' : selectedCell()?.status === 'error' ? 'r' : 'muted'}>{selectedCell()?.status}</span>
+					<span class="muted">legacy direct</span>
 				{/if}
-			{:else}
-				<span class="muted">-</span>
-			{/if}
-		</dd>
+			</dd>
+
+			<dt>target region</dt>
+			<dd>
+				{#if selectedCell()}
+					{region(selectedCell())}
+				{:else}
+					<span class="muted">-</span>
+				{/if}
+			</dd>
+
+			<dt>target status</dt>
+			<dd>
+				{#if selectedCell()}
+					{#if cooldownActive(selectedCell())}
+						<span class="o">cooling</span>
+					{:else}
+						<span class={selectedCell()?.status === 'active' ? 'g' : selectedCell()?.status === 'error' ? 'r' : 'muted'}>{selectedCell()?.status}</span>
+					{/if}
+				{:else}
+					<span class="muted">-</span>
+				{/if}
+			</dd>
+		{/if}
 
 		<dt>cell status</dt>
 		<dd>

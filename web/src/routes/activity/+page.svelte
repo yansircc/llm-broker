@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { api } from '$lib/api';
 	import type { DashboardData, DashboardEvent } from '$lib/admin-types';
+	import ConfirmAction from '$lib/components/ConfirmAction.svelte';
 	import { eventTypeColor, fmtCost, fmtDate, fmtNum, fmtTime } from '$lib/format';
 
 	let data = $state<DashboardData | null>(null);
@@ -86,7 +87,7 @@
 	<div class="section-header">
 		<h2>recent errors</h2>
 		{#if data.events.length > 0}
-			<button class="btn-sm" onclick={clearEvents}>clear</button>
+			<ConfirmAction label="[clear]" cls="r" onclick={clearEvents} />
 		{/if}
 	</div>
 	{#if data.events.length === 0}
@@ -122,16 +123,6 @@
 		gap: 10px;
 	}
 	.section-header h2 { margin: 0; }
-	.btn-sm {
-		font-size: 0.75rem;
-		padding: 2px 8px;
-		background: #333;
-		color: #aaa;
-		border: 1px solid #555;
-		border-radius: 3px;
-		cursor: pointer;
-	}
-	.btn-sm:hover { background: #444; color: #fff; }
 	.event-line {
 		display: flex;
 		flex-wrap: wrap;

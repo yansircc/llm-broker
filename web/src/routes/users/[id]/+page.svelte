@@ -63,6 +63,7 @@
 	let actionError = $state('');
 	let selectedSurface = $state<UserSurface>('native');
 	let selectedBoundAccountID = $state('');
+	let editingPolicy = $state(false);
 	let savingPolicy = $state(false);
 	let policyError = $state('');
 	let policyResult = $state('');
@@ -82,6 +83,7 @@
 			accounts = [...accountList].sort((a, b) => a.email.localeCompare(b.email));
 			selectedSurface = userData.allowed_surface ?? 'native';
 			selectedBoundAccountID = userData.bound_account_id ?? '';
+			editingPolicy = false;
 		} catch (e: any) {
 			error = e.message;
 		} finally {
@@ -143,6 +145,31 @@
 		return user.allowed_surface !== selectedSurface || (user.bound_account_id ?? '') !== selectedBoundAccountID;
 	}
 
+	function boundAccountText(): string {
+		if (!user) return '-';
+		if (user.bound_account_email) return user.bound_account_email;
+		if (user.bound_account_id) return user.bound_account_id;
+		return 'no bound account';
+	}
+
+	function startPolicyEdit() {
+		if (!user) return;
+		selectedSurface = user.allowed_surface ?? 'native';
+		selectedBoundAccountID = user.bound_account_id ?? '';
+		policyError = '';
+		policyResult = '';
+		editingPolicy = true;
+	}
+
+	function cancelPolicyEdit() {
+		if (!user) return;
+		selectedSurface = user.allowed_surface;
+		selectedBoundAccountID = user.bound_account_id ?? '';
+		policyError = '';
+		policyResult = '';
+		editingPolicy = false;
+	}
+
 	async function savePolicy() {
 		if (!user) return;
 		savingPolicy = true;
@@ -165,6 +192,7 @@
 			user.bound_account_id = result.bound_account_id;
 			user.bound_account_email = result.bound_account_email;
 			policyResult = 'policy saved';
+			editingPolicy = false;
 		} catch (e: any) {
 			policyError = e.message;
 		} finally {
@@ -222,44 +250,46 @@
 	<dl>
 		<dt>surface</dt>
 		<dd>
-			<select bind:value={selectedSurface} disabled={savingPolicy}>
-				<option value="native">native</option>
-				<option value="compat">compat</option>
-				<option value="all">all</option>
-			</select>
+			{#if editingPolicy}
+				<select bind:value={selectedSurface} disabled={savingPolicy}>
+					<option value="native">native</option>
+					<option value="compat">compat</option>
+					<option value="all">all</option>
+				</select>
+			{:else}
+				{user.allowed_surface}
+			{/if}
 		</dd>
 
 		<dt>bound account</dt>
 		<dd>
-			<select bind:value={selectedBoundAccountID} disabled={savingPolicy} style="max-width:420px;">
-				<option value="">[no bound account]</option>
-				{#if user.bound_account_id && !accounts.some((account) => account.id === user.bound_account_id)}
-					<option value={user.bound_account_id}>{user.bound_account_email || user.bound_account_id}</option>
-				{/if}
-				{#each accounts as account (account.id)}
-					<option value={account.id}>{accountLabel(account)}</option>
-				{/each}
-			</select>
+			{#if editingPolicy}
+				<select bind:value={selectedBoundAccountID} disabled={savingPolicy} style="max-width:420px;">
+					<option value="">[no bound account]</option>
+					{#if user.bound_account_id && !accounts.some((account) => account.id === user.bound_account_id)}
+						<option value={user.bound_account_id}>{user.bound_account_email || user.bound_account_id}</option>
+					{/if}
+					{#each accounts as account (account.id)}
+						<option value={account.id}>{accountLabel(account)}</option>
+					{/each}
+				</select>
+			{:else}
+				<span class:muted={!user.bound_account_id}>{boundAccountText()}</span>
+			{/if}
 		</dd>
 	</dl>
 
 	<div class="actions" style="margin-top:0">
-		<button class="link" onclick={savePolicy} disabled={savingPolicy || !policyChanged()}>
-			{savingPolicy ? '[saving...]' : '[save policy]'}
-		</button>
-		<button
-			class="link"
-			onclick={() => {
-				if (!user) return;
-				selectedSurface = user.allowed_surface;
-				selectedBoundAccountID = user.bound_account_id ?? '';
-				policyError = '';
-				policyResult = '';
-			}}
-			disabled={savingPolicy || !policyChanged()}
-		>
-			[reset]
-		</button>
+		{#if editingPolicy}
+			<button class="link" onclick={savePolicy} disabled={savingPolicy || !policyChanged()}>
+				{savingPolicy ? '[saving...]' : '[save policy]'}
+			</button>
+			<button class="link" onclick={cancelPolicyEdit} disabled={savingPolicy}>
+				[cancel]
+			</button>
+		{:else}
+			<button class="link" onclick={startPolicyEdit}>[edit]</button>
+		{/if}
 	</div>
 
 	{#if policyError}<p class="error-msg">{policyError}</p>{/if}
