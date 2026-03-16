@@ -718,6 +718,10 @@ func TestObserve_BucketScopeSyncsCooldownAndState(t *testing.T) {
 	}
 }
 
+// ---------------------------------------------------------------------------
+// Circuit breaker (PR #13)
+// ---------------------------------------------------------------------------
+
 func TestCircuitBreakerOnServerError(t *testing.T) {
 	acct := activeAccount("cb-1", "cb@test.com")
 	p := newTestPool(t, acct)
@@ -793,5 +797,442 @@ func TestCircuitBreakerResetOnNon500Effect(t *testing.T) {
 
 	if count := p.serverErrCount[bucketKey]; count != 2 {
 		t.Fatalf("expected counter = 2 after 429 reset, got %d", count)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Observability: CooldownResult and structured events
+// ---------------------------------------------------------------------------
+
+func TestApplyBucketCooldown_JoinSemantics(t *testing.T) {
+	acct := activeAccount("join-1", "join@test.com")
+	p := newTestPool(t, acct)
+	p.SetDrivers(map[domain.Provider]driver.SchedulerDriver{
+		domain.ProviderClaude: testDriver,
+	})
+	bucketKey := testDriver.BucketKey(acct)
+	bucket := p.buckets[bucketKey]
+	if bucket == nil {
+		t.Fatal("bucket not found")
+	}
+
+	later := time.Now().Add(10 * time.Minute)
+	r1 := p.applyBucketCooldown(bucket, later)
+	if !r1.Applied {
+		t.Fatal("first cooldown should be applied")
+	}
+	if r1.Actual.Unix() != later.UTC().Unix() {
+		t.Fatalf("actual = %v, want %v", r1.Actual, later.UTC())
+	}
+
+	earlier := time.Now().Add(5 * time.Minute)
+	r2 := p.applyBucketCooldown(bucket, earlier)
+	if r2.Applied {
+		t.Fatal("earlier cooldown should be rejected by join")
+	}
+	if r2.Actual.Unix() != later.UTC().Unix() {
+		t.Fatalf("actual after rejection = %v, want original %v", r2.Actual, later.UTC())
+	}
+
+	evenLater := time.Now().Add(20 * time.Minute)
+	r3 := p.applyBucketCooldown(bucket, evenLater)
+	if !r3.Applied {
+		t.Fatal("later cooldown should be applied")
+	}
+	if r3.Actual.Unix() != evenLater.UTC().Unix() {
+		t.Fatalf("actual = %v, want %v", r3.Actual, evenLater.UTC())
+	}
+}
+
+func TestObserve_EventCooldownUsesActualValue(t *testing.T) {
+	acct := activeAccount("obs-1", "obs@test.com")
+	p := newTestPool(t, acct)
+	p.SetDrivers(map[domain.Provider]driver.SchedulerDriver{
+		domain.ProviderClaude: testDriver,
+	})
+
+	longCooldown := time.Now().Add(30 * time.Minute)
+	p.Observe(acct.ID, driver.Effect{
+		Kind:          driver.EffectCooldown,
+		Scope:         driver.EffectScopeBucket,
+		CooldownUntil: longCooldown,
+	})
+
+	shortCooldown := time.Now().Add(5 * time.Minute)
+	p.Observe(acct.ID, driver.Effect{
+		Kind:          driver.EffectCooldown,
+		Scope:         driver.EffectScopeBucket,
+		CooldownUntil: shortCooldown,
+	})
+
+	recent := p.bus.Recent(1)
+	if len(recent) == 0 {
+		t.Fatal("no events")
+	}
+	evt := recent[0]
+	if evt.Type != events.EventRateLimit {
+		t.Fatalf("expected EventRateLimit, got %s", evt.Type)
+	}
+	if evt.CooldownUntil == nil {
+		t.Fatal("event CooldownUntil is nil")
+	}
+	if evt.CooldownUntil.Unix() != longCooldown.UTC().Unix() {
+		t.Fatalf("event CooldownUntil = %v, want original longer %v", *evt.CooldownUntil, longCooldown.UTC())
+	}
+	if !strings.Contains(evt.Message, longCooldown.UTC().Format(time.RFC3339)) {
+		t.Fatalf("event Message should contain actual cooldown time, got %q", evt.Message)
+	}
+}
+
+func TestObserve_BanEventIncludesCooldownAndBucketKey(t *testing.T) {
+	acct := activeAccount("ban-1", "ban@test.com")
+	p := newTestPool(t, acct)
+	p.SetDrivers(map[domain.Provider]driver.SchedulerDriver{
+		domain.ProviderClaude: testDriver,
+	})
+
+	until := time.Now().Add(1 * time.Hour)
+	p.Observe(acct.ID, driver.Effect{
+		Kind:          driver.EffectBlock,
+		Scope:         driver.EffectScopeBucket,
+		CooldownUntil: until,
+		ErrorMessage:  "organization has been disabled",
+	})
+
+	recent := p.bus.Recent(1)
+	if len(recent) == 0 {
+		t.Fatal("no events")
+	}
+	evt := recent[0]
+	if evt.Type != events.EventBan {
+		t.Fatalf("expected EventBan, got %s", evt.Type)
+	}
+	if evt.CooldownUntil == nil {
+		t.Fatal("ban event CooldownUntil is nil")
+	}
+	if evt.CooldownUntil.Unix() != until.UTC().Unix() {
+		t.Fatalf("ban CooldownUntil = %v, want %v", *evt.CooldownUntil, until.UTC())
+	}
+	if !strings.Contains(evt.Message, "cooldown until") {
+		t.Fatalf("ban Message missing cooldown info: %q", evt.Message)
+	}
+	if !strings.Contains(evt.Message, "organization has been disabled") {
+		t.Fatalf("ban Message missing error text: %q", evt.Message)
+	}
+	if evt.BucketKey == "" {
+		t.Fatal("ban event BucketKey is empty")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Edge cases: can an LLM reconstruct what happened from the event stream?
+// ---------------------------------------------------------------------------
+
+func TestObserve_BlockWithZeroCooldown(t *testing.T) {
+	acct := activeAccount("zc-1", "zc@test.com")
+	p := newTestPool(t, acct)
+	p.SetDrivers(map[domain.Provider]driver.SchedulerDriver{
+		domain.ProviderClaude: testDriver,
+	})
+
+	p.Observe(acct.ID, driver.Effect{
+		Kind:         driver.EffectBlock,
+		Scope:        driver.EffectScopeBucket,
+		ErrorMessage: "unexpected block",
+	})
+
+	evt := p.bus.Recent(1)[0]
+	if evt.Type != events.EventBan {
+		t.Fatalf("expected EventBan, got %s", evt.Type)
+	}
+	if evt.CooldownUntil != nil {
+		t.Fatalf("zero CooldownUntil should produce nil, got %v", *evt.CooldownUntil)
+	}
+	if !strings.Contains(evt.Message, "unexpected block") {
+		t.Fatalf("error message lost: %q", evt.Message)
+	}
+}
+
+func TestObserve_SharedBucket_OneBlocked(t *testing.T) {
+	a1 := &domain.Account{
+		ID: "sh-1", Email: "a@test.com", Provider: domain.ProviderClaude,
+		Subject: "shared-org", Status: domain.StatusActive, Priority: 50,
+	}
+	a2 := &domain.Account{
+		ID: "sh-2", Email: "b@test.com", Provider: domain.ProviderClaude,
+		Subject: "shared-org", Status: domain.StatusActive, Priority: 50,
+	}
+	p := newTestPool(t, a1, a2)
+	p.SetDrivers(map[domain.Provider]driver.SchedulerDriver{
+		domain.ProviderClaude: testDriver,
+	})
+
+	until := time.Now().Add(1 * time.Hour)
+	p.Observe(a1.ID, driver.Effect{
+		Kind:          driver.EffectBlock,
+		Scope:         driver.EffectScopeBucket,
+		CooldownUntil: until,
+		ErrorMessage:  "org disabled",
+	})
+
+	evt := p.bus.Recent(1)[0]
+	if evt.AccountID != a1.ID {
+		t.Fatalf("event AccountID = %s, want %s", evt.AccountID, a1.ID)
+	}
+	if evt.BucketKey == "" {
+		t.Fatal("BucketKey missing on shared-bucket ban event")
+	}
+	bucket := p.buckets[evt.BucketKey]
+	if bucket == nil || bucket.CooldownUntil == nil {
+		t.Fatal("shared bucket should have cooldown")
+	}
+}
+
+func TestObserve_FullLifecycle_EventNarrative(t *testing.T) {
+	acct := activeAccount("lc-1", "lc@test.com")
+	p := newTestPool(t, acct)
+	p.SetDrivers(map[domain.Provider]driver.SchedulerDriver{
+		domain.ProviderClaude: testDriver,
+	})
+
+	cd1 := time.Now().Add(10 * time.Minute)
+	p.Observe(acct.ID, driver.Effect{
+		Kind: driver.EffectCooldown, Scope: driver.EffectScopeBucket,
+		CooldownUntil: cd1,
+	})
+
+	cd2 := time.Now().Add(5 * time.Minute)
+	p.Observe(acct.ID, driver.Effect{
+		Kind: driver.EffectCooldown, Scope: driver.EffectScopeBucket,
+		CooldownUntil: cd2,
+	})
+
+	cd3 := time.Now().Add(30 * time.Minute)
+	p.Observe(acct.ID, driver.Effect{
+		Kind: driver.EffectBlock, Scope: driver.EffectScopeBucket,
+		CooldownUntil: cd3, ErrorMessage: "banned",
+	})
+
+	all := p.bus.Recent(10)
+	if len(all) != 3 {
+		t.Fatalf("expected 3 events, got %d", len(all))
+	}
+	if all[0].Type != events.EventRateLimit {
+		t.Fatalf("event[0] type = %s", all[0].Type)
+	}
+	if all[0].CooldownUntil.Unix() != cd1.UTC().Unix() {
+		t.Fatalf("event[0] cooldown wrong")
+	}
+	if all[1].Type != events.EventRateLimit {
+		t.Fatalf("event[1] type = %s", all[1].Type)
+	}
+	if all[1].CooldownUntil.Unix() != cd1.UTC().Unix() {
+		t.Fatalf("event[1] should show actual (longer) cooldown cd1, not proposed cd2")
+	}
+	if all[2].Type != events.EventBan {
+		t.Fatalf("event[2] type = %s", all[2].Type)
+	}
+	if all[2].CooldownUntil.Unix() != cd3.UTC().Unix() {
+		t.Fatalf("event[2] cooldown wrong")
+	}
+
+	bk := all[0].BucketKey
+	for i, ev := range all {
+		if ev.BucketKey != bk {
+			t.Fatalf("event[%d] BucketKey = %q, want %q", i, ev.BucketKey, bk)
+		}
+	}
+
+	bucket := p.buckets[bk]
+	past := time.Now().Add(-1 * time.Second)
+	bucket.CooldownUntil = &past
+	p.persistBucketLocked(bucket)
+	p.cleanup()
+
+	recent := p.bus.Recent(10)
+	var recoveredAcct, recoveredBucket bool
+	for _, ev := range recent {
+		if ev.Type == events.EventRecover && ev.AccountID == acct.ID && ev.Message == "blocked account recovered" {
+			recoveredAcct = true
+		}
+		if ev.Type == events.EventRecover && ev.BucketKey == bk && ev.Message == "cooldown expired" {
+			recoveredBucket = true
+		}
+	}
+	if !recoveredAcct {
+		t.Fatal("missing 'blocked account recovered' event")
+	}
+	if !recoveredBucket {
+		t.Fatal("missing 'cooldown expired' event")
+	}
+}
+
+func TestObserve_UnknownAccount(t *testing.T) {
+	p := newTestPool(t)
+	p.SetDrivers(map[domain.Provider]driver.SchedulerDriver{
+		domain.ProviderClaude: testDriver,
+	})
+
+	p.Observe("nonexistent", driver.Effect{
+		Kind: driver.EffectBlock, Scope: driver.EffectScopeBucket,
+		CooldownUntil: time.Now().Add(1 * time.Hour),
+		ErrorMessage:  "ghost account",
+	})
+
+	if len(p.bus.Recent(10)) != 0 {
+		t.Fatal("events emitted for unknown account")
+	}
+}
+
+func TestObserve_SuccessThenFailure_ContextSufficient(t *testing.T) {
+	acct := activeAccount("sf-1", "sf@test.com")
+	p := newTestPool(t, acct)
+	p.SetDrivers(map[domain.Provider]driver.SchedulerDriver{
+		domain.ProviderClaude: testDriver,
+	})
+
+	for i := 0; i < 5; i++ {
+		p.Observe(acct.ID, driver.Effect{Kind: driver.EffectSuccess, Scope: driver.EffectScopeBucket})
+	}
+	if len(p.bus.Recent(10)) != 0 {
+		t.Fatal("success should not emit events")
+	}
+
+	until := time.Now().Add(1 * time.Hour)
+	p.Observe(acct.ID, driver.Effect{
+		Kind: driver.EffectBlock, Scope: driver.EffectScopeBucket,
+		CooldownUntil: until, ErrorMessage: "sudden ban",
+	})
+
+	all := p.bus.Recent(10)
+	if len(all) != 1 {
+		t.Fatalf("expected 1 event, got %d", len(all))
+	}
+	evt := all[0]
+	if evt.AccountID == "" || evt.BucketKey == "" || evt.CooldownUntil == nil || evt.Message == "" {
+		t.Fatalf("ban event missing fields for self-contained diagnosis: %+v", evt)
+	}
+}
+
+func TestObserve_InterleavedEffects_SameBucket(t *testing.T) {
+	a1 := &domain.Account{
+		ID: "il-1", Email: "x@test.com", Provider: domain.ProviderClaude,
+		Subject: "same-org", Status: domain.StatusActive, Priority: 50,
+	}
+	a2 := &domain.Account{
+		ID: "il-2", Email: "y@test.com", Provider: domain.ProviderClaude,
+		Subject: "same-org", Status: domain.StatusActive, Priority: 50,
+	}
+	p := newTestPool(t, a1, a2)
+	p.SetDrivers(map[domain.Provider]driver.SchedulerDriver{
+		domain.ProviderClaude: testDriver,
+	})
+
+	cd1 := time.Now().Add(10 * time.Minute)
+	p.Observe(a1.ID, driver.Effect{
+		Kind: driver.EffectCooldown, Scope: driver.EffectScopeBucket,
+		CooldownUntil: cd1,
+	})
+
+	cd2 := time.Now().Add(3 * time.Minute)
+	p.Observe(a2.ID, driver.Effect{
+		Kind: driver.EffectAuthFail, Scope: driver.EffectScopeBucket,
+		CooldownUntil: cd2,
+	})
+
+	all := p.bus.Recent(10)
+	if len(all) != 2 {
+		t.Fatalf("expected 2 events, got %d", len(all))
+	}
+	if all[0].AccountID != a1.ID {
+		t.Fatalf("event[0] AccountID = %s, want %s", all[0].AccountID, a1.ID)
+	}
+	if all[1].AccountID != a2.ID {
+		t.Fatalf("event[1] AccountID = %s, want %s", all[1].AccountID, a2.ID)
+	}
+	if all[0].BucketKey != all[1].BucketKey {
+		t.Fatalf("shared bucket should have same key: %q vs %q", all[0].BucketKey, all[1].BucketKey)
+	}
+	if all[0].Type != events.EventRateLimit {
+		t.Fatalf("event[0] type = %s", all[0].Type)
+	}
+	if all[1].Type != events.EventRefresh {
+		t.Fatalf("event[1] type = %s", all[1].Type)
+	}
+	if all[1].CooldownUntil.Unix() != cd1.UTC().Unix() {
+		t.Fatalf("event[1] CooldownUntil should be cd1 (join kept longer), got %v", *all[1].CooldownUntil)
+	}
+}
+
+func TestApplyBucketCooldown_NilBucket(t *testing.T) {
+	acct := activeAccount("nil-1", "nil@test.com")
+	p := newTestPool(t, acct)
+
+	result := p.applyBucketCooldown(nil, time.Now().Add(10*time.Minute))
+	if result.Applied {
+		t.Fatal("nil bucket should not apply cooldown")
+	}
+	if !result.Actual.IsZero() {
+		t.Fatalf("nil bucket Actual should be zero, got %v", result.Actual)
+	}
+}
+
+func TestCleanup_SharedBucket_BlockedRecovery(t *testing.T) {
+	active := &domain.Account{
+		ID: "sbr-active", Email: "a@test.com", Provider: domain.ProviderClaude,
+		Subject: "shared-org", Status: domain.StatusActive, Priority: 50,
+	}
+	blocked := &domain.Account{
+		ID: "sbr-blocked", Email: "b@test.com", Provider: domain.ProviderClaude,
+		Subject: "shared-org", Status: domain.StatusBlocked, Priority: 50,
+		ErrorMessage: "banned",
+	}
+	p := newTestPool(t, active, blocked)
+	p.SetDrivers(map[domain.Provider]driver.SchedulerDriver{
+		domain.ProviderClaude: testDriver,
+	})
+
+	bucketKey := testDriver.BucketKey(active)
+	bucket := p.buckets[bucketKey]
+	if bucket == nil {
+		t.Fatal("bucket not found")
+	}
+	past := time.Now().Add(-1 * time.Second)
+	bucket.CooldownUntil = &past
+	p.persistBucketLocked(bucket)
+
+	p.cleanup()
+
+	if p.accounts["sbr-blocked"].Status != domain.StatusActive {
+		t.Fatalf("blocked account should have recovered, got status %s", p.accounts["sbr-blocked"].Status)
+	}
+	if p.accounts["sbr-blocked"].ErrorMessage != "" {
+		t.Fatalf("error message should be cleared, got %q", p.accounts["sbr-blocked"].ErrorMessage)
+	}
+
+	bucket = p.buckets[bucketKey]
+	if bucket == nil {
+		t.Fatal("bucket gone after cleanup")
+	}
+	if bucket.CooldownUntil != nil {
+		t.Fatalf("bucket cooldown should be nil, got %v", *bucket.CooldownUntil)
+	}
+
+	all := p.bus.Recent(10)
+	hasRecover := false
+	hasExpiry := false
+	for _, ev := range all {
+		if ev.Type == events.EventRecover && ev.AccountID == "sbr-blocked" {
+			hasRecover = true
+		}
+		if ev.Type == events.EventRecover && ev.Message == "cooldown expired" {
+			hasExpiry = true
+		}
+	}
+	if !hasRecover {
+		t.Fatal("missing 'blocked account recovered' event")
+	}
+	if !hasExpiry {
+		t.Fatal("missing 'cooldown expired' event")
 	}
 }

@@ -139,18 +139,18 @@ func (p *Pool) persistCellLocked(cell *domain.EgressCell) {
 	}
 }
 
-func (p *Pool) applyCellCooldownLocked(cell *domain.EgressCell, proposed time.Time) bool {
+func (p *Pool) applyCellCooldownLocked(cell *domain.EgressCell, proposed time.Time) CooldownResult {
 	if cell == nil {
-		return false
+		return CooldownResult{}
 	}
 	if cell.CooldownUntil != nil && cell.CooldownUntil.After(proposed) {
-		return false
+		return CooldownResult{Applied: false, Actual: *cell.CooldownUntil}
 	}
 	until := proposed.UTC()
 	cell.CooldownUntil = &until
 	cell.UpdatedAt = time.Now().UTC()
 	p.persistCellLocked(cell)
-	return true
+	return CooldownResult{Applied: true, Actual: until}
 }
 
 func (p *Pool) CooldownCell(cellID string, proposed time.Time, message string) bool {
@@ -161,13 +161,16 @@ func (p *Pool) CooldownCell(cellID string, proposed time.Time, message string) b
 	}
 
 	cell := p.cellLocked(cellID)
-	if !p.applyCellCooldownLocked(cell, proposed) {
+	result := p.applyCellCooldownLocked(cell, proposed)
+	if !result.Applied {
 		return false
 	}
 	if message != "" {
 		p.bus.Publish(events.Event{
-			Type:    events.EventRelayError,
-			Message: fmt.Sprintf("cell %s cooldown until %s: %s", cellID, proposed.UTC().Format(time.RFC3339), message),
+			Type:          events.EventRelayError,
+			CellID:        cellID,
+			CooldownUntil: &result.Actual,
+			Message:       fmt.Sprintf("cell %s cooldown until %s: %s", cellID, result.Actual.Format(time.RFC3339), message),
 		})
 	}
 	slog.Warn("cell cooldown applied", "cellId", cellID, "until", proposed.UTC(), "reason", message)
@@ -204,6 +207,7 @@ func (p *Pool) ClearCellCooldown(cellID string) bool {
 	p.persistCellLocked(cell)
 	p.bus.Publish(events.Event{
 		Type:    events.EventRecover,
+		CellID:  cellID,
 		Message: fmt.Sprintf("cell %s cooldown cleared", cellID),
 	})
 	slog.Info("admin cleared cell cooldown", "cellId", cellID)

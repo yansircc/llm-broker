@@ -10,6 +10,14 @@ import (
 	"github.com/yansircc/llm-broker/internal/events"
 )
 
+// CooldownResult captures the actual outcome of a cooldown join.
+// Applied is true when the proposed value was accepted; Actual is the
+// effective cooldown time after the join (may equal the old value).
+type CooldownResult struct {
+	Applied bool
+	Actual  time.Time
+}
+
 func sameTime(a, b *time.Time) bool {
 	if a == nil || b == nil {
 		return a == nil && b == nil
@@ -36,20 +44,22 @@ func (p *Pool) ClearCooldown(accountID string) {
 	p.persistBucketLocked(bucket)
 	p.bus.Publish(events.Event{
 		Type: events.EventRecover, AccountID: acct.ID,
-		Message: "admin cleared cooldown",
+		BucketKey: bucket.BucketKey,
+		Message:   "admin cleared cooldown",
 	})
 	slog.Info("admin cleared cooldown", "accountId", acct.ID)
 }
 
-func (p *Pool) applyBucketCooldown(bucket *domain.QuotaBucket, proposed time.Time) {
+func (p *Pool) applyBucketCooldown(bucket *domain.QuotaBucket, proposed time.Time) CooldownResult {
 	if bucket == nil {
-		return
+		return CooldownResult{}
 	}
 	if bucket.CooldownUntil != nil && bucket.CooldownUntil.After(proposed) {
-		return
+		return CooldownResult{Applied: false, Actual: *bucket.CooldownUntil}
 	}
 	until := proposed.UTC()
 	bucket.CooldownUntil = &until
+	return CooldownResult{Applied: true, Actual: until}
 }
 
 func (p *Pool) Update(accountID string, fn func(*domain.Account)) error {

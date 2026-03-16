@@ -69,10 +69,13 @@ type DashboardUser struct {
 }
 
 type DashboardEvent struct {
-	Type      string `json:"type"`
-	AccountID string `json:"account_id,omitempty"`
-	Message   string `json:"message"`
-	Timestamp string `json:"ts"`
+	Type          string     `json:"type"`
+	AccountID     string     `json:"account_id,omitempty"`
+	BucketKey     string     `json:"bucket_key,omitempty"`
+	CellID        string     `json:"cell_id,omitempty"`
+	CooldownUntil *time.Time `json:"cooldown_until,omitempty"`
+	Message       string     `json:"message"`
+	Timestamp     string     `json:"ts"`
 }
 
 type ProviderOptionResponse struct {

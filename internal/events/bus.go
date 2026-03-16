@@ -1,6 +1,8 @@
 package events
 
 import (
+	"log/slog"
+	"os"
 	"sync"
 	"time"
 )
@@ -19,11 +21,14 @@ const (
 )
 
 type Event struct {
-	Type      EventType `json:"type"`
-	AccountID string    `json:"account_id,omitempty"`
-	UserID    string    `json:"user_id,omitempty"`
-	Message   string    `json:"message"`
-	Timestamp time.Time `json:"ts"`
+	Type          EventType  `json:"type"`
+	AccountID     string     `json:"account_id,omitempty"`
+	UserID        string     `json:"user_id,omitempty"`
+	BucketKey     string     `json:"bucket_key,omitempty"`
+	CellID        string     `json:"cell_id,omitempty"`
+	CooldownUntil *time.Time `json:"cooldown_until,omitempty"`
+	Message       string     `json:"message"`
+	Timestamp     time.Time  `json:"ts"`
 }
 
 type Bus struct {
@@ -34,6 +39,7 @@ type Bus struct {
 	ringCount   int
 	subscribers map[int]chan Event
 	nextID      int
+	log         *slog.Logger // dedicated logger, bypasses app log level
 }
 
 func NewBus(ringSize int) *Bus {
@@ -44,6 +50,7 @@ func NewBus(ringSize int) *Bus {
 		ring:        make([]Event, ringSize),
 		ringSize:    ringSize,
 		subscribers: make(map[int]chan Event),
+		log:         slog.New(slog.NewTextHandler(os.Stderr, nil)),
 	}
 }
 
@@ -51,6 +58,25 @@ func (b *Bus) Publish(e Event) {
 	if e.Timestamp.IsZero() {
 		e.Timestamp = time.Now()
 	}
+
+	// slog sink: semantic events enter journald automatically.
+	attrs := []any{"type", string(e.Type)}
+	if e.AccountID != "" {
+		attrs = append(attrs, "accountId", e.AccountID)
+	}
+	if e.BucketKey != "" {
+		attrs = append(attrs, "bucketKey", e.BucketKey)
+	}
+	if e.CellID != "" {
+		attrs = append(attrs, "cellId", e.CellID)
+	}
+	if e.CooldownUntil != nil {
+		attrs = append(attrs, "cooldownUntil", e.CooldownUntil.Format(time.RFC3339))
+	}
+	if e.Message != "" {
+		attrs = append(attrs, "detail", e.Message)
+	}
+	b.log.Warn("event", attrs...)
 
 	b.mu.Lock()
 	defer b.mu.Unlock()

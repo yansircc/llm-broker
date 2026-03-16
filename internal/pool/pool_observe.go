@@ -50,50 +50,90 @@ func (p *Pool) cleanup() {
 
 	now := time.Now()
 
-	for _, acct := range p.accounts {
-		changed := false
-
-		if bucket := p.bucketLocked(acct); bucket != nil {
-			if bucket.CooldownUntil != nil && now.After(*bucket.CooldownUntil) {
-				if acct.Status != domain.StatusBlocked {
-					bucket.CooldownUntil = nil
-					bucket.UpdatedAt = now.UTC()
-					p.persistBucketLocked(bucket)
-					p.bus.Publish(events.Event{
-						Type: events.EventRecover, AccountID: acct.ID,
-						Message: "cooldown expired",
-					})
-					slog.Info("account cooldown expired", "accountId", acct.ID)
+	// Phase 1: bucket-scoped decisions. Each bucket is visited exactly once.
+	for _, bucket := range p.buckets {
+		if bucket.CooldownUntil != nil && now.After(*bucket.CooldownUntil) {
+			// Check if any member is blocked — if so, defer clearing to
+			// phase 2 so blocked recovery sees the non-nil cooldown.
+			hasBlocked := false
+			for _, acct := range p.accounts {
+				if p.bucketKeyLocked(acct) == bucket.BucketKey && acct.Status == domain.StatusBlocked {
+					hasBlocked = true
+					break
 				}
 			}
-
-			if acct.Status == domain.StatusActive && bucket.CooldownUntil == nil {
-				if cooldownUntil := p.computeExhaustedCooldown(acct, now.Unix()); cooldownUntil > 0 {
-					resetTime := time.Unix(cooldownUntil, 0).UTC()
-					p.applyBucketCooldown(bucket, resetTime)
-					bucket.UpdatedAt = now.UTC()
-					p.persistBucketLocked(bucket)
-					slog.Warn("enforced cooldown on exhausted account", "account", acct.Email, "until", resetTime)
-				}
+			if !hasBlocked {
+				bucket.CooldownUntil = nil
+				bucket.UpdatedAt = now.UTC()
+				p.persistBucketLocked(bucket)
+				p.bus.Publish(events.Event{
+					Type:      events.EventRecover,
+					BucketKey: bucket.BucketKey,
+					Message:   "cooldown expired",
+				})
+				slog.Info("bucket cooldown expired", "bucketKey", bucket.BucketKey)
 			}
 		}
+	}
 
+	// Phase 2: recover blocked accounts whose bucket cooldown has expired.
+	// This runs after phase 1 so that buckets with blocked members still
+	// have CooldownUntil set (phase 1 skipped clearing them).
+	for _, acct := range p.accounts {
 		if acct.Status == domain.StatusBlocked {
 			cooldownUntil := p.bucketCooldownLocked(acct)
 			if cooldownUntil != nil && now.After(*cooldownUntil) {
 				acct.Status = domain.StatusActive
 				acct.ErrorMessage = ""
-				changed = true
+				p.persistLocked(acct)
 				p.bus.Publish(events.Event{
 					Type: events.EventRecover, AccountID: acct.ID,
-					Message: "blocked account recovered",
+					BucketKey: p.bucketKeyLocked(acct),
+					Message:   "blocked account recovered",
 				})
 				slog.Info("blocked account recovered", "accountId", acct.ID)
 			}
 		}
+	}
 
-		if changed {
-			p.persistLocked(acct)
+	// Phase 3: clear bucket cooldowns that were held for blocked recovery,
+	// and enforce exhausted cooldowns on now-available buckets.
+	for _, bucket := range p.buckets {
+		if bucket.CooldownUntil != nil && now.After(*bucket.CooldownUntil) {
+			bucket.CooldownUntil = nil
+			bucket.UpdatedAt = now.UTC()
+			p.persistBucketLocked(bucket)
+			p.bus.Publish(events.Event{
+				Type:      events.EventRecover,
+				BucketKey: bucket.BucketKey,
+				Message:   "cooldown expired",
+			})
+			slog.Info("bucket cooldown expired", "bucketKey", bucket.BucketKey)
+		}
+
+		if bucket.CooldownUntil == nil {
+			// Find any active member to compute exhausted cooldown.
+			for _, acct := range p.accounts {
+				if p.bucketKeyLocked(acct) != bucket.BucketKey || acct.Status != domain.StatusActive {
+					continue
+				}
+				if cooldownUntil := p.computeExhaustedCooldown(acct, now.Unix()); cooldownUntil > 0 {
+					resetTime := time.Unix(cooldownUntil, 0).UTC()
+					result := p.applyBucketCooldown(bucket, resetTime)
+					bucket.UpdatedAt = now.UTC()
+					p.persistBucketLocked(bucket)
+					if result.Applied {
+						p.bus.Publish(events.Event{
+							Type:          events.EventRateLimit,
+							BucketKey:     bucket.BucketKey,
+							CooldownUntil: &result.Actual,
+							Message:       "exhausted cooldown enforced",
+						})
+					}
+					slog.Warn("enforced exhausted cooldown", "bucketKey", bucket.BucketKey, "until", resetTime)
+				}
+				break // one member per bucket is enough for exhaustion check
+			}
 		}
 	}
 }
@@ -157,6 +197,28 @@ func (p *Pool) Observe(accountID string, effect driver.Effect) {
 		delete(p.serverErrCount, bucket.BucketKey)
 	}
 
+	// Collect event to emit after all state mutations (including UpdatedState
+	// which may change bucketKey). BucketKey is set after UpdatedState.
+	var pendingEvent *events.Event
+
+	// cooldownPtr returns a non-nil pointer only for non-zero times.
+	// Zero CooldownUntil means the driver didn't set one — emit nil
+	// (explicit blank) rather than a fake 0001-01-01 sentinel.
+	cooldownPtr := func(r CooldownResult) *time.Time {
+		if r.Actual.IsZero() {
+			return nil
+		}
+		return &r.Actual
+	}
+
+	// cooldownSuffix formats " (cooldown until ...)" or "" for zero.
+	cooldownSuffix := func(r CooldownResult) string {
+		if r.Actual.IsZero() {
+			return ""
+		}
+		return fmt.Sprintf(" (cooldown until %s)", r.Actual.Format(time.RFC3339))
+	}
+
 	switch effect.Kind {
 	case driver.EffectSuccess:
 		now := time.Now().UTC()
@@ -171,63 +233,69 @@ func (p *Pool) Observe(accountID string, effect driver.Effect) {
 			p.serverErrCount[bucket.BucketKey]++
 			if p.serverErrCount[bucket.BucketKey] >= 3 {
 				cooldownUntil := time.Now().Add(30 * time.Second)
-				p.applyBucketCooldown(bucket, cooldownUntil)
+				result := p.applyBucketCooldown(bucket, cooldownUntil)
 				bucket.UpdatedAt = time.Now().UTC()
 				p.persistBucketLocked(bucket)
 				delete(p.serverErrCount, bucket.BucketKey)
-				p.bus.Publish(events.Event{
-					Type: events.EventOverload, AccountID: acct.ID,
-					Message: "circuit breaker: 3 consecutive upstream 500s, cooldown 30s",
-				})
+				pendingEvent = &events.Event{
+					Type:          events.EventOverload,
+					AccountID:     acct.ID,
+					CooldownUntil: cooldownPtr(result),
+					Message:       "circuit breaker: 3 consecutive upstream 500s" + cooldownSuffix(result),
+				}
 			}
 		}
 
 	case driver.EffectCooldown:
-		p.applyBucketCooldown(bucket, effect.CooldownUntil)
+		result := p.applyBucketCooldown(bucket, effect.CooldownUntil)
 		if bucket != nil {
 			bucket.UpdatedAt = time.Now().UTC()
 			p.persistBucketLocked(bucket)
 		}
-		p.bus.Publish(events.Event{
+		pendingEvent = &events.Event{
 			Type: events.EventRateLimit, AccountID: acct.ID,
-			Message: fmt.Sprintf("cooldown until %s", effect.CooldownUntil.Format(time.RFC3339)),
-		})
+			CooldownUntil: cooldownPtr(result),
+			Message:       "cooldown" + cooldownSuffix(result),
+		}
 
 	case driver.EffectOverload:
-		p.applyBucketCooldown(bucket, effect.CooldownUntil)
+		result := p.applyBucketCooldown(bucket, effect.CooldownUntil)
 		if bucket != nil {
 			bucket.UpdatedAt = time.Now().UTC()
 			p.persistBucketLocked(bucket)
 		}
-		p.bus.Publish(events.Event{
+		pendingEvent = &events.Event{
 			Type: events.EventOverload, AccountID: acct.ID,
-			Message: fmt.Sprintf("overloaded, cooldown until %s", effect.CooldownUntil.Format(time.RFC3339)),
-		})
+			CooldownUntil: cooldownPtr(result),
+			Message:       "overloaded" + cooldownSuffix(result),
+		}
 
 	case driver.EffectBlock:
 		acct.Status = domain.StatusBlocked
 		acct.ErrorMessage = effect.ErrorMessage
-		p.applyBucketCooldown(bucket, effect.CooldownUntil)
+		result := p.applyBucketCooldown(bucket, effect.CooldownUntil)
 		if bucket != nil {
 			bucket.UpdatedAt = time.Now().UTC()
 			p.persistBucketLocked(bucket)
 		}
 		markPersist(acct)
-		p.bus.Publish(events.Event{
+		pendingEvent = &events.Event{
 			Type: events.EventBan, AccountID: acct.ID,
-			Message: effect.ErrorMessage,
-		})
+			CooldownUntil: cooldownPtr(result),
+			Message:       effect.ErrorMessage + cooldownSuffix(result),
+		}
 
 	case driver.EffectAuthFail:
-		p.applyBucketCooldown(bucket, effect.CooldownUntil)
+		result := p.applyBucketCooldown(bucket, effect.CooldownUntil)
 		if bucket != nil {
 			bucket.UpdatedAt = time.Now().UTC()
 			p.persistBucketLocked(bucket)
 		}
-		p.bus.Publish(events.Event{
+		pendingEvent = &events.Event{
 			Type: events.EventRefresh, AccountID: acct.ID,
-			Message: "auth failed, background refresh triggered",
-		})
+			CooldownUntil: cooldownPtr(result),
+			Message:       "auth failed, background refresh triggered",
+		}
 		if p.onAuthFailure != nil {
 			go p.onAuthFailure(acct.ID)
 		}
@@ -248,6 +316,12 @@ func (p *Pool) Observe(accountID string, effect driver.Effect) {
 				markPersist(member)
 			}
 		}
+	}
+
+	// Emit event with committed bucketKey (after any UpdatedState migration).
+	if pendingEvent != nil {
+		pendingEvent.BucketKey = p.bucketKeyLocked(acct)
+		p.bus.Publish(*pendingEvent)
 	}
 
 	for _, target := range persisted {
