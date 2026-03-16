@@ -123,9 +123,9 @@ func (d *ClaudeDriver) CalcCost(model string, usage *Usage) float64 {
 	var inPrice, outPrice, cacheReadPrice, cacheCreatePrice float64
 	switch {
 	case strings.Contains(lower, "opus"):
-		inPrice, outPrice, cacheReadPrice, cacheCreatePrice = 15, 75, 1.50, 18.75
+		inPrice, outPrice, cacheReadPrice, cacheCreatePrice = 5, 25, 0.50, 6.25
 	case strings.Contains(lower, "haiku"):
-		inPrice, outPrice, cacheReadPrice, cacheCreatePrice = 0.80, 4, 0.08, 1
+		inPrice, outPrice, cacheReadPrice, cacheCreatePrice = 1, 5, 0.10, 1.25
 	default:
 		inPrice, outPrice, cacheReadPrice, cacheCreatePrice = 3, 15, 0.30, 3.75
 	}
