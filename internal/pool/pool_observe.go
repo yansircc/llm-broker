@@ -60,7 +60,7 @@ func (p *Pool) cleanup() {
 					bucket.UpdatedAt = now.UTC()
 					p.persistBucketLocked(bucket)
 					p.bus.Publish(events.Event{
-						Type: events.EventRecover, AccountID: acct.ID,
+						Type:      events.EventRecover,
 						BucketKey: bucket.BucketKey,
 						Message:   "cooldown expired",
 					})

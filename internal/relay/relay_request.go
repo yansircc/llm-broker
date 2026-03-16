@@ -30,7 +30,7 @@ func (r *Relay) prepareRelayRequest(w http.ResponseWriter, req *http.Request, dr
 		return nil, true
 	}
 
-	input, plan, ok := r.parseRelayInput(w, req, drv)
+	input, plan, ok := r.parseRelayInput(w, req, drv, keyInfo)
 	if !ok {
 		return nil, true
 	}
@@ -58,7 +58,7 @@ func (r *Relay) prepareRelayRequest(w http.ResponseWriter, req *http.Request, dr
 	}, false
 }
 
-func (r *Relay) parseRelayInput(w http.ResponseWriter, req *http.Request, drv driver.ExecutionDriver) (*driver.RelayInput, driver.RelayPlan, bool) {
+func (r *Relay) parseRelayInput(w http.ResponseWriter, req *http.Request, drv driver.ExecutionDriver, keyInfo *auth.KeyInfo) (*driver.RelayInput, driver.RelayPlan, bool) {
 	req.Body = http.MaxBytesReader(w, req.Body, int64(r.cfg.MaxRequestBodyMB)<<20)
 
 	rawBody, err := io.ReadAll(req.Body)
@@ -69,10 +69,14 @@ func (r *Relay) parseRelayInput(w http.ResponseWriter, req *http.Request, drv dr
 			return nil, driver.RelayPlan{}, false
 		}
 		drv.WriteError(w, http.StatusBadRequest, "failed to read request body")
-		r.bus.Publish(events.Event{
+		evt := events.Event{
 			Type:    events.EventRelayError,
 			Message: fmt.Sprintf("%s: failed to read request body: %s", drv.Provider(), err.Error()),
-		})
+		}
+		if keyInfo != nil {
+			evt.UserID = keyInfo.ID
+		}
+		r.bus.Publish(evt)
 		return nil, driver.RelayPlan{}, false
 	}
 
