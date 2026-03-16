@@ -16,7 +16,7 @@ import (
 	"github.com/yansircc/llm-broker/internal/identity"
 )
 
-var banSignalPattern = regexp.MustCompile(`(?i)(organization has been disabled|account has been disabled|Too many active sessions|only authorized for use with claude code)`)
+var banSignalPattern = regexp.MustCompile(`(?i)(organization has been disabled|account has been disabled|Too many active sessions|only authorized for use with claude code|OAuth authentication is currently not allowed)`)
 
 // ---------------------------------------------------------------------------
 // Relay
@@ -144,6 +144,13 @@ func (d *ClaudeDriver) Interpret(statusCode int, headers http.Header, body []byt
 			Scope:         EffectScopeBucket,
 			CooldownUntil: time.Now().Add(d.cfg.Pauses.Pause401Refresh),
 			UpdatedState:  mustMarshalJSON(state),
+		}
+
+	case 500:
+		return Effect{
+			Kind:         EffectServerError,
+			Scope:        EffectScopeBucket,
+			UpdatedState: mustMarshalJSON(state),
 		}
 	}
 

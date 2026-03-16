@@ -8,8 +8,13 @@ import (
 )
 
 // IsTransport reports whether err looks like a network or proxy transport failure.
+// It explicitly excludes context.Canceled, which indicates the downstream client
+// disconnected rather than an infrastructure problem with the network path.
 func IsTransport(err error) bool {
 	if err == nil {
+		return false
+	}
+	if errors.Is(err, context.Canceled) {
 		return false
 	}
 	if errors.Is(err, context.DeadlineExceeded) {
