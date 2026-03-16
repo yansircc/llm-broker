@@ -39,6 +39,7 @@ func (p *Pool) ClearCooldown(accountID string) {
 	if bucket == nil || bucket.CooldownUntil == nil {
 		return
 	}
+	p.clearOverloadLocked(bucket.BucketKey)
 	bucket.CooldownUntil = nil
 	bucket.UpdatedAt = time.Now().UTC()
 	p.persistBucketLocked(bucket)
@@ -180,6 +181,7 @@ func (p *Pool) StoreTokens(accountID, accessTokenEnc, refreshTokenEnc string, ex
 	acct.Status = domain.StatusActive
 	acct.ErrorMessage = ""
 	if bucket := p.ensureBucketLocked(acct); bucket != nil && bucket.CooldownUntil != nil {
+		p.clearOverloadLocked(bucket.BucketKey)
 		bucket.CooldownUntil = nil
 		bucket.UpdatedAt = now
 		p.persistBucketLocked(bucket)

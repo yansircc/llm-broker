@@ -35,6 +35,8 @@ type Pool struct {
 	store          store.Store
 	bus            *events.Bus
 
+	overloadBackoff map[string]*overloadState // in-memory overload tracking per bucket
+
 	onAuthFailure func(accountID string)
 	drivers       map[domain.Provider]driver.SchedulerDriver
 }
@@ -45,12 +47,13 @@ func (p *Pool) SetOnAuthFailure(fn func(accountID string)) {
 
 func New(s store.Store, bus *events.Bus) (*Pool, error) {
 	p := &Pool{
-		accounts:       make(map[string]*domain.Account),
-		cells:          make(map[string]*domain.EgressCell),
-		buckets:        make(map[string]*domain.QuotaBucket),
-		serverErrCount: make(map[string]int),
-		store:          s,
-		bus:            bus,
+		accounts:        make(map[string]*domain.Account),
+		cells:           make(map[string]*domain.EgressCell),
+		buckets:         make(map[string]*domain.QuotaBucket),
+		serverErrCount:  make(map[string]int),
+		overloadBackoff: make(map[string]*overloadState),
+		store:           s,
+		bus:             bus,
 	}
 
 	if err := p.refreshState(context.Background()); err != nil {
