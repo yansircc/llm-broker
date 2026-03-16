@@ -21,7 +21,8 @@ import (
 )
 
 type relayTestDriver struct {
-	provider domain.Provider
+	provider       domain.Provider
+	interpretCalls []int
 }
 
 func (d *relayTestDriver) Provider() domain.Provider { return d.provider }
@@ -33,6 +34,7 @@ func (d *relayTestDriver) BuildRequest(ctx context.Context, _ *driver.RelayInput
 }
 
 func (d *relayTestDriver) Interpret(statusCode int, _ http.Header, _ []byte, _ string, _ json.RawMessage) driver.Effect {
+	d.interpretCalls = append(d.interpretCalls, statusCode)
 	if statusCode == http.StatusOK {
 		return driver.Effect{Kind: driver.EffectSuccess, Scope: driver.EffectScopeBucket}
 	}
@@ -305,5 +307,94 @@ func TestExecuteRelayAttemptLogsRetriableFailure(t *testing.T) {
 	}
 	if record.attrs["clientRetryCount"] != "1" {
 		t.Fatalf("log clientRetryCount = %#v, want 1", record.attrs["clientRetryCount"])
+	}
+}
+
+func TestExecuteRelayAttemptPassesRealStatusToInterpretOnNonRetriableError(t *testing.T) {
+	mockStore := store.NewMockStore()
+	account := &domain.Account{
+		ID:        "acct-500",
+		Email:     "acct500@example.com",
+		Provider:  domain.ProviderClaude,
+		Status:    domain.StatusActive,
+		Subject:   "subject-500",
+		CreatedAt: time.Now().UTC(),
+	}
+	if err := mockStore.SaveAccount(context.Background(), account); err != nil {
+		t.Fatalf("SaveAccount: %v", err)
+	}
+	if err := mockStore.SaveQuotaBucket(context.Background(), &domain.QuotaBucket{
+		BucketKey: "claude:subject-500",
+		Provider:  domain.ProviderClaude,
+		StateJSON: "{}",
+		UpdatedAt: time.Now().UTC(),
+	}); err != nil {
+		t.Fatalf("SaveQuotaBucket: %v", err)
+	}
+
+	bus := events.NewBus(16)
+	p, err := pool.New(mockStore, bus)
+	if err != nil {
+		t.Fatalf("pool.New: %v", err)
+	}
+
+	driverStub := &relayTestDriver{provider: domain.ProviderClaude}
+	transport := relayTestTransport{
+		client: &http.Client{
+			Transport: roundTripFunc(func(_ *http.Request) (*http.Response, error) {
+				return &http.Response{
+					StatusCode: http.StatusInternalServerError,
+					Header:     make(http.Header),
+					Body:       io.NopCloser(strings.NewReader(`{"error":"boom"}`)),
+				}, nil
+			}),
+		},
+	}
+	relaySvc := New(
+		p,
+		relayTestTokenProvider{},
+		mockStore,
+		Config{MaxRetryAccounts: 1},
+		transport,
+		bus,
+		map[domain.Provider]driver.ExecutionDriver{domain.ProviderClaude: driverStub},
+	)
+
+	prepared := &preparedRelayRequest{
+		keyInfo: &auth.KeyInfo{ID: "user-500", Name: "leo"},
+		input: &driver.RelayInput{
+			Headers: make(http.Header),
+			Path:    "/v1/messages",
+			Model:   "claude-sonnet-4-6",
+		},
+	}
+	recorder := httptest.NewRecorder()
+
+	outcome := relaySvc.executeRelayAttempt(
+		context.Background(),
+		recorder,
+		driverStub,
+		prepared,
+		newRelayAttemptState(),
+		0,
+	)
+	if outcome != relayAttemptDone {
+		t.Fatalf("executeRelayAttempt outcome = %v, want %v", outcome, relayAttemptDone)
+	}
+
+	if len(driverStub.interpretCalls) != 1 {
+		t.Fatalf("Interpret call count = %d, want 1", len(driverStub.interpretCalls))
+	}
+	if driverStub.interpretCalls[0] != http.StatusInternalServerError {
+		t.Fatalf("Interpret status = %d, want %d", driverStub.interpretCalls[0], http.StatusInternalServerError)
+	}
+
+	if recorder.Code != http.StatusInternalServerError {
+		t.Fatalf("response status = %d, want %d", recorder.Code, http.StatusInternalServerError)
+	}
+
+	bucket := p.List()[0]
+	if bucket.CooldownUntil == nil {
+		t.Fatal("expected cooldown after non-retriable 500 interpretation")
 	}
 }
