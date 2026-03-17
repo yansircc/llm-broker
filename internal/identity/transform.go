@@ -56,18 +56,21 @@ func (t *Transformer) Transform(
 
 	// 3. Rewrite or inject metadata.user_id
 	accountUUID := acct.IdentityString("account_uuid")
+	sessionTail := "compat-" + brokerUserID
+	syntheticUserID := buildUserID(acct.ID, accountUUID, sessionTail)
+
 	metadata, hasMeta := body["metadata"].(map[string]interface{})
 	if hasMeta {
 		if origUserID, ok := metadata["user_id"].(string); ok {
 			metadata["user_id"] = RewriteUserID(origUserID, acct.ID, accountUUID)
+		} else {
+			// metadata exists but user_id is missing — inject it.
+			metadata["user_id"] = syntheticUserID
 		}
 	} else {
-		// Inject synthetic Claude Code identity for non-native clients.
-		// Session tail is keyed on (account, broker_user) so each broker
-		// user gets a stable, unique session per Claude account.
-		sessionTail := "compat-" + brokerUserID
+		// No metadata at all — inject synthetic Claude Code identity.
 		body["metadata"] = map[string]interface{}{
-			"user_id": buildUserID(acct.ID, accountUUID, sessionTail),
+			"user_id": syntheticUserID,
 		}
 	}
 
