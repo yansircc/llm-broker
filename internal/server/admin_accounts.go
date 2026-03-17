@@ -301,14 +301,13 @@ func (s *Server) handleTestAccount(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// If the account was blocked and the probe succeeded, recover it.
+	// If the account was blocked and the probe succeeded, recover all
+	// blocked accounts in the same bucket. The ban is bucket-scoped
+	// (e.g. entire org disabled), so a successful probe proves the
+	// whole bucket is usable again.
 	if wasBlocked {
-		_ = s.pool.Update(id, func(a *domain.Account) {
-			a.Status = domain.StatusActive
-			a.ErrorMessage = ""
-		})
-		s.pool.ClearCooldown(id)
-		slog.Info("blocked account recovered via successful probe", "id", id)
+		n := s.pool.RecoverBucket(id)
+		slog.Info("blocked bucket recovered via successful probe", "id", id, "recovered", n)
 	}
 
 	writeJSON(w, http.StatusOK, TestAccountResult{OK: true, LatencyMs: latencyMs})

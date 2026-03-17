@@ -204,6 +204,43 @@ func (p *Pool) bucketHasMembersLocked(bucketKey string) bool {
 	return false
 }
 
+// RecoverBucket recovers all blocked accounts in the same bucket as accountID.
+// Returns the number of accounts recovered.
+func (p *Pool) RecoverBucket(accountID string) int {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if err := p.reloadStateLocked(context.Background()); err != nil {
+		slog.Warn("pool refresh failed", "op", "recover_bucket", "accountId", accountID, "error", err)
+	}
+	acct, ok := p.accounts[accountID]
+	if !ok {
+		return 0
+	}
+	bucketKey := p.bucketKeyLocked(acct)
+	recovered := 0
+	for _, member := range p.accounts {
+		if p.bucketKeyLocked(member) != bucketKey || member.Status != domain.StatusBlocked {
+			continue
+		}
+		member.Status = domain.StatusActive
+		member.ErrorMessage = ""
+		p.persistLocked(member)
+		p.bus.Publish(events.Event{
+			Type: events.EventRecover, AccountID: member.ID,
+			BucketKey: bucketKey,
+			Message:   "blocked account recovered via probe",
+		})
+		slog.Info("blocked account recovered via probe", "accountId", member.ID, "bucketKey", bucketKey)
+		recovered++
+	}
+	if bucket := p.buckets[bucketKey]; bucket != nil && bucket.CooldownUntil != nil {
+		bucket.CooldownUntil = nil
+		bucket.UpdatedAt = time.Now().UTC()
+		p.persistBucketLocked(bucket)
+	}
+	return recovered
+}
+
 func (p *Pool) MarkError(accountID, msg string) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
