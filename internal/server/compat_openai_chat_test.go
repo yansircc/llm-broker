@@ -4,9 +4,11 @@ import (
 	"context"
 	"encoding/json"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -805,6 +807,61 @@ func TestHandleCompatOpenAIChatCompletions_RateLimited(t *testing.T) {
 	}
 }
 
+func TestHandleCompatOpenAIChatCompletions_TraceLogsRawClientBody(t *testing.T) {
+	upstreamClient := &http.Client{
+		Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+			respBody := `{
+				"id":"msg_compat_trace_1",
+				"model":"claude-sonnet-4-5",
+				"stop_reason":"end_turn",
+				"content":[{"type":"text","text":"compat ok"}]
+			}`
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Header:     make(http.Header),
+				Body:       io.NopCloser(strings.NewReader(respBody)),
+			}, nil
+		}),
+	}
+	srv := newCompatTestServer(t, upstreamClient)
+	srv.cfg.TraceCompat = true
+
+	logs := &serverCaptureHandler{}
+	oldLogger := slog.Default()
+	slog.SetDefault(slog.New(logs))
+	defer slog.SetDefault(oldLogger)
+
+	reqBody := `{
+		"model":"claude/claude-sonnet-4-5",
+		"messages":[{"role":"user","content":"hello"}],
+		"reasoning_effort":"max"
+	}`
+	req := httptest.NewRequest(http.MethodPost, "/compat/v1/chat/completions", strings.NewReader(reqBody))
+	req.Header.Set("Content-Type", "application/json")
+	ctx := context.WithValue(req.Context(), auth.KeyInfoKey, &auth.KeyInfo{ID: "user-1", Name: "test"})
+	req = req.WithContext(ctx)
+
+	w := httptest.NewRecorder()
+	srv.handleCompatOpenAIChatCompletions(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", w.Code, w.Body.String())
+	}
+
+	record := logs.find("compat translation")
+	if record == nil {
+		t.Fatal("missing compat translation log record")
+	}
+	clientBody, _ := record.attrs["clientBody"].(string)
+	if !strings.Contains(clientBody, `"reasoning_effort":"max"`) {
+		t.Fatalf("clientBody = %q, want raw compat envelope field", clientBody)
+	}
+	translatedBody, _ := record.attrs["translatedBody"].(string)
+	if strings.Contains(translatedBody, "reasoning_effort") {
+		t.Fatalf("translatedBody = %q, unexpected passthrough field", translatedBody)
+	}
+}
+
 func newCompatTestServer(t *testing.T, upstreamClient *http.Client) *Server {
 	return newCompatMultiProviderTestServer(t, map[domain.Provider]*http.Client{
 		domain.ProviderClaude: upstreamClient,
@@ -943,4 +1000,69 @@ type roundTripFunc func(*http.Request) (*http.Response, error)
 
 func (fn roundTripFunc) RoundTrip(req *http.Request) (*http.Response, error) {
 	return fn(req)
+}
+
+type serverCapturedRecord struct {
+	msg   string
+	attrs map[string]any
+}
+
+type serverCaptureHandler struct {
+	mu      sync.Mutex
+	records []serverCapturedRecord
+}
+
+func (h *serverCaptureHandler) Enabled(context.Context, slog.Level) bool { return true }
+
+func (h *serverCaptureHandler) Handle(_ context.Context, record slog.Record) error {
+	captured := serverCapturedRecord{
+		msg:   record.Message,
+		attrs: make(map[string]any),
+	}
+	record.Attrs(func(attr slog.Attr) bool {
+		captured.attrs[attr.Key] = serverValueAny(attr.Value)
+		return true
+	})
+
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.records = append(h.records, captured)
+	return nil
+}
+
+func (h *serverCaptureHandler) WithAttrs(_ []slog.Attr) slog.Handler { return h }
+
+func (h *serverCaptureHandler) WithGroup(_ string) slog.Handler { return h }
+
+func (h *serverCaptureHandler) find(msg string) *serverCapturedRecord {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	for i := range h.records {
+		if h.records[i].msg == msg {
+			record := h.records[i]
+			return &record
+		}
+	}
+	return nil
+}
+
+func serverValueAny(v slog.Value) any {
+	switch v.Kind() {
+	case slog.KindString:
+		return v.String()
+	case slog.KindInt64:
+		return v.Int64()
+	case slog.KindUint64:
+		return v.Uint64()
+	case slog.KindBool:
+		return v.Bool()
+	case slog.KindFloat64:
+		return v.Float64()
+	case slog.KindDuration:
+		return v.Duration()
+	case slog.KindTime:
+		return v.Time()
+	default:
+		return v.Any()
+	}
 }

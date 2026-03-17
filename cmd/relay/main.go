@@ -165,6 +165,7 @@ func main() {
 		MaxRetryAccounts:  cfg.MaxRetryAccounts,
 		SessionBindingTTL: cfg.SessionBindingTTL,
 		CellErrorPause:    cfg.CellErrorPause,
+		TraceCompat:       cfg.TraceCompat,
 	}, transportPool, bus, executionDrivers)
 
 	// Start server
