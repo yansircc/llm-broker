@@ -291,6 +291,8 @@ func (s *Server) handleTestAccount(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	wasBlocked := acct.Status == domain.StatusBlocked
+
 	start := time.Now()
 	_, err := s.probeAccount(r.Context(), acct)
 	latencyMs := time.Since(start).Milliseconds()
@@ -298,6 +300,17 @@ func (s *Server) handleTestAccount(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, TestAccountResult{LatencyMs: latencyMs, Error: err.Error()})
 		return
 	}
+
+	// If the account was blocked and the probe succeeded, recover it.
+	if wasBlocked {
+		_ = s.pool.Update(id, func(a *domain.Account) {
+			a.Status = domain.StatusActive
+			a.ErrorMessage = ""
+		})
+		s.pool.ClearCooldown(id)
+		slog.Info("blocked account recovered via successful probe", "id", id)
+	}
+
 	writeJSON(w, http.StatusOK, TestAccountResult{OK: true, LatencyMs: latencyMs})
 }
 
