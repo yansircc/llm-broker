@@ -53,6 +53,10 @@ func (p *Pool) cleanup() {
 	// Phase 1: bucket-scoped decisions. Each bucket is visited exactly once.
 	for _, bucket := range p.buckets {
 		if bucket.CooldownUntil != nil && now.After(*bucket.CooldownUntil) {
+			// Overloaded buckets are recovered by the probe goroutine, not cleanup.
+			if p.isOverloadBucketLocked(bucket.BucketKey) {
+				continue
+			}
 			// Check if any member is blocked — if so, defer clearing to
 			// phase 2 so blocked recovery sees the non-nil cooldown.
 			hasBlocked := false
@@ -100,6 +104,10 @@ func (p *Pool) cleanup() {
 	// and enforce exhausted cooldowns on now-available buckets.
 	for _, bucket := range p.buckets {
 		if bucket.CooldownUntil != nil && now.After(*bucket.CooldownUntil) {
+			// Overloaded buckets are recovered by the probe goroutine, not cleanup.
+			if p.isOverloadBucketLocked(bucket.BucketKey) {
+				continue
+			}
 			bucket.CooldownUntil = nil
 			bucket.UpdatedAt = now.UTC()
 			p.persistBucketLocked(bucket)
@@ -222,6 +230,9 @@ func (p *Pool) Observe(accountID string, effect driver.Effect) {
 		now := time.Now().UTC()
 		acct.LastUsedAt = &now
 		markPersist(acct)
+		if bucket != nil {
+			p.clearOverloadLocked(bucket.BucketKey)
+		}
 
 	case driver.EffectServerError:
 		now := time.Now().UTC()
@@ -261,6 +272,7 @@ func (p *Pool) Observe(accountID string, effect driver.Effect) {
 		if bucket != nil {
 			bucket.UpdatedAt = time.Now().UTC()
 			p.persistBucketLocked(bucket)
+			p.markOverloadLocked(bucket.BucketKey)
 		}
 		pendingEvent = &events.Event{
 			Type: events.EventOverload, AccountID: acct.ID,

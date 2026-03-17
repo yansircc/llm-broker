@@ -274,5 +274,9 @@ func (r *Relay) finishRelayFailure(w http.ResponseWriter, drv driver.ExecutionDr
 		drv.WriteUpstreamError(w, state.lastUpstreamStatus, state.lastUpstreamBody, prepared.input.IsStream)
 		return
 	}
+	if r.pool.IsProviderOverloaded(drv.Provider()) {
+		drv.WriteError(w, 529, string(drv.Provider())+" is currently overloaded, please retry later")
+		return
+	}
 	drv.WriteError(w, http.StatusServiceUnavailable, "no available accounts")
 }

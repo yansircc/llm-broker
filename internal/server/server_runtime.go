@@ -69,7 +69,7 @@ func (s *Server) runBackgroundJobs(ctx context.Context) {
 
 func (s *Server) runBackgroundJobWorkers(ctx context.Context) {
 	var wg sync.WaitGroup
-	wg.Add(3)
+	wg.Add(4)
 	go func() {
 		defer wg.Done()
 		s.pool.RunCleanup(ctx, 5*time.Minute)
@@ -81,6 +81,10 @@ func (s *Server) runBackgroundJobWorkers(ctx context.Context) {
 	go func() {
 		defer wg.Done()
 		s.runRateLimitRefresh(ctx)
+	}()
+	go func() {
+		defer wg.Done()
+		s.runOverloadRecovery(ctx)
 	}()
 	wg.Wait()
 }
