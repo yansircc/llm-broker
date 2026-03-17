@@ -376,7 +376,7 @@ func TestHandleCompatListModels(t *testing.T) {
 func TestHandleCompatOpenAIChatCompletions_MinimalLoop(t *testing.T) {
 	upstreamClient := &http.Client{
 		Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
-			if req.URL.String() != "https://claude.example/v1/messages" {
+			if req.URL.String() != "https://claude.example/v1/messages?beta=true" {
 				t.Fatalf("upstream URL = %q", req.URL.String())
 			}
 			if req.Header.Get("Authorization") != "Bearer test-token" {
@@ -470,7 +470,7 @@ func TestHandleCompatOpenAIChatCompletions_MinimalLoop(t *testing.T) {
 func TestHandleCompatOpenAIChatCompletions_StreamLoop(t *testing.T) {
 	upstreamClient := &http.Client{
 		Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
-			if req.URL.String() != "https://claude.example/v1/messages" {
+			if req.URL.String() != "https://claude.example/v1/messages?beta=true" {
 				t.Fatalf("upstream URL = %q", req.URL.String())
 			}
 			if req.Header.Get("Accept") != "text/event-stream" {

@@ -58,7 +58,7 @@ func (d *ClaudeDriver) BuildRequest(ctx context.Context, input *RelayInput, acct
 	if input.IsCountTokens {
 		apiURL += "/count_tokens"
 	}
-	upstreamURL, err := appendRawQuery(apiURL, input.RawQuery)
+	upstreamURL, err := appendRawQuery(apiURL, ensureBetaParam(input.RawQuery))
 	if err != nil {
 		return nil, err
 	}

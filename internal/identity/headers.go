@@ -50,6 +50,7 @@ func SetRequiredHeaders(h http.Header, accessToken, apiVersion, betaHeader strin
 		h.Set("anthropic-beta", mergedBeta)
 	}
 	h.Set("Content-Type", "application/json")
+	h.Set("User-Agent", "claude-cli/2.2.0 (external, cli)")
 }
 
 func mergeBetaHeaders(clientBeta, relayBeta string) string {
