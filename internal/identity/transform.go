@@ -41,6 +41,7 @@ func (t *Transformer) Transform(
 	body map[string]interface{},
 	reqHeaders http.Header,
 	acct *domain.Account,
+	brokerUserID string,
 ) (*TransformResult, error) {
 	result := &TransformResult{
 		Body:    body,
@@ -53,11 +54,20 @@ func (t *Transformer) Transform(
 	// 2. Enforce cache_control compliance (max N blocks, strip TTL)
 	t.enforceCacheControl(body)
 
-	// 3. Rewrite metadata.user_id
+	// 3. Rewrite or inject metadata.user_id
 	accountUUID := acct.IdentityString("account_uuid")
-	if metadata, ok := body["metadata"].(map[string]interface{}); ok {
+	metadata, hasMeta := body["metadata"].(map[string]interface{})
+	if hasMeta {
 		if origUserID, ok := metadata["user_id"].(string); ok {
 			metadata["user_id"] = RewriteUserID(origUserID, acct.ID, accountUUID)
+		}
+	} else {
+		// Inject synthetic Claude Code identity for non-native clients.
+		// Session tail is keyed on (account, broker_user) so each broker
+		// user gets a stable, unique session per Claude account.
+		sessionTail := "compat-" + brokerUserID
+		body["metadata"] = map[string]interface{}{
+			"user_id": buildUserID(acct.ID, accountUUID, sessionTail),
 		}
 	}
 

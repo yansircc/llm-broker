@@ -54,6 +54,7 @@ type RelayInput struct {
 	Path          string
 	RawQuery      string
 	Model         string
+	UserID        string // broker user ID, used to synthesize metadata.user_id when absent
 	IsStream      bool
 	IsCountTokens bool
 }
