@@ -57,17 +57,17 @@ func TestCompatOpenAIChatToClaudeRequest(t *testing.T) {
 	if got.Model != "claude-sonnet-4-5" {
 		t.Fatalf("model = %q", got.Model)
 	}
-	if got.System != "system prompt\n\ndeveloper prompt" {
-		t.Fatalf("system = %q", got.System)
+	if got.System != "" {
+		t.Fatalf("system = %q, want empty", got.System)
 	}
 	if got.MaxTokens != maxCompletionTokens {
 		t.Fatalf("max_tokens = %d, want %d", got.MaxTokens, maxCompletionTokens)
 	}
-	if got.Temperature != &temperature {
-		t.Fatalf("temperature pointer was not preserved")
+	if got.Temperature == nil || *got.Temperature != temperature {
+		t.Fatalf("temperature = %#v", got.Temperature)
 	}
-	if got.TopP != &topP {
-		t.Fatalf("top_p pointer was not preserved")
+	if got.TopP == nil || *got.TopP != topP {
+		t.Fatalf("top_p = %#v", got.TopP)
 	}
 	if len(got.StopSequences) != 1 || got.StopSequences[0] != "STOP" {
 		t.Fatalf("stop_sequences = %#v", got.StopSequences)
@@ -75,7 +75,8 @@ func TestCompatOpenAIChatToClaudeRequest(t *testing.T) {
 	if len(got.Messages) != 2 {
 		t.Fatalf("len(messages) = %d, want 2", len(got.Messages))
 	}
-	if got.Messages[0] != (compatClaudeMessage{Role: "user", Content: "hello"}) {
+	wantFirst := compatClaudeSystemReminder([]string{"system prompt", "developer prompt"}) + "\n\nhello"
+	if got.Messages[0] != (compatClaudeMessage{Role: "user", Content: wantFirst}) {
 		t.Fatalf("messages[0] = %#v", got.Messages[0])
 	}
 	if got.Messages[1] != (compatClaudeMessage{Role: "assistant", Content: "hi\n\nthere"}) {
@@ -400,7 +401,7 @@ func TestHandleCompatOpenAIChatCompletions_MinimalLoop(t *testing.T) {
 			if body["model"] != "claude-sonnet-4-5" {
 				t.Fatalf("model = %#v", body["model"])
 			}
-			if body["system"] != "system prompt" {
+			if sys, ok := body["system"].(string); !ok || !strings.Contains(sys, "You are Claude Code, Anthropic's official CLI for Claude.") || strings.Contains(sys, "system prompt") {
 				t.Fatalf("system = %#v", body["system"])
 			}
 
@@ -409,7 +410,8 @@ func TestHandleCompatOpenAIChatCompletions_MinimalLoop(t *testing.T) {
 				t.Fatalf("len(messages) = %d, want 1", len(messages))
 			}
 			msg, _ := messages[0].(map[string]any)
-			if msg["role"] != "user" || msg["content"] != "hello" {
+			wantFirst := compatClaudeSystemReminder([]string{"system prompt"}) + "\n\nhello"
+			if msg["role"] != "user" || msg["content"] != wantFirst {
 				t.Fatalf("message = %#v", msg)
 			}
 

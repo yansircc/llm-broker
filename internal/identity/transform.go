@@ -48,13 +48,17 @@ func (t *Transformer) Transform(
 		Headers: FilterHeaders(reqHeaders),
 	}
 
-	// 1. Strip billing headers from system prompt
+	// 1. Ensure system prompt starts with the Claude Code signature Anthropic expects for OAuth traffic.
+	ensureClaudeCodeSystemPrefix(body)
+
+	// 2. Strip billing headers from system prompt
 	t.stripBillingHeaders(body)
 
-	// 2. Enforce cache_control compliance (max N blocks, strip TTL)
+	// 3. Enforce cache_control compliance (max N blocks, strip TTL)
 	t.enforceCacheControl(body)
 
-	// 3. Rewrite or inject metadata.user_id
+	// 4. Rewrite metadata.user_id
+	// Keep or inject metadata.user_id for sticky Claude session identity.
 	accountUUID := acct.IdentityString("account_uuid")
 	sessionTail := "compat-" + brokerUserID
 	syntheticUserID := buildUserID(acct.ID, accountUUID, sessionTail)
@@ -74,10 +78,10 @@ func (t *Transformer) Transform(
 		}
 	}
 
-	// 4. Compute session hash
+	// 5. Compute session hash
 	result.SessionHash = t.computeSessionHashFromBody(body)
 
-	// 5. Bind/restore stainless headers
+	// 6. Bind/restore stainless headers
 	RemoveAllStainless(result.Headers)
 	if err := t.stainless.BindStainlessFromRequest(ctx, acct.ID, reqHeaders, result.Headers); err != nil {
 		return nil, err
@@ -220,4 +224,31 @@ func computeSessionHash(userID, systemPrompt, firstMessage string) string {
 		return hex.EncodeToString(h[:16])
 	}
 	return ""
+}
+
+const claudeCodeSystemPrefix = "You are Claude Code, Anthropic's official CLI for Claude."
+
+func ensureClaudeCodeSystemPrefix(body map[string]interface{}) {
+	sys, exists := body["system"]
+	if !exists {
+		body["system"] = claudeCodeSystemPrefix
+		return
+	}
+
+	switch s := sys.(type) {
+	case string:
+		if !strings.Contains(s, claudeCodeSystemPrefix) {
+			body["system"] = claudeCodeSystemPrefix + "\n\n" + s
+		}
+	case []interface{}:
+		if len(s) > 0 {
+			if first, ok := s[0].(map[string]interface{}); ok {
+				if text, ok := first["text"].(string); ok && strings.Contains(text, claudeCodeSystemPrefix) {
+					return
+				}
+			}
+		}
+		prefix := map[string]interface{}{"type": "text", "text": claudeCodeSystemPrefix}
+		body["system"] = append([]interface{}{prefix}, s...)
+	}
 }
