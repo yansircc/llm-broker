@@ -94,6 +94,7 @@ func (r *Relay) parseRelayInput(w http.ResponseWriter, req *http.Request, drv dr
 		Path:     req.URL.Path,
 		RawQuery: req.URL.RawQuery,
 		Model:    model,
+		UserID:   keyInfo.ID,
 	}
 	plan := drv.Plan(input)
 	input.IsStream = plan.IsStream

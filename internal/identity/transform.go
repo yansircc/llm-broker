@@ -41,6 +41,7 @@ func (t *Transformer) Transform(
 	body map[string]interface{},
 	reqHeaders http.Header,
 	acct *domain.Account,
+	brokerUserID string,
 ) (*TransformResult, error) {
 	result := &TransformResult{
 		Body:    body,
@@ -53,11 +54,23 @@ func (t *Transformer) Transform(
 	// 2. Enforce cache_control compliance (max N blocks, strip TTL)
 	t.enforceCacheControl(body)
 
-	// 3. Rewrite metadata.user_id
+	// 3. Rewrite or inject metadata.user_id
 	accountUUID := acct.IdentityString("account_uuid")
-	if metadata, ok := body["metadata"].(map[string]interface{}); ok {
+	sessionTail := "compat-" + brokerUserID
+	syntheticUserID := buildUserID(acct.ID, accountUUID, sessionTail)
+
+	metadata, hasMeta := body["metadata"].(map[string]interface{})
+	if hasMeta {
 		if origUserID, ok := metadata["user_id"].(string); ok {
 			metadata["user_id"] = RewriteUserID(origUserID, acct.ID, accountUUID)
+		} else {
+			// metadata exists but user_id is missing — inject it.
+			metadata["user_id"] = syntheticUserID
+		}
+	} else {
+		// No metadata at all — inject synthetic Claude Code identity.
+		body["metadata"] = map[string]interface{}{
+			"user_id": syntheticUserID,
 		}
 	}
 

@@ -45,6 +45,18 @@ func appendRawQuery(rawURL, rawQuery string) (string, error) {
 	return u.String(), nil
 }
 
+// ensureBetaParam adds beta=true to the query string if not already present.
+// Claude Code always sends this parameter; its absence is a fingerprint signal.
+func ensureBetaParam(rawQuery string) string {
+	if strings.Contains(rawQuery, "beta=true") {
+		return rawQuery
+	}
+	if rawQuery == "" {
+		return "beta=true"
+	}
+	return rawQuery + "&beta=true"
+}
+
 func truncate(s string, maxLen int) string {
 	if len(s) <= maxLen {
 		return s

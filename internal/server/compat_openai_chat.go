@@ -4,7 +4,9 @@ import (
 	"bytes"
 	"encoding/json"
 	"io"
+	"log/slog"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -55,8 +57,14 @@ func (s *Server) handleCompatOpenAIChatCompletions(w http.ResponseWriter, r *htt
 	}
 	defer releaseCompatSlot()
 
+	rawBody, err := io.ReadAll(r.Body)
+	if err != nil {
+		writeCompatOpenAIError(w, http.StatusBadRequest, "invalid_request_error", "invalid JSON body")
+		return
+	}
+
 	var req compatOpenAIChatRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	if err := json.NewDecoder(bytes.NewReader(rawBody)).Decode(&req); err != nil {
 		writeCompatOpenAIError(w, http.StatusBadRequest, "invalid_request_error", "invalid JSON body")
 		return
 	}
@@ -71,6 +79,12 @@ func (s *Server) handleCompatOpenAIChatCompletions(w http.ResponseWriter, r *htt
 		return
 	}
 
+	traceID := ""
+	if s.cfg != nil && s.cfg.TraceCompat {
+		traceID = s.nextCompatTraceID()
+		s.logCompatTranslationTrace(traceID, rawBody, r.URL.Path, target.relayPath, target.upstreamBody)
+	}
+
 	relayReq := r.Clone(r.Context())
 	relayURL := *r.URL
 	relayURL.Path = target.relayPath
@@ -81,6 +95,9 @@ func (s *Server) handleCompatOpenAIChatCompletions(w http.ResponseWriter, r *htt
 	relayReq.ContentLength = int64(len(target.upstreamBody))
 	relayReq.Header = r.Header.Clone()
 	relayReq.Header.Set("Content-Type", "application/json")
+	if traceID != "" {
+		relayReq.Header.Set("X-Broker-Compat-Trace-Id", traceID)
+	}
 	if target.stream {
 		relayReq.Header.Set("Accept", "text/event-stream")
 	}
@@ -226,4 +243,31 @@ func compatRequestBodyLimitBytes(cfg *config.Config) int64 {
 		return int64(cfg.MaxRequestBodyMB) << 20
 	}
 	return int64(compatDefaultRequestBodyMB) << 20
+}
+
+func (s *Server) nextCompatTraceID() string {
+	return "compat-" + strconv.FormatUint(s.requestSeq.Add(1), 10)
+}
+
+func (s *Server) logCompatTranslationTrace(
+	traceID string,
+	clientBody []byte,
+	clientPath string,
+	relayPath string,
+	translatedBody []byte,
+) {
+	clientText, clientTruncated := formatCompatTraceBody(clientBody)
+	translatedText, translatedTruncated := formatCompatTraceBody(translatedBody)
+
+	slog.Info("compat translation",
+		"traceId", traceID,
+		"clientPath", clientPath,
+		"relayPath", relayPath,
+		"clientBody", clientText,
+		"clientBodyBytes", len(clientBody),
+		"clientBodyTruncated", clientTruncated,
+		"translatedBody", translatedText,
+		"translatedBodyBytes", len(translatedBody),
+		"translatedBodyTruncated", translatedTruncated,
+	)
 }

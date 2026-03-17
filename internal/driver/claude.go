@@ -44,7 +44,7 @@ func (d *ClaudeDriver) BuildRequest(ctx context.Context, input *RelayInput, acct
 		return nil, fmt.Errorf("body re-parse: %w", err)
 	}
 
-	result, err := d.transformer.Transform(ctx, body, input.Headers, acct)
+	result, err := d.transformer.Transform(ctx, body, input.Headers, acct, input.UserID)
 	if err != nil {
 		return nil, fmt.Errorf("transform identity: %w", err)
 	}
@@ -58,7 +58,7 @@ func (d *ClaudeDriver) BuildRequest(ctx context.Context, input *RelayInput, acct
 	if input.IsCountTokens {
 		apiURL += "/count_tokens"
 	}
-	upstreamURL, err := appendRawQuery(apiURL, input.RawQuery)
+	upstreamURL, err := appendRawQuery(apiURL, ensureBetaParam(input.RawQuery))
 	if err != nil {
 		return nil, err
 	}

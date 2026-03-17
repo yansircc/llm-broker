@@ -81,10 +81,25 @@ func (r *Relay) executeRelayAttempt(
 		state.lastErr = fmt.Errorf("build request: %w", err)
 		return relayAttemptStop
 	}
+	if r.shouldTraceCompat(prepared) {
+		upstreamBody, snapErr := snapshotRequestBody(upReq)
+		if snapErr != nil {
+			slog.Warn("compat trace request snapshot failed",
+				"traceId", compatTraceID(prepared),
+				"clientPath", safeInputPath(prepared),
+				"upstreamURL", safeRequestURL(upReq),
+				"error", snapErr,
+			)
+		}
+		r.logCompatTraceRequest(prepared, acct, attempt, upReq, upstreamBody)
+	}
 
 	attemptStartedAt := time.Now()
 	resp, err := r.transport.ClientForAccount(acct).Do(upReq)
 	if err != nil {
+		if r.shouldTraceCompat(prepared) {
+			r.logCompatTraceTransportError(prepared, acct, attempt, upReq, err)
+		}
 		if acct.CellID != "" && r.cfg.CellErrorPause > 0 && neterr.IsTransport(err) {
 			r.pool.CooldownCell(acct.CellID, time.Now().Add(r.cfg.CellErrorPause), fmt.Sprintf("relay transport error on account %s: %v", acct.Email, err))
 		}
@@ -111,8 +126,32 @@ func (r *Relay) executeRelayAttempt(
 		return relayAttemptContinue
 	}
 
+	var tracedRespBody []byte
+	if r.shouldTraceCompat(prepared) {
+		if prepared.input.IsStream {
+			r.logCompatTraceResponse(prepared, acct, attempt, upReq, resp, nil)
+		} else {
+			body, snapErr := snapshotResponseBody(resp)
+			if snapErr != nil {
+				slog.Warn("compat trace response snapshot failed",
+					"traceId", compatTraceID(prepared),
+					"clientPath", safeInputPath(prepared),
+					"upstreamURL", safeRequestURL(upReq),
+					"status", resp.StatusCode,
+					"error", snapErr,
+				)
+			} else {
+				tracedRespBody = body
+				r.logCompatTraceResponse(prepared, acct, attempt, upReq, resp, tracedRespBody)
+			}
+		}
+	}
+
 	if drv.ShouldRetry(resp.StatusCode) && attempt < r.cfg.MaxRetryAccounts {
-		errBody, _ := io.ReadAll(resp.Body)
+		errBody := tracedRespBody
+		if errBody == nil {
+			errBody, _ = io.ReadAll(resp.Body)
+		}
 		resp.Body.Close()
 
 		r.logRequestAsync(&domain.RequestLog{
@@ -158,7 +197,10 @@ func (r *Relay) executeRelayAttempt(
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		errBody, _ := io.ReadAll(resp.Body)
+		errBody := tracedRespBody
+		if errBody == nil {
+			errBody, _ = io.ReadAll(resp.Body)
+		}
 		resp.Body.Close()
 
 		r.logRequestAsync(&domain.RequestLog{

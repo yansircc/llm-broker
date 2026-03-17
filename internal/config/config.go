@@ -54,7 +54,8 @@ type Config struct {
 	CompatMaxConcurrent        int
 
 	// Logging
-	LogLevel string
+	LogLevel    string
+	TraceCompat bool
 
 	// Runtime
 	BackgroundJobsMode       string
@@ -100,7 +101,8 @@ func Load() *Config {
 		CompatMaxRequestsPerMinute: envInt("COMPAT_MAX_REQUESTS_PER_MINUTE", 6),
 		CompatMaxConcurrent:        envInt("COMPAT_MAX_CONCURRENT", 1),
 
-		LogLevel: envOr("LOG_LEVEL", "info"),
+		LogLevel:    envOr("LOG_LEVEL", "info"),
+		TraceCompat: envBool("TRACE_COMPAT", false),
 
 		BackgroundJobsMode:       envOr("BACKGROUND_JOBS_MODE", "all"),
 		BackgroundLeaderLockPath: envOr("BACKGROUND_LEADER_LOCK_PATH", "/var/run/llm-broker/background.lock"),
@@ -157,6 +159,18 @@ func envDuration(key string, fallback time.Duration) time.Duration {
 	if v := os.Getenv(key); v != "" {
 		if ms, err := strconv.Atoi(v); err == nil {
 			return time.Duration(ms) * time.Millisecond
+		}
+	}
+	return fallback
+}
+
+func envBool(key string, fallback bool) bool {
+	if v := os.Getenv(key); v != "" {
+		switch v {
+		case "1", "true", "TRUE", "True", "yes", "YES", "on", "ON":
+			return true
+		case "0", "false", "FALSE", "False", "no", "NO", "off", "OFF":
+			return false
 		}
 	}
 	return fallback
