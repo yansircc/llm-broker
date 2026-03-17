@@ -291,6 +291,8 @@ func (s *Server) handleTestAccount(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	wasBlocked := acct.Status == domain.StatusBlocked
+
 	start := time.Now()
 	_, err := s.probeAccount(r.Context(), acct)
 	latencyMs := time.Since(start).Milliseconds()
@@ -298,6 +300,16 @@ func (s *Server) handleTestAccount(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, TestAccountResult{LatencyMs: latencyMs, Error: err.Error()})
 		return
 	}
+
+	// If the account was blocked and the probe succeeded, recover all
+	// blocked accounts in the same bucket. The ban is bucket-scoped
+	// (e.g. entire org disabled), so a successful probe proves the
+	// whole bucket is usable again.
+	if wasBlocked {
+		n := s.pool.RecoverBucket(id)
+		slog.Info("blocked bucket recovered via successful probe", "id", id, "recovered", n)
+	}
+
 	writeJSON(w, http.StatusOK, TestAccountResult{OK: true, LatencyMs: latencyMs})
 }
 

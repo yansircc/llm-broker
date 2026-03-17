@@ -50,54 +50,11 @@ func (p *Pool) cleanup() {
 
 	now := time.Now()
 
-	// Phase 1: bucket-scoped decisions. Each bucket is visited exactly once.
-	for _, bucket := range p.buckets {
-		if bucket.CooldownUntil != nil && now.After(*bucket.CooldownUntil) {
-			// Check if any member is blocked — if so, defer clearing to
-			// phase 2 so blocked recovery sees the non-nil cooldown.
-			hasBlocked := false
-			for _, acct := range p.accounts {
-				if p.bucketKeyLocked(acct) == bucket.BucketKey && acct.Status == domain.StatusBlocked {
-					hasBlocked = true
-					break
-				}
-			}
-			if !hasBlocked {
-				bucket.CooldownUntil = nil
-				bucket.UpdatedAt = now.UTC()
-				p.persistBucketLocked(bucket)
-				p.bus.Publish(events.Event{
-					Type:      events.EventRecover,
-					BucketKey: bucket.BucketKey,
-					Message:   "cooldown expired",
-				})
-				slog.Info("bucket cooldown expired", "bucketKey", bucket.BucketKey)
-			}
-		}
-	}
-
-	// Phase 2: recover blocked accounts whose bucket cooldown has expired.
-	// This runs after phase 1 so that buckets with blocked members still
-	// have CooldownUntil set (phase 1 skipped clearing them).
-	for _, acct := range p.accounts {
-		if acct.Status == domain.StatusBlocked {
-			cooldownUntil := p.bucketCooldownLocked(acct)
-			if cooldownUntil != nil && now.After(*cooldownUntil) {
-				acct.Status = domain.StatusActive
-				acct.ErrorMessage = ""
-				p.persistLocked(acct)
-				p.bus.Publish(events.Event{
-					Type: events.EventRecover, AccountID: acct.ID,
-					BucketKey: p.bucketKeyLocked(acct),
-					Message:   "blocked account recovered",
-				})
-				slog.Info("blocked account recovered", "accountId", acct.ID)
-			}
-		}
-	}
-
-	// Phase 3: clear bucket cooldowns that were held for blocked recovery,
-	// and enforce exhausted cooldowns on now-available buckets.
+	// Phase 1: clear expired bucket cooldowns unconditionally.
+	// Blocked accounts are NOT auto-recovered — they require manual
+	// admin intervention (set status to active) or a successful probe.
+	// This prevents the ban→recover→pick→ban loop that wastes user requests
+	// when an upstream provider permanently disables an organization.
 	for _, bucket := range p.buckets {
 		if bucket.CooldownUntil != nil && now.After(*bucket.CooldownUntil) {
 			bucket.CooldownUntil = nil
@@ -110,7 +67,10 @@ func (p *Pool) cleanup() {
 			})
 			slog.Info("bucket cooldown expired", "bucketKey", bucket.BucketKey)
 		}
+	}
 
+	// Phase 2: enforce exhausted cooldowns on now-available buckets.
+	for _, bucket := range p.buckets {
 		if bucket.CooldownUntil == nil {
 			// Find any active member to compute exhausted cooldown.
 			for _, acct := range p.accounts {

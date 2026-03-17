@@ -1066,18 +1066,20 @@ func TestObserve_FullLifecycle_EventNarrative(t *testing.T) {
 	p.persistBucketLocked(bucket)
 	p.cleanup()
 
+	// Blocked accounts must NOT auto-recover. Only bucket cooldown should clear.
+	if got := p.accounts[acct.ID]; got.Status != domain.StatusBlocked {
+		t.Fatalf("blocked account should stay blocked, got %s", got.Status)
+	}
+
 	recent := p.bus.Recent(10)
-	var recoveredAcct, recoveredBucket bool
+	var recoveredBucket bool
 	for _, ev := range recent {
 		if ev.Type == events.EventRecover && ev.AccountID == acct.ID && ev.Message == "blocked account recovered" {
-			recoveredAcct = true
+			t.Fatal("blocked account should not auto-recover")
 		}
 		if ev.Type == events.EventRecover && ev.BucketKey == bk && ev.Message == "cooldown expired" {
 			recoveredBucket = true
 		}
-	}
-	if !recoveredAcct {
-		t.Fatal("missing 'blocked account recovered' event")
 	}
 	if !recoveredBucket {
 		t.Fatal("missing 'cooldown expired' event")
@@ -1194,7 +1196,7 @@ func TestApplyBucketCooldown_NilBucket(t *testing.T) {
 	}
 }
 
-func TestCleanup_SharedBucket_BlockedRecovery(t *testing.T) {
+func TestCleanup_SharedBucket_BlockedStaysBlocked(t *testing.T) {
 	active := &domain.Account{
 		ID: "sbr-active", Email: "a@test.com", Provider: domain.ProviderClaude,
 		Subject: "shared-org", Status: domain.StatusActive, Priority: 50,
@@ -1220,13 +1222,15 @@ func TestCleanup_SharedBucket_BlockedRecovery(t *testing.T) {
 
 	p.cleanup()
 
-	if p.accounts["sbr-blocked"].Status != domain.StatusActive {
-		t.Fatalf("blocked account should have recovered, got status %s", p.accounts["sbr-blocked"].Status)
+	// Blocked account must stay blocked — no auto-recovery.
+	if p.accounts["sbr-blocked"].Status != domain.StatusBlocked {
+		t.Fatalf("blocked account should stay blocked, got status %s", p.accounts["sbr-blocked"].Status)
 	}
-	if p.accounts["sbr-blocked"].ErrorMessage != "" {
-		t.Fatalf("error message should be cleared, got %q", p.accounts["sbr-blocked"].ErrorMessage)
+	if p.accounts["sbr-blocked"].ErrorMessage != "banned" {
+		t.Fatalf("error message should be preserved, got %q", p.accounts["sbr-blocked"].ErrorMessage)
 	}
 
+	// Bucket cooldown should still clear so other accounts in the bucket can be used.
 	bucket = p.buckets[bucketKey]
 	if bucket == nil {
 		t.Fatal("bucket gone after cleanup")
@@ -1236,18 +1240,14 @@ func TestCleanup_SharedBucket_BlockedRecovery(t *testing.T) {
 	}
 
 	all := p.bus.Recent(10)
-	hasRecover := false
 	hasExpiry := false
 	for _, ev := range all {
 		if ev.Type == events.EventRecover && ev.AccountID == "sbr-blocked" {
-			hasRecover = true
+			t.Fatal("blocked account should not emit recovery event")
 		}
 		if ev.Type == events.EventRecover && ev.Message == "cooldown expired" {
 			hasExpiry = true
 		}
-	}
-	if !hasRecover {
-		t.Fatal("missing 'blocked account recovered' event")
 	}
 	if !hasExpiry {
 		t.Fatal("missing 'cooldown expired' event")
