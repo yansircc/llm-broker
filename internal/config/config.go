@@ -50,8 +50,8 @@ type Config struct {
 	MaxRequestBodyMB           int
 	MaxRetryAccounts           int
 	MaxCacheControls           int
-	CompatMaxRequestsPerMinute int
-	CompatMaxConcurrent        int
+	CompatMaxRequestsPerMinute int // 0 disables the per-minute compat limiter
+	CompatMaxConcurrent        int // 0 disables the compat concurrency limiter
 
 	// Logging
 	LogLevel    string
@@ -98,8 +98,8 @@ func Load() *Config {
 		MaxRequestBodyMB:           envInt("REQUEST_MAX_SIZE_MB", 60),
 		MaxRetryAccounts:           envInt("MAX_RETRY_ACCOUNTS", 2),
 		MaxCacheControls:           envInt("MAX_CACHE_CONTROLS", 4),
-		CompatMaxRequestsPerMinute: envInt("COMPAT_MAX_REQUESTS_PER_MINUTE", 6),
-		CompatMaxConcurrent:        envInt("COMPAT_MAX_CONCURRENT", 1),
+		CompatMaxRequestsPerMinute: envInt("COMPAT_MAX_REQUESTS_PER_MINUTE", 0),
+		CompatMaxConcurrent:        envInt("COMPAT_MAX_CONCURRENT", 4),
 
 		LogLevel:    envOr("LOG_LEVEL", "info"),
 		TraceCompat: envBool("TRACE_COMPAT", false),
