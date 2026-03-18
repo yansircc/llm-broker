@@ -99,6 +99,22 @@ export function shortModel(model: string): string {
 		.replace(/-\d{8}$/, '');
 }
 
+export function shortId(id: string, head = 6, tail = 4): string {
+	if (!id) return '-';
+	if (id.length <= head + tail + 1) return id;
+	return `${id.slice(0, head)}...${id.slice(-tail)}`;
+}
+
+export function fmtJSON(value: unknown): string {
+	if (value == null) return '-';
+	if (typeof value === 'string') return value;
+	try {
+		return JSON.stringify(value, null, 2);
+	} catch {
+		return String(value);
+	}
+}
+
 export function dotClass(status: string): string {
 	switch (status) {
 		case 'active': return 'g';

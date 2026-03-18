@@ -56,6 +56,7 @@ func (d *CodexDriver) BuildRequest(ctx context.Context, input *RelayInput, acct 
 }
 
 func (d *CodexDriver) Interpret(statusCode int, headers http.Header, body []byte, model string, _ json.RawMessage) Effect {
+	upstreamErrorType, upstreamErrorMessage := parseCodexErrorInfo(body)
 	switch statusCode {
 	case http.StatusOK:
 		state := d.captureHeaders(headers)
@@ -63,10 +64,12 @@ func (d *CodexDriver) Interpret(statusCode int, headers http.Header, body []byte
 
 	case 529:
 		return Effect{
-			Kind:           EffectOverload,
-			Scope:          EffectScopeBucket,
-			CooldownUntil:  time.Now().Add(d.cfg.Pauses.Pause529),
-			UpstreamStatus: 529,
+			Kind:                 EffectOverload,
+			Scope:                EffectScopeBucket,
+			CooldownUntil:        time.Now().Add(d.cfg.Pauses.Pause529),
+			UpstreamStatus:       529,
+			UpstreamErrorType:    upstreamErrorType,
+			UpstreamErrorMessage: upstreamErrorMessage,
 		}
 
 	case 429:
@@ -82,36 +85,44 @@ func (d *CodexDriver) Interpret(statusCode int, headers http.Header, body []byte
 		}
 
 		return Effect{
-			Kind:           EffectCooldown,
-			Scope:          EffectScopeBucket,
-			CooldownUntil:  until,
-			UpstreamStatus: 429,
-			UpdatedState:   state,
+			Kind:                 EffectCooldown,
+			Scope:                EffectScopeBucket,
+			CooldownUntil:        until,
+			UpstreamStatus:       429,
+			UpstreamErrorType:    upstreamErrorType,
+			UpstreamErrorMessage: upstreamErrorMessage,
+			UpdatedState:         state,
 		}
 
 	case 403:
 		if codexBanPattern.MatchString(string(body)) {
 			return Effect{
-				Kind:           EffectBlock,
-				Scope:          EffectScopeBucket,
-				CooldownUntil:  time.Now().Add(d.cfg.Pauses.Pause401),
-				ErrorMessage:   fmt.Sprintf("ban signal detected: %s", truncate(string(body), 200)),
-				UpstreamStatus: 403,
+				Kind:                 EffectBlock,
+				Scope:                EffectScopeBucket,
+				CooldownUntil:        time.Now().Add(d.cfg.Pauses.Pause401),
+				ErrorMessage:         fmt.Sprintf("ban signal detected: %s", truncate(string(body), 200)),
+				UpstreamStatus:       403,
+				UpstreamErrorType:    upstreamErrorType,
+				UpstreamErrorMessage: upstreamErrorMessage,
 			}
 		}
 		return Effect{
-			Kind:           EffectCooldown,
-			Scope:          EffectScopeBucket,
-			CooldownUntil:  time.Now().Add(d.cfg.Pauses.Pause403),
-			UpstreamStatus: 403,
+			Kind:                 EffectCooldown,
+			Scope:                EffectScopeBucket,
+			CooldownUntil:        time.Now().Add(d.cfg.Pauses.Pause403),
+			UpstreamStatus:       403,
+			UpstreamErrorType:    upstreamErrorType,
+			UpstreamErrorMessage: upstreamErrorMessage,
 		}
 
 	case 401:
 		return Effect{
-			Kind:           EffectAuthFail,
-			Scope:          EffectScopeBucket,
-			CooldownUntil:  time.Now().Add(d.cfg.Pauses.Pause401Refresh),
-			UpstreamStatus: 401,
+			Kind:                 EffectAuthFail,
+			Scope:                EffectScopeBucket,
+			CooldownUntil:        time.Now().Add(d.cfg.Pauses.Pause401Refresh),
+			UpstreamStatus:       401,
+			UpstreamErrorType:    upstreamErrorType,
+			UpstreamErrorMessage: upstreamErrorMessage,
 		}
 	}
 

@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"encoding/json"
 	"path/filepath"
 	"testing"
 	"time"
@@ -105,22 +106,29 @@ func TestRequestLogObservabilityQueries(t *testing.T) {
 	now := time.Now().UTC()
 	entries := []*domain.RequestLog{
 		{
-			UserID:            "user-1",
-			AccountID:         "acct-1",
-			Provider:          "claude",
-			Surface:           "compat",
-			Model:             "claude-sonnet-4-6",
-			Path:              "/compat/v1/chat/completions",
-			CellID:            "cell-compat-1",
-			BucketKey:         "claude:bucket-1",
-			Status:            "upstream_400",
-			EffectKind:        "cooldown",
-			UpstreamStatus:    400,
-			UpstreamRequestID: "req_400",
-			RequestBytes:      2048,
-			AttemptCount:      1,
-			DurationMs:        1200,
-			CreatedAt:         now,
+			UserID:               "user-1",
+			AccountID:            "acct-1",
+			Provider:             "claude",
+			Surface:              "compat",
+			Model:                "claude-sonnet-4-6",
+			Path:                 "/compat/v1/chat/completions",
+			CellID:               "cell-compat-1",
+			BucketKey:            "claude:bucket-1",
+			SessionUUID:          "sess-compat-1",
+			BindingSource:        "session_bound",
+			ClientHeaders:        json.RawMessage(`{"Content-Type":"application/json","X-Stainless-Retry-Count":"1"}`),
+			RequestMeta:          json.RawMessage(`{"stream":false,"compat_client":{"requested_model":"claude/claude-sonnet-4-6"}}`),
+			Status:               "upstream_400",
+			EffectKind:           "cooldown",
+			UpstreamStatus:       400,
+			UpstreamRequestID:    "req_400",
+			UpstreamHeaders:      json.RawMessage(`{"request-id":"req_400","Content-Type":"application/json"}`),
+			UpstreamErrorType:    "invalid_request_error",
+			UpstreamErrorMessage: "Error",
+			RequestBytes:         2048,
+			AttemptCount:         1,
+			DurationMs:           1200,
+			CreatedAt:            now,
 		},
 		{
 			UserID:            "user-2",
@@ -178,6 +186,24 @@ func TestRequestLogObservabilityQueries(t *testing.T) {
 	}
 	if failures[1].Surface != "compat" {
 		t.Fatalf("failures[1].Surface = %q, want compat", failures[1].Surface)
+	}
+	if failures[1].SessionUUID != "sess-compat-1" {
+		t.Fatalf("failures[1].SessionUUID = %q, want sess-compat-1", failures[1].SessionUUID)
+	}
+	if failures[1].BindingSource != "session_bound" {
+		t.Fatalf("failures[1].BindingSource = %q, want session_bound", failures[1].BindingSource)
+	}
+	if string(failures[1].ClientHeaders) != `{"Content-Type":"application/json","X-Stainless-Retry-Count":"1"}` {
+		t.Fatalf("failures[1].ClientHeaders = %s", failures[1].ClientHeaders)
+	}
+	if string(failures[1].RequestMeta) != `{"stream":false,"compat_client":{"requested_model":"claude/claude-sonnet-4-6"}}` {
+		t.Fatalf("failures[1].RequestMeta = %s", failures[1].RequestMeta)
+	}
+	if failures[1].UpstreamErrorType != "invalid_request_error" || failures[1].UpstreamErrorMessage != "Error" {
+		t.Fatalf("compat failure upstream error = %q / %q", failures[1].UpstreamErrorType, failures[1].UpstreamErrorMessage)
+	}
+	if string(failures[1].UpstreamHeaders) != `{"request-id":"req_400","Content-Type":"application/json"}` {
+		t.Fatalf("failures[1].UpstreamHeaders = %s", failures[1].UpstreamHeaders)
 	}
 
 	outcomes, err := store.QueryRelayOutcomeStats(context.Background(), now.Add(-time.Minute))

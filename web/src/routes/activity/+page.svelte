@@ -2,7 +2,7 @@
 	import { api } from '$lib/api';
 	import type { DashboardData, DashboardEvent, RecentRequestLog } from '$lib/admin-types';
 	import ConfirmAction from '$lib/components/ConfirmAction.svelte';
-	import { eventTypeColor, fmtCost, fmtDate, fmtNum, fmtTime, shortModel, statusColor } from '$lib/format';
+	import { eventTypeColor, fmtCost, fmtDate, fmtJSON, fmtNum, fmtTime, shortModel, statusColor } from '$lib/format';
 
 	let data = $state<DashboardData | null>(null);
 	let error = $state('');
@@ -42,6 +42,8 @@
 		if (ev.bucket_key) facts.push({ label: 'bucket', value: ev.bucket_key });
 		if (ev.cell_id) facts.push({ label: 'cell', value: ev.cell_id });
 		if (ev.upstream_status) facts.push({ label: 'status', value: String(ev.upstream_status) });
+		if (ev.upstream_error_type) facts.push({ label: 'error_type', value: ev.upstream_error_type });
+		if (ev.upstream_error_message) facts.push({ label: 'error', value: ev.upstream_error_message });
 		if (ev.cooldown_until) facts.push({ label: 'cooldown', value: fmtDate(ev.cooldown_until) });
 		return facts;
 	}
@@ -51,6 +53,33 @@
 		if (log.effect_kind) parts.push(log.effect_kind);
 		if (log.upstream_status) parts.push(String(log.upstream_status));
 		return parts.join(' / ') || log.status;
+	}
+
+	function accountInfo(accountID: string) {
+		return data?.accounts.find((account) => account.id === accountID);
+	}
+
+	function accountLabel(accountID: string): string {
+		return accountInfo(accountID)?.email || '-';
+	}
+
+	function failureError(log: RecentRequestLog): string {
+		const parts: string[] = [];
+		if (log.upstream_error_type) parts.push(log.upstream_error_type);
+		if (log.upstream_error_message) parts.push(log.upstream_error_message);
+		return parts.join(': ') || '-';
+	}
+
+	function hasDetails(log: RecentRequestLog): boolean {
+		return !!(
+			log.session_uuid ||
+			log.binding_source ||
+			log.upstream_error_type ||
+			log.upstream_error_message ||
+			log.request_meta ||
+			log.client_headers ||
+			log.upstream_headers
+		);
 	}
 </script>
 
@@ -110,8 +139,10 @@
 					<th>cell</th>
 					<th>outcome</th>
 					<th>request id</th>
+					<th>error</th>
 					<th class="num">bytes</th>
 					<th class="num">attempt</th>
+					<th>details</th>
 				</tr>
 			</thead>
 			<tbody>
@@ -122,12 +153,31 @@
 						<td>{log.surface || '-'}</td>
 						<td>{shortModel(log.model)}</td>
 						<td>{log.path || '-'}</td>
-						<td>{log.account_id}</td>
+						<td>{accountLabel(log.account_id)}</td>
 						<td>{log.cell_id || 'legacy direct'}</td>
 						<td class={statusColor(log.status)}>{failureOutcome(log)}</td>
 						<td>{log.upstream_request_id || '-'}</td>
+						<td>{failureError(log)}</td>
 						<td class="num">{fmtNum(log.request_bytes)}</td>
 						<td class="num">{fmtNum(log.attempt_count)}</td>
+						<td>
+							{#if hasDetails(log)}
+								<details>
+									<summary>view</summary>
+									<div class="detail-block">
+										<div><span class="muted">full account</span> <span class="mono">{log.account_id}</span></div>
+										<div><span class="muted">session</span> <span class="mono">{log.session_uuid || '-'}</span></div>
+										<div><span class="muted">binding</span> {log.binding_source || '-'}</div>
+										<div><span class="muted">error</span> {failureError(log)}</div>
+										<div><span class="muted">request meta</span><pre>{fmtJSON(log.request_meta)}</pre></div>
+										<div><span class="muted">client headers</span><pre>{fmtJSON(log.client_headers)}</pre></div>
+										<div><span class="muted">upstream headers</span><pre>{fmtJSON(log.upstream_headers)}</pre></div>
+									</div>
+								</details>
+							{:else}
+								<span class="muted">-</span>
+							{/if}
+						</td>
 					</tr>
 				{/each}
 			</tbody>
@@ -184,5 +234,14 @@
 	}
 	.event-value {
 		word-break: break-all;
+	}
+	.detail-block {
+		min-width: 320px;
+		max-width: 560px;
+	}
+	pre {
+		margin: 4px 0 0;
+		white-space: pre-wrap;
+		word-break: break-word;
 	}
 </style>

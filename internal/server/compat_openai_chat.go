@@ -95,6 +95,9 @@ func (s *Server) handleCompatOpenAIChatCompletions(w http.ResponseWriter, r *htt
 	relayReq.ContentLength = int64(len(target.upstreamBody))
 	relayReq.Header = r.Header.Clone()
 	relayReq.Header.Set("Content-Type", "application/json")
+	if clientMeta := buildCompatClientMeta(rawBody); clientMeta != "" {
+		relayReq.Header.Set("X-Broker-Compat-Client-Meta", clientMeta)
+	}
 	if traceID != "" {
 		relayReq.Header.Set("X-Broker-Compat-Trace-Id", traceID)
 	}

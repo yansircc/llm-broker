@@ -1,8 +1,11 @@
 package store
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/yansircc/llm-broker/internal/domain"
@@ -12,15 +15,17 @@ func (s *SQLiteStore) InsertRequestLog(ctx context.Context, l *domain.RequestLog
 	_, err := s.db.ExecContext(ctx,
 		`INSERT INTO request_log (
 			user_id, account_id, provider, surface, model, path, cell_id, bucket_key,
+			session_uuid, binding_source, client_headers_json, request_meta_json,
 			input_tokens, output_tokens, cache_read_tokens, cache_create_tokens, cost_usd,
-			status, effect_kind, upstream_status, upstream_request_id, request_bytes, attempt_count,
-			duration_ms, created_at
+			status, effect_kind, upstream_status, upstream_request_id, upstream_headers_json,
+			upstream_error_type, upstream_error_message, request_bytes, attempt_count, duration_ms, created_at
 		)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		l.UserID, l.AccountID, l.Provider, l.Surface, l.Model, l.Path, l.CellID, l.BucketKey,
+		l.SessionUUID, l.BindingSource, observationJSONString(l.ClientHeaders), observationJSONString(l.RequestMeta),
 		l.InputTokens, l.OutputTokens, l.CacheReadTokens, l.CacheCreateTokens, l.CostUSD,
-		l.Status, l.EffectKind, l.UpstreamStatus, l.UpstreamRequestID, l.RequestBytes, l.AttemptCount,
-		l.DurationMs, l.CreatedAt.Unix())
+		l.Status, l.EffectKind, l.UpstreamStatus, l.UpstreamRequestID, observationJSONString(l.UpstreamHeaders),
+		l.UpstreamErrorType, l.UpstreamErrorMessage, l.RequestBytes, l.AttemptCount, l.DurationMs, l.CreatedAt.Unix())
 	return err
 }
 
@@ -40,9 +45,10 @@ func (s *SQLiteStore) QueryRequestLogs(ctx context.Context, opts domain.RequestL
 	fetchArgs = append(fetchArgs, limit, opts.Offset)
 
 	query := fmt.Sprintf(`SELECT id, user_id, account_id, provider, surface, model, path, cell_id, bucket_key,
+		session_uuid, binding_source, client_headers_json, request_meta_json,
 		input_tokens, output_tokens, cache_read_tokens, cache_create_tokens, cost_usd,
-		status, effect_kind, upstream_status, upstream_request_id, request_bytes, attempt_count,
-		duration_ms, created_at
+		status, effect_kind, upstream_status, upstream_request_id, upstream_headers_json,
+		upstream_error_type, upstream_error_message, request_bytes, attempt_count, duration_ms, created_at
 		FROM request_log WHERE %s ORDER BY created_at DESC LIMIT ? OFFSET ?`, where)
 
 	rows, err := s.db.QueryContext(ctx, query, fetchArgs...)
@@ -54,16 +60,39 @@ func (s *SQLiteStore) QueryRequestLogs(ctx context.Context, opts domain.RequestL
 	for rows.Next() {
 		l := &domain.RequestLog{}
 		var ts int64
+		var clientHeadersJSON string
+		var requestMetaJSON string
+		var upstreamHeadersJSON string
 		if err := rows.Scan(&l.ID, &l.UserID, &l.AccountID, &l.Provider, &l.Surface, &l.Model, &l.Path, &l.CellID, &l.BucketKey,
+			&l.SessionUUID, &l.BindingSource, &clientHeadersJSON, &requestMetaJSON,
 			&l.InputTokens, &l.OutputTokens, &l.CacheReadTokens, &l.CacheCreateTokens,
-			&l.CostUSD, &l.Status, &l.EffectKind, &l.UpstreamStatus, &l.UpstreamRequestID,
-			&l.RequestBytes, &l.AttemptCount, &l.DurationMs, &ts); err != nil {
+			&l.CostUSD, &l.Status, &l.EffectKind, &l.UpstreamStatus, &l.UpstreamRequestID, &upstreamHeadersJSON,
+			&l.UpstreamErrorType, &l.UpstreamErrorMessage, &l.RequestBytes, &l.AttemptCount, &l.DurationMs, &ts); err != nil {
 			return nil, 0, err
 		}
+		l.ClientHeaders = decodeObservationJSON(clientHeadersJSON)
+		l.RequestMeta = decodeObservationJSON(requestMetaJSON)
+		l.UpstreamHeaders = decodeObservationJSON(upstreamHeadersJSON)
 		l.CreatedAt = time.Unix(ts, 0).UTC()
 		logs = append(logs, l)
 	}
 	return logs, total, rows.Err()
+}
+
+func observationJSONString(raw json.RawMessage) string {
+	trimmed := bytes.TrimSpace(raw)
+	if len(trimmed) == 0 || bytes.Equal(trimmed, []byte("null")) {
+		return "{}"
+	}
+	return string(trimmed)
+}
+
+func decodeObservationJSON(raw string) json.RawMessage {
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" || trimmed == "{}" || trimmed == "null" {
+		return nil
+	}
+	return json.RawMessage(trimmed)
 }
 
 func (s *SQLiteStore) QueryRelayOutcomeStats(ctx context.Context, since time.Time) ([]domain.RelayOutcomeStat, error) {

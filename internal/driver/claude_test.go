@@ -88,18 +88,39 @@ func TestClaudeInterpret_400DisabledOrganizationBlocks(t *testing.T) {
 	}
 }
 
-func TestClaudeInterpret_403NonBanKeepsRejectStatus(t *testing.T) {
+func TestClaudeInterpret_403NonBanReturnsReject(t *testing.T) {
 	d := NewClaudeDriver(ClaudeConfig{
 		Pauses: ErrorPauses{Pause403: 10 * time.Minute},
 	}, nil)
 
 	effect := d.Interpret(http.StatusForbidden, make(http.Header), []byte(`{"error":{"message":"request rejected"}}`), "claude-sonnet-4-6", json.RawMessage(`{}`))
 
-	if effect.Kind != EffectCooldown {
-		t.Fatalf("Kind = %v, want cooldown", effect.Kind)
+	if effect.Kind != EffectReject {
+		t.Fatalf("Kind = %v, want reject", effect.Kind)
 	}
 	if effect.UpstreamStatus != http.StatusForbidden {
 		t.Fatalf("UpstreamStatus = %d, want %d", effect.UpstreamStatus, http.StatusForbidden)
+	}
+	if !effect.CooldownUntil.IsZero() {
+		t.Fatalf("CooldownUntil = %v, want zero", effect.CooldownUntil)
+	}
+}
+
+func TestClaudeInterpret_400NonBanReturnsReject(t *testing.T) {
+	d := NewClaudeDriver(ClaudeConfig{
+		Pauses: ErrorPauses{Pause403: 10 * time.Minute},
+	}, nil)
+
+	effect := d.Interpret(http.StatusBadRequest, make(http.Header), []byte(`{"error":{"message":"request rejected"}}`), "claude-sonnet-4-6", json.RawMessage(`{}`))
+
+	if effect.Kind != EffectReject {
+		t.Fatalf("Kind = %v, want reject", effect.Kind)
+	}
+	if effect.UpstreamStatus != http.StatusBadRequest {
+		t.Fatalf("UpstreamStatus = %d, want %d", effect.UpstreamStatus, http.StatusBadRequest)
+	}
+	if !effect.CooldownUntil.IsZero() {
+		t.Fatalf("CooldownUntil = %v, want zero", effect.CooldownUntil)
 	}
 }
 

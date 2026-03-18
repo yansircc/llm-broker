@@ -38,6 +38,8 @@ func relayEffectKind(kind driver.EffectKind) string {
 		return "success"
 	case driver.EffectCooldown:
 		return "cooldown"
+	case driver.EffectReject:
+		return "reject"
 	case driver.EffectOverload:
 		return "overload"
 	case driver.EffectBlock:
@@ -74,6 +76,10 @@ func (r *Relay) baseRequestLog(prepared *preparedRelayRequest, acct *domain.Acco
 		entry.Model = prepared.input.Model
 		entry.Path = prepared.input.Path
 		entry.RequestBytes = len(prepared.input.RawBody)
+		entry.SessionUUID = prepared.sessionUUID
+		entry.BindingSource = requestBindingSource(prepared)
+		entry.ClientHeaders = requestClientHeaders(prepared.input.Headers)
+		entry.RequestMeta = requestMeta(prepared)
 	}
 	if acct != nil {
 		entry.AccountID = acct.ID
@@ -82,6 +88,19 @@ func (r *Relay) baseRequestLog(prepared *preparedRelayRequest, acct *domain.Acco
 		entry.BucketKey = acct.BucketKey
 	}
 	return entry
+}
+
+func setRequestLogUpstream(entry *domain.RequestLog, headers http.Header, effect *driver.Effect) {
+	if entry == nil {
+		return
+	}
+	entry.UpstreamRequestID = upstreamRequestID(headers)
+	entry.UpstreamHeaders = marshalObservationMapString(traceResponseHeaders(headers))
+	if effect == nil {
+		return
+	}
+	entry.UpstreamErrorType = effect.UpstreamErrorType
+	entry.UpstreamErrorMessage = effect.UpstreamErrorMessage
 }
 
 func newRelayAttemptState() *relayAttemptState {
@@ -220,8 +239,9 @@ func (r *Relay) executeRelayAttempt(
 		entry := r.baseRequestLog(prepared, acct, attempt)
 		entry.Status = fmt.Sprintf("upstream_%d", resp.StatusCode)
 		entry.UpstreamStatus = resp.StatusCode
-		entry.UpstreamRequestID = upstreamRequestID(resp.Header)
 		entry.DurationMs = time.Since(attemptStartedAt).Milliseconds()
+		effect := drv.Interpret(resp.StatusCode, resp.Header, errBody, prepared.input.Model, json.RawMessage(acct.ProviderStateJSON))
+		setRequestLogUpstream(entry, resp.Header, &effect)
 
 		if drv.ParseNonRetriable(resp.StatusCode, errBody) {
 			r.logRequestAsync(entry)
@@ -230,12 +250,12 @@ func (r *Relay) executeRelayAttempt(
 		}
 
 		if drv.RetrySameAccount(resp.StatusCode, errBody, state.forbiddenRetries[acct.ID]) {
+			r.logRequestAsync(entry)
 			state.forbiddenRetries[acct.ID]++
 			state.lastErr = fmt.Errorf("upstream %d (retry %d)", resp.StatusCode, state.forbiddenRetries[acct.ID])
 			return relayAttemptContinue
 		}
 
-		effect := drv.Interpret(resp.StatusCode, resp.Header, errBody, prepared.input.Model, json.RawMessage(acct.ProviderStateJSON))
 		entry.EffectKind = relayEffectKind(effect.Kind)
 		r.logRequestAsync(entry)
 		r.pool.Observe(acct.ID, effect)
@@ -255,9 +275,9 @@ func (r *Relay) executeRelayAttempt(
 		entry := r.baseRequestLog(prepared, acct, attempt)
 		entry.Status = fmt.Sprintf("upstream_%d", resp.StatusCode)
 		entry.UpstreamStatus = resp.StatusCode
-		entry.UpstreamRequestID = upstreamRequestID(resp.Header)
 		entry.EffectKind = relayEffectKind(effect.Kind)
 		entry.DurationMs = time.Since(attemptStartedAt).Milliseconds()
+		setRequestLogUpstream(entry, resp.Header, &effect)
 		r.logRequestAsync(entry)
 		r.pool.Observe(acct.ID, effect)
 
@@ -320,8 +340,8 @@ func (r *Relay) finishRelaySuccess(
 	entry := r.baseRequestLog(prepared, acct, attempt)
 	entry.Status = "ok"
 	entry.EffectKind = relayEffectKind(effect.Kind)
-	entry.UpstreamRequestID = upstreamRequestID(resp.Header)
 	entry.DurationMs = time.Since(attemptStartedAt).Milliseconds()
+	setRequestLogUpstream(entry, resp.Header, &effect)
 	if usage != nil {
 		entry.InputTokens = usage.InputTokens
 		entry.OutputTokens = usage.OutputTokens

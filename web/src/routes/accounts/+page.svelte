@@ -283,7 +283,7 @@
 						<tr>
 							<th aria-sort={ariaSort(group.provider, 'email')}>
 								<button type="button" class="link sort-link {isSortActive(group.provider, 'email') ? 'sort-active' : ''}" onclick={() => setSort(group.provider, 'email')}>
-									email <span class="sort-indicator">{sortIndicator(group.provider, 'email')}</span>
+									account <span class="sort-indicator">{sortIndicator(group.provider, 'email')}</span>
 								</button>
 							</th>
 							<th aria-sort={ariaSort(group.provider, 'status')}>

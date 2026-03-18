@@ -314,6 +314,18 @@ func TestExecuteRelayAttemptLogsRetriableFailure(t *testing.T) {
 	if logs[0].Status != "upstream_529" {
 		t.Fatalf("Status = %q, want upstream_529", logs[0].Status)
 	}
+	if logs[0].SessionUUID != "session-123" {
+		t.Fatalf("SessionUUID = %q, want session-123", logs[0].SessionUUID)
+	}
+	if logs[0].BindingSource != "none" {
+		t.Fatalf("BindingSource = %q, want none", logs[0].BindingSource)
+	}
+	if !strings.Contains(string(logs[0].ClientHeaders), "X-Stainless-Retry-Count") {
+		t.Fatalf("ClientHeaders = %s, want retry count", logs[0].ClientHeaders)
+	}
+	if !strings.Contains(string(logs[0].RequestMeta), `"client_retry_count":1`) {
+		t.Fatalf("RequestMeta = %s, want client retry count", logs[0].RequestMeta)
+	}
 
 	record := capture.find("retriable upstream error")
 	if record == nil {
@@ -586,6 +598,18 @@ func TestExecuteRelayAttemptLogsCompatTraceEnvelope(t *testing.T) {
 			"Authorization": []string{"Bearer secret-upstream"},
 			"User-Agent":    []string{"claude-cli/2.2.0"},
 		},
+		interpretFn: func(statusCode int, _ []byte) driver.Effect {
+			if statusCode == http.StatusBadRequest {
+				return driver.Effect{
+					Kind:                 driver.EffectCooldown,
+					Scope:                driver.EffectScopeBucket,
+					CooldownUntil:        time.Now().Add(5 * time.Minute),
+					UpstreamErrorType:    "invalid_request_error",
+					UpstreamErrorMessage: "Error",
+				}
+			}
+			return driver.Effect{Kind: driver.EffectSuccess, Scope: driver.EffectScopeBucket}
+		},
 	}
 	transport := relayTestTransport{
 		client: &http.Client{
@@ -625,6 +649,7 @@ func TestExecuteRelayAttemptLogsCompatTraceEnvelope(t *testing.T) {
 	headers.Set("Content-Type", "application/json")
 	headers.Set("Authorization", "Bearer secret-client")
 	headers.Set("X-Broker-Compat-Trace-Id", "compat-42")
+	headers.Set("X-Broker-Compat-Client-Meta", `{"requested_model":"claude/claude-sonnet-4-6","message_count":1}`)
 	prepared := &preparedRelayRequest{
 		keyInfo: &auth.KeyInfo{ID: "user-trace", Name: "trace"},
 		surface: domain.SurfaceCompat,
@@ -675,5 +700,39 @@ func TestExecuteRelayAttemptLogsCompatTraceEnvelope(t *testing.T) {
 	}
 	if respRecord.attrs["responseBody"] != `{"type":"error","error":{"type":"invalid_request_error","message":"Error"}}` {
 		t.Fatalf("responseBody = %#v", respRecord.attrs["responseBody"])
+	}
+
+	var logs []*domain.RequestLog
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		var total int
+		logs, total, err = mockStore.QueryRequestLogs(context.Background(), domain.RequestLogQuery{})
+		if err != nil {
+			t.Fatalf("QueryRequestLogs: %v", err)
+		}
+		if total == 1 {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if len(logs) != 1 {
+		t.Fatalf("len(logs) = %d, want 1", len(logs))
+	}
+	if logs[0].UpstreamErrorType != "invalid_request_error" {
+		t.Fatalf("UpstreamErrorType = %q, want invalid_request_error", logs[0].UpstreamErrorType)
+	}
+	if logs[0].UpstreamErrorMessage != "Error" {
+		t.Fatalf("UpstreamErrorMessage = %q, want Error", logs[0].UpstreamErrorMessage)
+	}
+	if !strings.Contains(string(logs[0].RequestMeta), `"compat_trace_id":"compat-42"`) {
+		t.Fatalf("RequestMeta = %s, want compat trace id", logs[0].RequestMeta)
+	}
+	if !strings.Contains(string(logs[0].RequestMeta), `"compat_client":{"message_count":1,"requested_model":"claude/claude-sonnet-4-6"}`) &&
+		!strings.Contains(string(logs[0].RequestMeta), `"compat_client":{"requested_model":"claude/claude-sonnet-4-6","message_count":1}`) {
+		t.Fatalf("RequestMeta = %s, want compat client meta", logs[0].RequestMeta)
+	}
+	if !strings.Contains(string(logs[0].UpstreamHeaders), `"Request-Id":"req_trace"`) &&
+		!strings.Contains(string(logs[0].UpstreamHeaders), `"request-id":"req_trace"`) {
+		t.Fatalf("UpstreamHeaders = %s, want request-id", logs[0].UpstreamHeaders)
 	}
 }

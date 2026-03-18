@@ -40,6 +40,8 @@ export interface DashboardEvent {
 	cell_id?: string;
 	cooldown_until?: string;
 	upstream_status?: number;
+	upstream_error_type?: string;
+	upstream_error_message?: string;
 	message: string;
 	ts: string;
 }
@@ -54,6 +56,10 @@ export interface RecentRequestLog {
 	path: string;
 	cell_id?: string;
 	bucket_key?: string;
+	session_uuid?: string;
+	binding_source?: string;
+	client_headers?: Record<string, unknown> | null;
+	request_meta?: Record<string, unknown> | null;
 	input_tokens: number;
 	output_tokens: number;
 	cache_read_tokens: number;
@@ -63,6 +69,9 @@ export interface RecentRequestLog {
 	effect_kind?: string;
 	upstream_status?: number;
 	upstream_request_id?: string;
+	upstream_headers?: Record<string, unknown> | null;
+	upstream_error_type?: string;
+	upstream_error_message?: string;
 	request_bytes: number;
 	attempt_count: number;
 	duration_ms: number;

@@ -74,15 +74,17 @@ type DashboardUser struct {
 }
 
 type DashboardEvent struct {
-	Type           string     `json:"type"`
-	AccountID      string     `json:"account_id,omitempty"`
-	UserID         string     `json:"user_id,omitempty"`
-	BucketKey      string     `json:"bucket_key,omitempty"`
-	CellID         string     `json:"cell_id,omitempty"`
-	CooldownUntil  *time.Time `json:"cooldown_until,omitempty"`
-	UpstreamStatus int        `json:"upstream_status,omitempty"`
-	Message        string     `json:"message"`
-	Timestamp      string     `json:"ts"`
+	Type                 string     `json:"type"`
+	AccountID            string     `json:"account_id,omitempty"`
+	UserID               string     `json:"user_id,omitempty"`
+	BucketKey            string     `json:"bucket_key,omitempty"`
+	CellID               string     `json:"cell_id,omitempty"`
+	CooldownUntil        *time.Time `json:"cooldown_until,omitempty"`
+	UpstreamStatus       int        `json:"upstream_status,omitempty"`
+	UpstreamErrorType    string     `json:"upstream_error_type,omitempty"`
+	UpstreamErrorMessage string     `json:"upstream_error_message,omitempty"`
+	Message              string     `json:"message"`
+	Timestamp            string     `json:"ts"`
 }
 
 type RelayOutcomeStatResponse struct {

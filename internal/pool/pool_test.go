@@ -539,19 +539,19 @@ func TestObserve_StatusTransitions(t *testing.T) {
 		}
 	})
 
-	t.Run("403_nonban_cooldown", func(t *testing.T) {
+	t.Run("403_nonban_reject", func(t *testing.T) {
 		acct := activeAccount("a", "a@x")
 		p := newTestPool(t, acct)
 		p.Observe("a", driver.Effect{
-			Kind:          driver.EffectCooldown,
-			CooldownUntil: time.Now().Add(10 * time.Minute),
+			Kind:           driver.EffectReject,
+			UpstreamStatus: 403,
 		})
 		a := p.Get("a")
 		if a.Status != domain.StatusActive {
 			t.Fatalf("non-ban 403 should keep status active, got %s", a.Status)
 		}
-		if a.CooldownUntil == nil {
-			t.Fatal("cooldownUntil should be set after non-ban 403")
+		if a.CooldownUntil != nil {
+			t.Fatalf("cooldownUntil = %v, want nil", a.CooldownUntil)
 		}
 	})
 }
@@ -974,6 +974,45 @@ func TestObserve_Cooldown403EmitsRejectEvent(t *testing.T) {
 	}
 	if !strings.Contains(evt.Message, "upstream 403") {
 		t.Fatalf("event Message = %q, want upstream 403", evt.Message)
+	}
+}
+
+func TestObserve_RejectDoesNotCooldown(t *testing.T) {
+	acct := activeAccount("rej-no-cd", "rej-no-cd@test.com")
+	p := newTestPool(t, acct)
+	p.SetDrivers(map[domain.Provider]driver.SchedulerDriver{
+		domain.ProviderClaude: testDriver,
+	})
+
+	p.Observe(acct.ID, driver.Effect{
+		Kind:                 driver.EffectReject,
+		Scope:                driver.EffectScopeBucket,
+		UpstreamStatus:       400,
+		UpstreamErrorType:    "invalid_request_error",
+		UpstreamErrorMessage: "Error",
+	})
+
+	a := p.Get(acct.ID)
+	if a == nil {
+		t.Fatal("missing account")
+	}
+	if a.CooldownUntil != nil {
+		t.Fatalf("CooldownUntil = %v, want nil", a.CooldownUntil)
+	}
+
+	recent := p.bus.Recent(1)
+	if len(recent) != 1 {
+		t.Fatalf("len(recent) = %d, want 1", len(recent))
+	}
+	evt := recent[0]
+	if evt.Type != events.EventReject {
+		t.Fatalf("evt.Type = %s, want reject", evt.Type)
+	}
+	if evt.CooldownUntil != nil {
+		t.Fatalf("evt.CooldownUntil = %v, want nil", evt.CooldownUntil)
+	}
+	if evt.UpstreamStatus != 400 {
+		t.Fatalf("evt.UpstreamStatus = %d, want 400", evt.UpstreamStatus)
 	}
 }
 

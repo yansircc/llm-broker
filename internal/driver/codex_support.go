@@ -91,14 +91,39 @@ func parseCodexResetsIn(body []byte) time.Duration {
 	return 0
 }
 
-func extractCodexErrorMessage(body []byte) string {
+func parseCodexErrorInfo(body []byte) (string, string) {
 	var envelope struct {
 		Error struct {
+			Type    string `json:"type"`
+			Code    any    `json:"code"`
 			Message string `json:"message"`
 		} `json:"error"`
 	}
-	if json.Unmarshal(body, &envelope) == nil {
-		return envelope.Error.Message
+	if json.Unmarshal(body, &envelope) != nil {
+		return "", ""
 	}
-	return ""
+	errType := envelope.Error.Type
+	if errType == "" && envelope.Error.Code != nil {
+		errType = stringifyCodexErrorCode(envelope.Error.Code)
+	}
+	return errType, envelope.Error.Message
+}
+
+func extractCodexErrorMessage(body []byte) string {
+	_, message := parseCodexErrorInfo(body)
+	return message
+}
+
+func stringifyCodexErrorCode(code any) string {
+	switch v := code.(type) {
+	case string:
+		return v
+	case float64:
+		if v == float64(int64(v)) {
+			return strconv.FormatInt(int64(v), 10)
+		}
+		return strconv.FormatFloat(v, 'f', -1, 64)
+	default:
+		return ""
+	}
 }

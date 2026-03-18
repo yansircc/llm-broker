@@ -93,15 +93,17 @@ func (s *Server) dashboardEvents(limit int) []DashboardEvent {
 	for i := len(recentEvents) - 1; i >= 0; i-- {
 		event := recentEvents[i]
 		views = append(views, DashboardEvent{
-			Type:           string(event.Type),
-			AccountID:      event.AccountID,
-			UserID:         event.UserID,
-			BucketKey:      event.BucketKey,
-			CellID:         event.CellID,
-			CooldownUntil:  event.CooldownUntil,
-			UpstreamStatus: event.UpstreamStatus,
-			Message:        event.Message,
-			Timestamp:      event.Timestamp.Format(time.RFC3339),
+			Type:                 string(event.Type),
+			AccountID:            event.AccountID,
+			UserID:               event.UserID,
+			BucketKey:            event.BucketKey,
+			CellID:               event.CellID,
+			CooldownUntil:        event.CooldownUntil,
+			UpstreamStatus:       event.UpstreamStatus,
+			UpstreamErrorType:    event.UpstreamErrorType,
+			UpstreamErrorMessage: event.UpstreamErrorMessage,
+			Message:              event.Message,
+			Timestamp:            event.Timestamp.Format(time.RFC3339),
 		})
 	}
 	return views
