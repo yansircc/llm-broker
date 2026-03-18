@@ -19,11 +19,14 @@ type compatRateState struct {
 }
 
 func newCompatRateLimiter(maxPerMinute, maxConcurrent int) *compatRateLimiter {
-	if maxPerMinute <= 0 {
-		maxPerMinute = 6
+	if maxPerMinute < 0 {
+		maxPerMinute = 0
 	}
-	if maxConcurrent <= 0 {
-		maxConcurrent = 1
+	if maxConcurrent < 0 {
+		maxConcurrent = 0
+	}
+	if maxPerMinute == 0 && maxConcurrent == 0 {
+		return nil
 	}
 	return &compatRateLimiter{
 		maxPerMinute:  maxPerMinute,
@@ -55,15 +58,17 @@ func (l *compatRateLimiter) Acquire(key string, now time.Time) (func(), error) {
 	}
 	entry.started = kept
 
-	if entry.inflight >= l.maxConcurrent {
+	if l.maxConcurrent > 0 && entry.inflight >= l.maxConcurrent {
 		return nil, fmt.Errorf("compat concurrency limit reached (%d)", l.maxConcurrent)
 	}
-	if len(entry.started) >= l.maxPerMinute {
+	if l.maxPerMinute > 0 && len(entry.started) >= l.maxPerMinute {
 		return nil, fmt.Errorf("compat request rate limit reached (%d/min)", l.maxPerMinute)
 	}
 
 	entry.inflight++
-	entry.started = append(entry.started, now)
+	if l.maxPerMinute > 0 {
+		entry.started = append(entry.started, now)
+	}
 
 	return func() {
 		l.mu.Lock()
@@ -77,14 +82,16 @@ func (l *compatRateLimiter) Acquire(key string, now time.Time) (func(), error) {
 			current.inflight--
 		}
 
-		cutoff := time.Now().Add(-time.Minute)
-		kept := current.started[:0]
-		for _, ts := range current.started {
-			if !ts.Before(cutoff) {
-				kept = append(kept, ts)
+		if l.maxPerMinute > 0 {
+			cutoff := time.Now().Add(-time.Minute)
+			kept := current.started[:0]
+			for _, ts := range current.started {
+				if !ts.Before(cutoff) {
+					kept = append(kept, ts)
+				}
 			}
+			current.started = kept
 		}
-		current.started = kept
 		if current.inflight == 0 && len(current.started) == 0 {
 			delete(l.state, key)
 		}
