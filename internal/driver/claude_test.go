@@ -124,6 +124,35 @@ func TestClaudeInterpret_400NonBanReturnsReject(t *testing.T) {
 	}
 }
 
+func TestClaudeInterpret_404ReturnsReject(t *testing.T) {
+	d := NewClaudeDriver(ClaudeConfig{}, nil)
+
+	effect := d.Interpret(http.StatusNotFound, make(http.Header), []byte(`{"error":{"type":"not_found_error","message":"model: claude-haiku-4-6"}}`), "claude-haiku-4-6", json.RawMessage(`{}`))
+
+	if effect.Kind != EffectReject {
+		t.Fatalf("Kind = %v, want reject", effect.Kind)
+	}
+	if effect.UpstreamStatus != http.StatusNotFound {
+		t.Fatalf("UpstreamStatus = %d, want %d", effect.UpstreamStatus, http.StatusNotFound)
+	}
+	if effect.UpstreamErrorType != "not_found_error" {
+		t.Fatalf("UpstreamErrorType = %q, want not_found_error", effect.UpstreamErrorType)
+	}
+}
+
+func TestClaudeInterpret_502ReturnsServerError(t *testing.T) {
+	d := NewClaudeDriver(ClaudeConfig{}, nil)
+
+	effect := d.Interpret(http.StatusBadGateway, make(http.Header), []byte(`{"error":{"type":"api_error","message":"upstream bad gateway"}}`), "claude-sonnet-4-6", json.RawMessage(`{}`))
+
+	if effect.Kind != EffectServerError {
+		t.Fatalf("Kind = %v, want server_error", effect.Kind)
+	}
+	if effect.UpstreamStatus != http.StatusBadGateway {
+		t.Fatalf("UpstreamStatus = %d, want %d", effect.UpstreamStatus, http.StatusBadGateway)
+	}
+}
+
 func TestClaudeRequiresFreshSession(t *testing.T) {
 	tests := []struct {
 		name string

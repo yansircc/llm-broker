@@ -47,14 +47,5 @@ func (d *ClaudeDriver) Info() ProviderInfo {
 }
 
 func (d *ClaudeDriver) Models() []Model {
-	return []Model{
-		{ID: "claude-opus-4-6", Object: "model", Created: 1709164800, OwnedBy: "anthropic", ContextWindow: 200000},
-		{ID: "claude-opus-4-5", Object: "model", Created: 1709164800, OwnedBy: "anthropic", ContextWindow: 200000},
-		{ID: "claude-opus-4-1", Object: "model", Created: 1709164800, OwnedBy: "anthropic", ContextWindow: 200000},
-		{ID: "claude-opus-4", Object: "model", Created: 1709164800, OwnedBy: "anthropic", ContextWindow: 200000},
-		{ID: "claude-sonnet-4-6", Object: "model", Created: 1709164800, OwnedBy: "anthropic", ContextWindow: 200000},
-		{ID: "claude-sonnet-4-5", Object: "model", Created: 1709164800, OwnedBy: "anthropic", ContextWindow: 200000},
-		{ID: "claude-sonnet-4", Object: "model", Created: 1709164800, OwnedBy: "anthropic", ContextWindow: 200000},
-		{ID: "claude-haiku-4-5", Object: "model", Created: 1709164800, OwnedBy: "anthropic", ContextWindow: 200000},
-	}
+	return claudeSupportedModels()
 }

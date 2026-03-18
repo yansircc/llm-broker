@@ -414,6 +414,73 @@
 
 并且在部署后窗口内，未再观察到新的 `upstream_400`。
 
+## 修复后新增的错误家族
+
+在 `2026-03-18 13:27 UTC` 之后继续观察，未再出现新的 Claude native `400 invalid_request_error`。
+
+后续新出现的失败主要变成两类：
+
+1. `404 not_found_error`
+2. 少量 `transport_error`
+
+其中 `404` 的代表样本已经确认不是包络回归，而是模型名问题：
+
+- `gpt-5.4`
+  - 被直接打到 Claude `/v1/messages`
+  - 上游明确返回：`model: gpt-5.4`
+- `claude-haiku-4-6`
+  - 语义上属于 Claude 家族
+  - 但当前上游不接受该字符串
+  - 上游明确返回：`model: claude-haiku-4-6`
+
+补充发现：
+
+- Claude driver 旧逻辑只显式处理 `400/401/403/429/500/529`
+- 未显式处理的 `404` 会落到默认分支，被误记成 `EffectSuccess`
+- 因此 dashboard 上会出现看起来矛盾的 `success / 404`
+
+这不是“404 真的成功”，而是 driver 状态分类 bug。
+
+## 已补的本地模型防护
+
+针对上述 `404`，已在 Claude driver 边界补了两层处理：
+
+1. 本地模型校验
+   - 明显 foreign model（例如 `gpt-*`）不再转发到 Claude 上游
+   - 直接在 broker 本地返回 `400`
+2. Claude 家族别名规范化
+   - `claude-haiku-4-6` 规范化为 `claude-haiku-4-5-20251001`
+   - `claude-haiku-4-5` 也统一规范化为 `claude-haiku-4-5-20251001`
+   - 其他未收录的 Claude model 名，直接本地返回 `400`
+
+这样做的目标是：
+
+- 不让明显错误模型继续打到上游
+- 对可安全判断的 Haiku 命名差异做最小映射
+- 对不能确定的模型名宁可早拒绝，也不继续冒险转发
+
+## 调度风险记录
+
+另一个与本轮 `400` 不同、但需要单独记录的问题是：
+
+- 同一个 key 在没有 `session_uuid`、没有用户绑定账号时
+- 如果上层在短时间内重复发送相同坏请求
+- broker 会把这些请求当作多次独立入站重新调度
+- 因而同一个 `body_sha256` 可能在几秒内落到多个 Claude 账号
+
+数据库核对结果表明：
+
+- 这些样本几乎全部都是 `attempt_count=1`
+- 说明不是单个 relay 请求内部跨账号重试
+- 而是多次独立请求在当前无绑定调度规则下分散到了不同账号
+
+这会提高同一个坏请求横向触达多个账号的风险。
+
+后续适合单独做的改进是：
+
+- 基于 `(user_id, provider, surface, body_sha256)` 做短 TTL 的 reject stickiness / negative cache
+- 防止同一个坏请求在短时间内继续扩散到多个账号
+
 ## compat 切流后的观察重点
 
 用户已说明接下来会把 `compat` 请求切进来，并且都会走 `kun` 账号。

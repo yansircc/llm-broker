@@ -1,6 +1,7 @@
 package relay
 
 import (
+	"errors"
 	"log/slog"
 	"net/http"
 
@@ -28,6 +29,11 @@ func (r *Relay) handleCountTokens(w http.ResponseWriter, req *http.Request, drv 
 
 	upReq, err := drv.BuildRequest(ctx, input, acct, accessToken)
 	if err != nil {
+		var requestErr *driver.RequestValidationError
+		if errors.As(err, &requestErr) {
+			drv.WriteError(w, requestErr.StatusCode, requestErr.Message)
+			return
+		}
 		drv.WriteError(w, http.StatusInternalServerError, "failed to build request")
 		return
 	}

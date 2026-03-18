@@ -43,6 +43,9 @@ func (d *ClaudeDriver) BuildRequest(ctx context.Context, input *RelayInput, acct
 	if err := json.Unmarshal(input.RawBody, &body); err != nil {
 		return nil, fmt.Errorf("body re-parse: %w", err)
 	}
+	if err := normalizeClaudeModelField(body); err != nil {
+		return nil, err
+	}
 	if !input.IsCountTokens {
 		normalizeClaudeMessageEnvelope(body)
 	}
@@ -191,6 +194,27 @@ func (d *ClaudeDriver) Interpret(statusCode int, headers http.Header, body []byt
 			Kind:                 EffectServerError,
 			Scope:                EffectScopeBucket,
 			UpstreamStatus:       500,
+			UpstreamErrorType:    upstreamErrorType,
+			UpstreamErrorMessage: upstreamErrorMessage,
+			UpdatedState:         mustMarshalJSON(state),
+		}
+	}
+
+	if statusCode >= 500 && statusCode <= 599 {
+		return Effect{
+			Kind:                 EffectServerError,
+			Scope:                EffectScopeBucket,
+			UpstreamStatus:       statusCode,
+			UpstreamErrorType:    upstreamErrorType,
+			UpstreamErrorMessage: upstreamErrorMessage,
+			UpdatedState:         mustMarshalJSON(state),
+		}
+	}
+	if statusCode >= 400 && statusCode <= 499 {
+		return Effect{
+			Kind:                 EffectReject,
+			Scope:                EffectScopeBucket,
+			UpstreamStatus:       statusCode,
 			UpstreamErrorType:    upstreamErrorType,
 			UpstreamErrorMessage: upstreamErrorMessage,
 			UpdatedState:         mustMarshalJSON(state),

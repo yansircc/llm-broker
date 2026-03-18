@@ -138,6 +138,27 @@ type Model struct {
 	ContextWindow int    `json:"context_window"`
 }
 
+// RequestValidationError indicates that the client request is invalid at the
+// driver boundary and should be rejected locally without forwarding upstream.
+type RequestValidationError struct {
+	StatusCode int
+	Message    string
+}
+
+func (e *RequestValidationError) Error() string {
+	if e == nil {
+		return ""
+	}
+	return e.Message
+}
+
+func NewRequestValidationError(statusCode int, message string) error {
+	return &RequestValidationError{
+		StatusCode: statusCode,
+		Message:    message,
+	}
+}
+
 func mustMarshalJSON(v any) json.RawMessage {
 	data, _ := json.Marshal(v)
 	return data

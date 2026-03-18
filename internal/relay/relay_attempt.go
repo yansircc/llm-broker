@@ -3,6 +3,7 @@ package relay
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -164,6 +165,21 @@ func (r *Relay) executeRelayAttempt(
 
 	upReq, err := drv.BuildRequest(ctx, prepared.input, acct, accessToken)
 	if err != nil {
+		var requestErr *driver.RequestValidationError
+		if errors.As(err, &requestErr) {
+			slog.Warn("driver rejected request before upstream",
+				"accountId", acct.ID,
+				"userId", prepared.keyInfo.ID,
+				"userName", prepared.keyInfo.Name,
+				"model", prepared.input.Model,
+				"path", prepared.input.Path,
+				"sessionUUID", prepared.sessionUUID,
+				"status", requestErr.StatusCode,
+				"error", requestErr.Message,
+			)
+			drv.WriteError(w, requestErr.StatusCode, requestErr.Message)
+			return relayAttemptDone
+		}
 		state.lastErr = fmt.Errorf("build request: %w", err)
 		return relayAttemptStop
 	}

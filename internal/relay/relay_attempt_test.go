@@ -25,6 +25,7 @@ type relayTestDriver struct {
 	interpretCalls      []int
 	interpretBodies     [][]byte
 	interpretFn         func(statusCode int, body []byte) driver.Effect
+	buildRequestErr     error
 	buildRequestBody    string
 	buildRequestURL     string
 	buildRequestHeaders http.Header
@@ -35,6 +36,9 @@ func (d *relayTestDriver) Provider() domain.Provider { return d.provider }
 func (d *relayTestDriver) Plan(_ *driver.RelayInput) driver.RelayPlan { return driver.RelayPlan{} }
 
 func (d *relayTestDriver) BuildRequest(ctx context.Context, _ *driver.RelayInput, _ *domain.Account, _ string) (*http.Request, error) {
+	if d.buildRequestErr != nil {
+		return nil, d.buildRequestErr
+	}
 	url := d.buildRequestURL
 	if url == "" {
 		url = "https://upstream.test/v1/messages"
@@ -579,6 +583,88 @@ func TestExecuteRelayAttemptPassesBodyToInterpretOnNonRetriable400(t *testing.T)
 	}
 	if !strings.Contains(recorder.Body.String(), "organization has been disabled") {
 		t.Fatalf("response body = %q, want upstream body", recorder.Body.String())
+	}
+}
+
+func TestExecuteRelayAttemptReturnsDriverValidationError(t *testing.T) {
+	mockStore := store.NewMockStore()
+	account := &domain.Account{
+		ID:        "acct-invalid-model",
+		Email:     "invalid@example.com",
+		Provider:  domain.ProviderClaude,
+		Status:    domain.StatusActive,
+		Subject:   "subject-invalid-model",
+		CreatedAt: time.Now().UTC(),
+	}
+	if err := mockStore.SaveAccount(context.Background(), account); err != nil {
+		t.Fatalf("SaveAccount: %v", err)
+	}
+	if err := mockStore.SaveQuotaBucket(context.Background(), &domain.QuotaBucket{
+		BucketKey: "claude:subject-invalid-model",
+		Provider:  domain.ProviderClaude,
+		StateJSON: "{}",
+		UpdatedAt: time.Now().UTC(),
+	}); err != nil {
+		t.Fatalf("SaveQuotaBucket: %v", err)
+	}
+
+	bus := events.NewBus(16)
+	p, err := pool.New(mockStore, bus)
+	if err != nil {
+		t.Fatalf("pool.New: %v", err)
+	}
+
+	driverStub := &relayTestDriver{
+		provider:        domain.ProviderClaude,
+		buildRequestErr: driver.NewRequestValidationError(http.StatusBadRequest, `model "gpt-5.4" does not belong to Claude; use the OpenAI/Codex relay instead`),
+	}
+	transport := relayTestTransport{
+		client: &http.Client{
+			Transport: roundTripFunc(func(_ *http.Request) (*http.Response, error) {
+				t.Fatal("upstream should not be called when driver rejects request locally")
+				return nil, nil
+			}),
+		},
+	}
+	relaySvc := New(
+		p,
+		relayTestTokenProvider{},
+		mockStore,
+		Config{MaxRetryAccounts: 1},
+		transport,
+		bus,
+		map[domain.Provider]driver.ExecutionDriver{domain.ProviderClaude: driverStub},
+	)
+
+	prepared := &preparedRelayRequest{
+		keyInfo: &auth.KeyInfo{ID: "user-invalid-model", Name: "mike"},
+		input: &driver.RelayInput{
+			Headers: make(http.Header),
+			Path:    "/v1/messages",
+			Model:   "gpt-5.4",
+		},
+	}
+	recorder := httptest.NewRecorder()
+
+	outcome := relaySvc.executeRelayAttempt(
+		context.Background(),
+		recorder,
+		driverStub,
+		prepared,
+		newRelayAttemptState(),
+		0,
+	)
+	if outcome != relayAttemptDone {
+		t.Fatalf("executeRelayAttempt outcome = %v, want %v", outcome, relayAttemptDone)
+	}
+	if recorder.Code != http.StatusBadRequest {
+		t.Fatalf("response status = %d, want %d", recorder.Code, http.StatusBadRequest)
+	}
+	if !strings.Contains(recorder.Body.String(), "does not belong to Claude") {
+		t.Fatalf("response body = %q, want local validation message", recorder.Body.String())
+	}
+	if len(driverStub.interpretCalls) != 0 {
+		t.Fatalf("Interpret call count = %d, want 0", len(driverStub.interpretCalls))
 	}
 }
 
