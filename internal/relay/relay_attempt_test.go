@@ -232,7 +232,15 @@ func TestExecuteRelayAttemptLogsRetriableFailure(t *testing.T) {
 		t.Fatalf("pool.New: %v", err)
 	}
 
-	driverStub := &relayTestDriver{provider: domain.ProviderClaude}
+	driverStub := &relayTestDriver{
+		provider:         domain.ProviderClaude,
+		buildRequestBody: `{"messages":[{"role":"user","content":"hello upstream"}],"stream":false}`,
+		buildRequestHeaders: http.Header{
+			"Content-Type":     []string{"application/json"},
+			"X-Stainless-Test": []string{"1"},
+			"Authorization":    []string{"Bearer secret"},
+		},
+	}
 	transport := relayTestTransport{
 		client: &http.Client{
 			Transport: roundTripFunc(func(_ *http.Request) (*http.Response, error) {
@@ -267,6 +275,7 @@ func TestExecuteRelayAttemptLogsRetriableFailure(t *testing.T) {
 		keyInfo: &auth.KeyInfo{ID: "user-1", Name: "leo"},
 		input: &driver.RelayInput{
 			Headers: headers,
+			RawBody: []byte(`{"messages":[{"role":"user","content":"hello client"}]}`),
 			Path:    "/v1/messages",
 			Model:   "claude-sonnet-4-6",
 		},
@@ -325,6 +334,30 @@ func TestExecuteRelayAttemptLogsRetriableFailure(t *testing.T) {
 	}
 	if !strings.Contains(string(logs[0].RequestMeta), `"client_retry_count":1`) {
 		t.Fatalf("RequestMeta = %s, want client retry count", logs[0].RequestMeta)
+	}
+	if !strings.Contains(logs[0].ClientBodyExcerpt, `"hello client"`) {
+		t.Fatalf("ClientBodyExcerpt = %q, want hello client", logs[0].ClientBodyExcerpt)
+	}
+	if logs[0].UpstreamURL != "https://upstream.test/v1/messages" {
+		t.Fatalf("UpstreamURL = %q, want https://upstream.test/v1/messages", logs[0].UpstreamURL)
+	}
+	if !strings.Contains(string(logs[0].UpstreamRequestHeaders), `"Content-Type":"application/json"`) {
+		t.Fatalf("UpstreamRequestHeaders = %s, want content type", logs[0].UpstreamRequestHeaders)
+	}
+	if strings.Contains(string(logs[0].UpstreamRequestHeaders), "Authorization") {
+		t.Fatalf("UpstreamRequestHeaders = %s, should omit authorization", logs[0].UpstreamRequestHeaders)
+	}
+	if !strings.Contains(string(logs[0].UpstreamRequestMeta), `"message_count":1`) {
+		t.Fatalf("UpstreamRequestMeta = %s, want message_count", logs[0].UpstreamRequestMeta)
+	}
+	if !strings.Contains(logs[0].UpstreamRequestBodyExcerpt, `"hello upstream"`) {
+		t.Fatalf("UpstreamRequestBodyExcerpt = %q, want hello upstream", logs[0].UpstreamRequestBodyExcerpt)
+	}
+	if !strings.Contains(string(logs[0].UpstreamResponseMeta), `"status":529`) {
+		t.Fatalf("UpstreamResponseMeta = %s, want status 529", logs[0].UpstreamResponseMeta)
+	}
+	if !strings.Contains(logs[0].UpstreamResponseBodyExcerpt, `"overloaded_error"`) {
+		t.Fatalf("UpstreamResponseBodyExcerpt = %q, want overloaded_error", logs[0].UpstreamResponseBodyExcerpt)
 	}
 
 	record := capture.find("retriable upstream error")

@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"sync"
 	"testing"
@@ -57,7 +58,11 @@ func TestCompatOpenAIChatToClaudeRequest(t *testing.T) {
 	if got.Model != "claude-sonnet-4-5" {
 		t.Fatalf("model = %q", got.Model)
 	}
-	if got.System != "system prompt\n\ndeveloper prompt" {
+	systemText, ok := got.System.(string)
+	if !ok {
+		t.Fatalf("system = %#v, want string", got.System)
+	}
+	if systemText != "system prompt\n\ndeveloper prompt" {
 		t.Fatalf("system = %q", got.System)
 	}
 	if got.MaxTokens != maxCompletionTokens {
@@ -68,6 +73,12 @@ func TestCompatOpenAIChatToClaudeRequest(t *testing.T) {
 	}
 	if got.TopP != &topP {
 		t.Fatalf("top_p pointer was not preserved")
+	}
+	if got.Stream == nil {
+		t.Fatal("stream = nil, want explicit false")
+	}
+	if *got.Stream {
+		t.Fatal("stream = true, want false")
 	}
 	if len(got.StopSequences) != 1 || got.StopSequences[0] != "STOP" {
 		t.Fatalf("stop_sequences = %#v", got.StopSequences)
@@ -97,8 +108,60 @@ func TestCompatOpenAIChatToClaudeRequest_Stream(t *testing.T) {
 	if requestedModel != "claude/claude-sonnet-4-5" {
 		t.Fatalf("requestedModel = %q", requestedModel)
 	}
-	if !got.Stream {
+	if got.Stream == nil || !*got.Stream {
 		t.Fatal("stream = false, want true")
+	}
+}
+
+func TestCompatOpenAIChatToClaudeRequest_ModernEnvelope(t *testing.T) {
+	temperature := 0.2
+	req := &compatOpenAIChatRequest{
+		Model:          "claude/claude-sonnet-4-6",
+		Temperature:    &temperature,
+		ResponseFormat: json.RawMessage(`{"type":"json_object"}`),
+		Messages: []compatMessage{
+			{Role: "system", Content: json.RawMessage(`"system prompt"`)},
+			{Role: "user", Content: json.RawMessage(`"hello"`)},
+		},
+	}
+
+	got, requestedModel, err := compatOpenAIChatToClaudeRequest(req)
+	if err != nil {
+		t.Fatalf("compatOpenAIChatToClaudeRequest() error = %v", err)
+	}
+	if requestedModel != "claude/claude-sonnet-4-6" {
+		t.Fatalf("requestedModel = %q", requestedModel)
+	}
+	if got.Stream == nil || *got.Stream {
+		t.Fatalf("stream = %#v, want explicit false", got.Stream)
+	}
+	if got.OutputConfig == nil || got.OutputConfig.Effort != "medium" {
+		t.Fatalf("output_config = %#v", got.OutputConfig)
+	}
+	if got.Thinking == nil || got.Thinking.Type != "adaptive" {
+		t.Fatalf("thinking = %#v", got.Thinking)
+	}
+	if got.Temperature != nil {
+		t.Fatalf("temperature = %#v, want nil when thinking is enabled", got.Temperature)
+	}
+	systemBlocks, ok := got.System.([]compatClaudeSystemBlock)
+	if !ok {
+		t.Fatalf("system = %#v, want Claude system blocks", got.System)
+	}
+	if len(systemBlocks) != 2 {
+		t.Fatalf("len(systemBlocks) = %d, want 2", len(systemBlocks))
+	}
+	if systemBlocks[0].Text != "You are Claude Code, Anthropic's official CLI for Claude, running within the Claude Agent SDK." {
+		t.Fatalf("systemBlocks[0] = %#v", systemBlocks[0])
+	}
+	if systemBlocks[0].CacheControl == nil || systemBlocks[0].CacheControl.Type != "ephemeral" {
+		t.Fatalf("systemBlocks[0].cache_control = %#v", systemBlocks[0].CacheControl)
+	}
+	if systemBlocks[1].Text != "system prompt\n\nReturn only a valid JSON object. Do not include markdown fences or extra commentary." {
+		t.Fatalf("systemBlocks[1] = %#v", systemBlocks[1])
+	}
+	if systemBlocks[1].CacheControl == nil || systemBlocks[1].CacheControl.Type != "ephemeral" {
+		t.Fatalf("systemBlocks[1].cache_control = %#v", systemBlocks[1].CacheControl)
 	}
 }
 
@@ -387,6 +450,9 @@ func TestHandleCompatOpenAIChatCompletions_MinimalLoop(t *testing.T) {
 			if req.Header.Get("anthropic-version") != "2023-06-01" {
 				t.Fatalf("anthropic-version = %q", req.Header.Get("anthropic-version"))
 			}
+			if req.Header.Get("Accept") != "text/event-stream" {
+				t.Fatalf("accept = %q", req.Header.Get("Accept"))
+			}
 
 			bodyBytes, err := io.ReadAll(req.Body)
 			if err != nil {
@@ -402,6 +468,10 @@ func TestHandleCompatOpenAIChatCompletions_MinimalLoop(t *testing.T) {
 			}
 			if body["system"] != "system prompt" {
 				t.Fatalf("system = %#v", body["system"])
+			}
+			stream, ok := body["stream"].(bool)
+			if !ok || stream {
+				t.Fatalf("stream = %#v, want explicit false", body["stream"])
 			}
 
 			messages, _ := body["messages"].([]any)
@@ -466,6 +536,208 @@ func TestHandleCompatOpenAIChatCompletions_MinimalLoop(t *testing.T) {
 	}
 	if resp.Usage == nil || resp.Usage.TotalTokens != 18 {
 		t.Fatalf("usage = %#v", resp.Usage)
+	}
+}
+
+func TestHandleCompatOpenAIChatCompletions_LogsRawCompatClientRequest(t *testing.T) {
+	upstreamClient := &http.Client{
+		Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+			respBody := `{
+				"id":"msg_compat_log_1",
+				"model":"claude-sonnet-4-5",
+				"stop_reason":"end_turn",
+				"content":[{"type":"text","text":"compat ok"}],
+				"usage":{"input_tokens":11,"output_tokens":7}
+			}`
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Header:     make(http.Header),
+				Body:       io.NopCloser(strings.NewReader(respBody)),
+			}, nil
+		}),
+	}
+	srv := newCompatTestServer(t, upstreamClient)
+
+	reqBody := `{
+		"model":"claude/claude-sonnet-4-5",
+		"reasoning_effort":"max",
+		"messages":[
+			{"role":"system","content":"system prompt"},
+			{"role":"user","content":"hello"}
+		]
+	}`
+	req := httptest.NewRequest(http.MethodPost, "/compat/v1/chat/completions", strings.NewReader(reqBody))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("User-Agent", "openclaw-test")
+	ctx := context.WithValue(req.Context(), auth.KeyInfoKey, &auth.KeyInfo{ID: "user-1", Name: "test"})
+	req = req.WithContext(ctx)
+
+	w := httptest.NewRecorder()
+	srv.handleCompatOpenAIChatCompletions(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", w.Code, w.Body.String())
+	}
+
+	entry := waitForCompatRequestLog(t, srv)
+	if entry.Path != "/compat/v1/chat/completions" {
+		t.Fatalf("entry.Path = %q, want compat path", entry.Path)
+	}
+	if !strings.Contains(entry.ClientBodyExcerpt, `"claude/claude-sonnet-4-5"`) {
+		t.Fatalf("ClientBodyExcerpt = %q, want raw compat model", entry.ClientBodyExcerpt)
+	}
+	if !strings.Contains(entry.ClientBodyExcerpt, `"reasoning_effort":"max"`) {
+		t.Fatalf("ClientBodyExcerpt = %q, want raw compat-only field", entry.ClientBodyExcerpt)
+	}
+	if !strings.Contains(entry.UpstreamRequestBodyExcerpt, `"claude-sonnet-4-5"`) {
+		t.Fatalf("UpstreamRequestBodyExcerpt = %q, want translated model", entry.UpstreamRequestBodyExcerpt)
+	}
+	if strings.Contains(entry.UpstreamRequestBodyExcerpt, "reasoning_effort") {
+		t.Fatalf("UpstreamRequestBodyExcerpt = %q, unexpected raw compat field", entry.UpstreamRequestBodyExcerpt)
+	}
+
+	var requestMeta map[string]any
+	if err := json.Unmarshal(entry.RequestMeta, &requestMeta); err != nil {
+		t.Fatalf("Unmarshal RequestMeta: %v", err)
+	}
+	compatClient, ok := requestMeta["compat_client"].(map[string]any)
+	if !ok {
+		t.Fatalf("compat_client = %#v, want object", requestMeta["compat_client"])
+	}
+	if compatClient["reasoning_effort"] != "max" {
+		t.Fatalf("compat_client.reasoning_effort = %#v, want max", compatClient["reasoning_effort"])
+	}
+	path, _ := requestMeta["body_artifact_path"].(string)
+	if path == "" {
+		t.Fatalf("body_artifact_path = %#v, want non-empty path", requestMeta["body_artifact_path"])
+	}
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("ReadFile(%s): %v", path, err)
+	}
+	if !strings.Contains(string(raw), `"reasoning_effort":"max"`) {
+		t.Fatalf("raw artifact = %q, want raw compat request", string(raw))
+	}
+}
+
+func TestHandleCompatOpenAIChatCompletions_Claude46Envelope(t *testing.T) {
+	upstreamClient := &http.Client{
+		Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+			if req.URL.String() != "https://claude.example/v1/messages?beta=true" {
+				t.Fatalf("upstream URL = %q", req.URL.String())
+			}
+			if req.Header.Get("Authorization") != "Bearer test-token" {
+				t.Fatalf("authorization = %q", req.Header.Get("Authorization"))
+			}
+			if req.Header.Get("anthropic-version") != "2023-06-01" {
+				t.Fatalf("anthropic-version = %q", req.Header.Get("anthropic-version"))
+			}
+			if req.Header.Get("Accept") != "text/event-stream" {
+				t.Fatalf("accept = %q", req.Header.Get("Accept"))
+			}
+			if req.Header.Get("Anthropic-Dangerous-Direct-Browser-Access") != "true" {
+				t.Fatalf("anthropic-dangerous-direct-browser-access = %q", req.Header.Get("Anthropic-Dangerous-Direct-Browser-Access"))
+			}
+			if req.Header.Get("X-App") != "cli" {
+				t.Fatalf("x-app = %q", req.Header.Get("X-App"))
+			}
+			beta := req.Header.Get("Anthropic-Beta")
+			for _, want := range []string{
+				"effort-2025-11-24",
+				"prompt-caching-scope-2026-01-05",
+				"context-management-2025-06-27",
+				"redact-thinking-2026-02-12",
+			} {
+				if !strings.Contains(beta, want) {
+					t.Fatalf("anthropic-beta = %q, want to contain %q", beta, want)
+				}
+			}
+
+			bodyBytes, err := io.ReadAll(req.Body)
+			if err != nil {
+				t.Fatalf("ReadAll(req.Body) error = %v", err)
+			}
+
+			var body map[string]any
+			if err := json.Unmarshal(bodyBytes, &body); err != nil {
+				t.Fatalf("json.Unmarshal(upstream body) error = %v", err)
+			}
+			if body["model"] != "claude-sonnet-4-6" {
+				t.Fatalf("model = %#v", body["model"])
+			}
+			system, ok := body["system"].([]any)
+			if !ok || len(system) != 2 {
+				t.Fatalf("system = %#v, want 2 Claude Code blocks", body["system"])
+			}
+			firstSystem, _ := system[0].(map[string]any)
+			if firstSystem["text"] != "You are Claude Code, Anthropic's official CLI for Claude, running within the Claude Agent SDK." {
+				t.Fatalf("system[0] = %#v", firstSystem)
+			}
+			secondSystem, _ := system[1].(map[string]any)
+			if !strings.Contains(secondSystem["text"].(string), "system prompt") {
+				t.Fatalf("system[1] = %#v", secondSystem)
+			}
+			outputConfig, _ := body["output_config"].(map[string]any)
+			if outputConfig["effort"] != "medium" {
+				t.Fatalf("output_config = %#v", outputConfig)
+			}
+			thinking, _ := body["thinking"].(map[string]any)
+			if thinking["type"] != "adaptive" {
+				t.Fatalf("thinking = %#v", thinking)
+			}
+			stream, ok := body["stream"].(bool)
+			if !ok || stream {
+				t.Fatalf("stream = %#v, want explicit false", body["stream"])
+			}
+			if _, ok := body["temperature"]; ok {
+				t.Fatalf("temperature = %#v, want omitted when thinking is enabled", body["temperature"])
+			}
+
+			respBody := `{
+				"id":"msg_compat_46",
+				"model":"claude-sonnet-4-6",
+				"stop_reason":"end_turn",
+				"content":[
+					{"type":"thinking","thinking":"hidden"},
+					{"type":"text","text":"compat ok"}
+				],
+				"usage":{"input_tokens":11,"output_tokens":7}
+			}`
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Header:     make(http.Header),
+				Body:       io.NopCloser(strings.NewReader(respBody)),
+			}, nil
+		}),
+	}
+	srv := newCompatTestServer(t, upstreamClient)
+
+	reqBody := `{
+		"model":"claude/claude-sonnet-4-6",
+		"temperature":0.2,
+		"messages":[
+			{"role":"system","content":"system prompt"},
+			{"role":"user","content":"hello"}
+		]
+	}`
+	req := httptest.NewRequest(http.MethodPost, "/compat/v1/chat/completions", strings.NewReader(reqBody))
+	req.Header.Set("Content-Type", "application/json")
+	ctx := context.WithValue(req.Context(), auth.KeyInfoKey, &auth.KeyInfo{ID: "user-1", Name: "test"})
+	req = req.WithContext(ctx)
+
+	w := httptest.NewRecorder()
+	srv.handleCompatOpenAIChatCompletions(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", w.Code, w.Body.String())
+	}
+
+	var resp compatOpenAIChatResponse
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("json.Unmarshal() error = %v", err)
+	}
+	if len(resp.Choices) != 1 || resp.Choices[0].Message.Content != "compat ok" {
+		t.Fatalf("choices = %#v", resp.Choices)
 	}
 }
 
@@ -868,6 +1140,24 @@ func newCompatTestServer(t *testing.T, upstreamClient *http.Client) *Server {
 	})
 }
 
+func waitForCompatRequestLog(t *testing.T, srv *Server) *domain.RequestLog {
+	t.Helper()
+
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		logs, total, err := srv.store.QueryRequestLogs(context.Background(), domain.RequestLogQuery{Limit: 10})
+		if err != nil {
+			t.Fatalf("QueryRequestLogs() error = %v", err)
+		}
+		if total > 0 && len(logs) > 0 {
+			return logs[0]
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatal("request log was not persisted in time")
+	return nil
+}
+
 func newCompatMultiProviderTestServer(t *testing.T, upstreamClients map[domain.Provider]*http.Client) *Server {
 	t.Helper()
 
@@ -951,8 +1241,9 @@ func newCompatMultiProviderTestServer(t *testing.T, upstreamClients map[domain.P
 			staticTokenProvider{},
 			ms,
 			relay.Config{
-				MaxRequestBodyMB: 60,
-				MaxRetryAccounts: 0,
+				MaxRequestBodyMB:  60,
+				MaxRetryAccounts:  0,
+				RequestLogBlobDir: t.TempDir(),
 			},
 			staticTransportProvider{clients: upstreamClients},
 			bus,

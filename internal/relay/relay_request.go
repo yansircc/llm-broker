@@ -18,6 +18,7 @@ import (
 type preparedRelayRequest struct {
 	keyInfo               *auth.KeyInfo
 	input                 *driver.RelayInput
+	clientObservation     *ClientRequestObservation
 	surface               domain.Surface
 	sessionUUID           string
 	sessionBoundAccountID string
@@ -52,6 +53,7 @@ func (r *Relay) prepareRelayRequest(w http.ResponseWriter, req *http.Request, dr
 	return &preparedRelayRequest{
 		keyInfo:               keyInfo,
 		input:                 input,
+		clientObservation:     clientObservationFromContext(req.Context()),
 		surface:               surface,
 		sessionUUID:           plan.SessionUUID,
 		sessionBoundAccountID: sessionBoundAccountID,

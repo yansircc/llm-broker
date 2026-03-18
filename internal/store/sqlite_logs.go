@@ -15,16 +15,28 @@ func (s *SQLiteStore) InsertRequestLog(ctx context.Context, l *domain.RequestLog
 	_, err := s.db.ExecContext(ctx,
 		`INSERT INTO request_log (
 			user_id, account_id, provider, surface, model, path, cell_id, bucket_key,
-			session_uuid, binding_source, client_headers_json, request_meta_json,
+			session_uuid, binding_source, client_headers_json, client_body_excerpt, request_meta_json,
 			input_tokens, output_tokens, cache_read_tokens, cache_create_tokens, cost_usd,
-			status, effect_kind, upstream_status, upstream_request_id, upstream_headers_json,
+			status, effect_kind, upstream_status, upstream_url, upstream_request_headers_json,
+			upstream_request_meta_json, upstream_request_body_excerpt, upstream_request_id,
+			upstream_headers_json, upstream_response_meta_json, upstream_response_body_excerpt,
 			upstream_error_type, upstream_error_message, request_bytes, attempt_count, duration_ms, created_at
 		)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		VALUES (
+			?, ?, ?, ?, ?, ?, ?, ?,
+			?, ?, ?, ?, ?,
+			?, ?, ?, ?, ?,
+			?, ?, ?, ?, ?,
+			?, ?, ?,
+			?, ?, ?,
+			?, ?, ?, ?, ?, ?
+		)`,
 		l.UserID, l.AccountID, l.Provider, l.Surface, l.Model, l.Path, l.CellID, l.BucketKey,
-		l.SessionUUID, l.BindingSource, observationJSONString(l.ClientHeaders), observationJSONString(l.RequestMeta),
+		l.SessionUUID, l.BindingSource, observationJSONString(l.ClientHeaders), l.ClientBodyExcerpt, observationJSONString(l.RequestMeta),
 		l.InputTokens, l.OutputTokens, l.CacheReadTokens, l.CacheCreateTokens, l.CostUSD,
-		l.Status, l.EffectKind, l.UpstreamStatus, l.UpstreamRequestID, observationJSONString(l.UpstreamHeaders),
+		l.Status, l.EffectKind, l.UpstreamStatus, l.UpstreamURL, observationJSONString(l.UpstreamRequestHeaders),
+		observationJSONString(l.UpstreamRequestMeta), l.UpstreamRequestBodyExcerpt, l.UpstreamRequestID,
+		observationJSONString(l.UpstreamHeaders), observationJSONString(l.UpstreamResponseMeta), l.UpstreamResponseBodyExcerpt,
 		l.UpstreamErrorType, l.UpstreamErrorMessage, l.RequestBytes, l.AttemptCount, l.DurationMs, l.CreatedAt.Unix())
 	return err
 }
@@ -45,9 +57,11 @@ func (s *SQLiteStore) QueryRequestLogs(ctx context.Context, opts domain.RequestL
 	fetchArgs = append(fetchArgs, limit, opts.Offset)
 
 	query := fmt.Sprintf(`SELECT id, user_id, account_id, provider, surface, model, path, cell_id, bucket_key,
-		session_uuid, binding_source, client_headers_json, request_meta_json,
+		session_uuid, binding_source, client_headers_json, client_body_excerpt, request_meta_json,
 		input_tokens, output_tokens, cache_read_tokens, cache_create_tokens, cost_usd,
-		status, effect_kind, upstream_status, upstream_request_id, upstream_headers_json,
+		status, effect_kind, upstream_status, upstream_url, upstream_request_headers_json,
+		upstream_request_meta_json, upstream_request_body_excerpt, upstream_request_id,
+		upstream_headers_json, upstream_response_meta_json, upstream_response_body_excerpt,
 		upstream_error_type, upstream_error_message, request_bytes, attempt_count, duration_ms, created_at
 		FROM request_log WHERE %s ORDER BY created_at DESC LIMIT ? OFFSET ?`, where)
 
@@ -62,17 +76,25 @@ func (s *SQLiteStore) QueryRequestLogs(ctx context.Context, opts domain.RequestL
 		var ts int64
 		var clientHeadersJSON string
 		var requestMetaJSON string
+		var upstreamRequestHeadersJSON string
+		var upstreamRequestMetaJSON string
 		var upstreamHeadersJSON string
+		var upstreamResponseMetaJSON string
 		if err := rows.Scan(&l.ID, &l.UserID, &l.AccountID, &l.Provider, &l.Surface, &l.Model, &l.Path, &l.CellID, &l.BucketKey,
-			&l.SessionUUID, &l.BindingSource, &clientHeadersJSON, &requestMetaJSON,
+			&l.SessionUUID, &l.BindingSource, &clientHeadersJSON, &l.ClientBodyExcerpt, &requestMetaJSON,
 			&l.InputTokens, &l.OutputTokens, &l.CacheReadTokens, &l.CacheCreateTokens,
-			&l.CostUSD, &l.Status, &l.EffectKind, &l.UpstreamStatus, &l.UpstreamRequestID, &upstreamHeadersJSON,
-			&l.UpstreamErrorType, &l.UpstreamErrorMessage, &l.RequestBytes, &l.AttemptCount, &l.DurationMs, &ts); err != nil {
+			&l.CostUSD, &l.Status, &l.EffectKind, &l.UpstreamStatus, &l.UpstreamURL, &upstreamRequestHeadersJSON,
+			&upstreamRequestMetaJSON, &l.UpstreamRequestBodyExcerpt, &l.UpstreamRequestID, &upstreamHeadersJSON,
+			&upstreamResponseMetaJSON, &l.UpstreamResponseBodyExcerpt, &l.UpstreamErrorType, &l.UpstreamErrorMessage,
+			&l.RequestBytes, &l.AttemptCount, &l.DurationMs, &ts); err != nil {
 			return nil, 0, err
 		}
 		l.ClientHeaders = decodeObservationJSON(clientHeadersJSON)
 		l.RequestMeta = decodeObservationJSON(requestMetaJSON)
+		l.UpstreamRequestHeaders = decodeObservationJSON(upstreamRequestHeadersJSON)
+		l.UpstreamRequestMeta = decodeObservationJSON(upstreamRequestMetaJSON)
 		l.UpstreamHeaders = decodeObservationJSON(upstreamHeadersJSON)
+		l.UpstreamResponseMeta = decodeObservationJSON(upstreamResponseMetaJSON)
 		l.CreatedAt = time.Unix(ts, 0).UTC()
 		logs = append(logs, l)
 	}

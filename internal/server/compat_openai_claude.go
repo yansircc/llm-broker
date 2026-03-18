@@ -35,14 +35,21 @@ func compatOpenAIChatToClaudeRequest(req *compatOpenAIChatRequest) (*compatClaud
 	if err != nil {
 		return nil, "", err
 	}
+	modernEnvelope := compatClaudeUsesModernEnvelope(model)
 
 	claudeReq := &compatClaudeRequest{
 		Model:         model,
 		MaxTokens:     compatMaxTokens(req),
-		Stream:        req.Stream,
 		Temperature:   req.Temperature,
 		TopP:          req.TopP,
 		StopSequences: stopSequences,
+	}
+	upstreamStream := req.Stream
+	claudeReq.Stream = &upstreamStream
+	if modernEnvelope {
+		claudeReq.Temperature = nil
+		claudeReq.OutputConfig = &compatClaudeOutputConfig{Effort: "medium"}
+		claudeReq.Thinking = &compatClaudeThinking{Type: "adaptive"}
 	}
 
 	var systemParts []string
@@ -73,9 +80,18 @@ func compatOpenAIChatToClaudeRequest(req *compatOpenAIChatRequest) (*compatClaud
 	if instruction := compatClaudeResponseFormatInstruction(responseFormat); instruction != "" {
 		systemParts = append(systemParts, instruction)
 	}
-	claudeReq.System = strings.Join(systemParts, "\n\n")
+	claudeReq.System = compatClaudeSystemValue(modernEnvelope, systemParts)
 
 	return claudeReq, requestedModel, nil
+}
+
+func compatClaudeUsesModernEnvelope(model string) bool {
+	switch strings.TrimSpace(model) {
+	case "claude-sonnet-4-6", "claude-opus-4-6":
+		return true
+	default:
+		return false
+	}
 }
 
 func compatClaudeToOpenAIChatResponse(body []byte, requestedModel string) (*compatOpenAIChatResponse, error) {
@@ -146,6 +162,33 @@ func compatClaudeResponseFormatInstruction(spec *compatResponseFormatSpec) strin
 	default:
 		return ""
 	}
+}
+
+func compatClaudeSystemValue(modernEnvelope bool, parts []string) any {
+	text := strings.Join(parts, "\n\n")
+	if !modernEnvelope {
+		return text
+	}
+
+	blocks := []compatClaudeSystemBlock{
+		{
+			Type: "text",
+			Text: "You are Claude Code, Anthropic's official CLI for Claude, running within the Claude Agent SDK.",
+			CacheControl: &compatClaudeCacheControlPolicy{
+				Type: "ephemeral",
+			},
+		},
+	}
+	if strings.TrimSpace(text) != "" {
+		blocks = append(blocks, compatClaudeSystemBlock{
+			Type: "text",
+			Text: text,
+			CacheControl: &compatClaudeCacheControlPolicy{
+				Type: "ephemeral",
+			},
+		})
+	}
+	return blocks
 }
 
 func compatHasTools(raw json.RawMessage) bool {

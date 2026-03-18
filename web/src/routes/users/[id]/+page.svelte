@@ -209,9 +209,16 @@
 			request.binding_source ||
 			request.upstream_error_type ||
 			request.upstream_error_message ||
+			request.client_body_excerpt ||
 			request.request_meta ||
 			request.client_headers ||
-			request.upstream_headers
+			request.upstream_url ||
+			request.upstream_request_headers ||
+			request.upstream_request_meta ||
+			request.upstream_request_body_excerpt ||
+			request.upstream_headers ||
+			request.upstream_response_meta ||
+			request.upstream_response_body_excerpt
 		);
 	}
 </script>
@@ -408,9 +415,16 @@
 									<div><span class="muted">session</span> <span class="mono">{r.session_uuid || '-'}</span></div>
 									<div><span class="muted">binding</span> {r.binding_source || '-'}</div>
 									<div><span class="muted">error</span> {requestError(r)}</div>
+									<div><span class="muted">client body</span><pre>{r.client_body_excerpt || '-'}</pre></div>
 									<div><span class="muted">request meta</span><pre>{fmtJSON(r.request_meta)}</pre></div>
 									<div><span class="muted">client headers</span><pre>{fmtJSON(r.client_headers)}</pre></div>
-									<div><span class="muted">upstream headers</span><pre>{fmtJSON(r.upstream_headers)}</pre></div>
+									<div><span class="muted">upstream url</span> <span class="mono">{r.upstream_url || '-'}</span></div>
+									<div><span class="muted">upstream request headers</span><pre>{fmtJSON(r.upstream_request_headers)}</pre></div>
+									<div><span class="muted">upstream request meta</span><pre>{fmtJSON(r.upstream_request_meta)}</pre></div>
+									<div><span class="muted">upstream request body</span><pre>{r.upstream_request_body_excerpt || '-'}</pre></div>
+									<div><span class="muted">upstream response headers</span><pre>{fmtJSON(r.upstream_headers)}</pre></div>
+									<div><span class="muted">upstream response meta</span><pre>{fmtJSON(r.upstream_response_meta)}</pre></div>
+									<div><span class="muted">upstream response body</span><pre>{r.upstream_response_body_excerpt || '-'}</pre></div>
 								</div>
 							</details>
 						{:else}

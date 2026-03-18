@@ -102,6 +102,14 @@ func (r *Relay) logCompatTraceTransportError(prepared *preparedRelayRequest, _ *
 }
 
 func formatTraceBody(body []byte) (string, bool) {
+	return formatBodyWithLimit(body, compatTraceBodyLimit)
+}
+
+func formatObservationBody(body []byte) (string, bool) {
+	return formatBodyWithLimit(body, requestLogBodyExcerptLimit)
+}
+
+func formatBodyWithLimit(body []byte, limit int) (string, bool) {
 	trimmed := bytes.TrimSpace(body)
 	if len(trimmed) == 0 {
 		return "", false
@@ -115,10 +123,19 @@ func formatTraceBody(body []byte) (string, bool) {
 		}
 	}
 
-	if len(formatted) <= compatTraceBodyLimit {
+	if len(formatted) <= limit {
 		return string(formatted), false
 	}
-	return string(formatted[:compatTraceBodyLimit]) + "...<truncated>", true
+	const marker = "...<truncated>..."
+	if limit <= len(marker)+2 {
+		if limit <= 0 {
+			return "", true
+		}
+		return string(formatted[:limit]), true
+	}
+	head := (limit - len(marker)) / 2
+	tail := limit - len(marker) - head
+	return string(formatted[:head]) + marker + string(formatted[len(formatted)-tail:]), true
 }
 
 func traceRequestHeaders(h http.Header) map[string]string {
@@ -165,10 +182,7 @@ func traceHeaders(h http.Header, allow func(string) bool) map[string]string {
 }
 
 func safeInputPath(prepared *preparedRelayRequest) string {
-	if prepared == nil || prepared.input == nil {
-		return ""
-	}
-	return prepared.input.Path
+	return requestLogPath(prepared)
 }
 
 func compatTraceID(prepared *preparedRelayRequest) string {

@@ -74,11 +74,12 @@ func (r *Relay) baseRequestLog(prepared *preparedRelayRequest, acct *domain.Acco
 	if prepared != nil && prepared.input != nil {
 		entry.Surface = string(prepared.surface)
 		entry.Model = prepared.input.Model
-		entry.Path = prepared.input.Path
-		entry.RequestBytes = len(prepared.input.RawBody)
+		entry.Path = requestLogPath(prepared)
+		entry.RequestBytes = len(requestLogClientBody(prepared))
 		entry.SessionUUID = prepared.sessionUUID
 		entry.BindingSource = requestBindingSource(prepared)
-		entry.ClientHeaders = requestClientHeaders(prepared.input.Headers)
+		entry.ClientHeaders = requestClientHeaders(requestLogClientHeaders(prepared))
+		entry.ClientBodyExcerpt = requestBodyExcerpt(requestLogClientBody(prepared))
 		entry.RequestMeta = requestMeta(prepared)
 	}
 	if acct != nil {
@@ -90,12 +91,26 @@ func (r *Relay) baseRequestLog(prepared *preparedRelayRequest, acct *domain.Acco
 	return entry
 }
 
-func setRequestLogUpstream(entry *domain.RequestLog, headers http.Header, effect *driver.Effect) {
+func setRequestLogUpstreamRequest(entry *domain.RequestLog, req *http.Request, body []byte) {
+	if entry == nil || req == nil {
+		return
+	}
+	entry.UpstreamURL = safeRequestURL(req)
+	entry.UpstreamRequestHeaders = marshalObservationMapString(traceRequestHeaders(req.Header))
+	entry.UpstreamRequestMeta = upstreamRequestMeta(req, body)
+	entry.UpstreamRequestBodyExcerpt = requestBodyExcerpt(body)
+}
+
+func setRequestLogUpstreamResponse(entry *domain.RequestLog, resp *http.Response, body []byte, effect *driver.Effect) {
 	if entry == nil {
 		return
 	}
-	entry.UpstreamRequestID = upstreamRequestID(headers)
-	entry.UpstreamHeaders = marshalObservationMapString(traceResponseHeaders(headers))
+	if resp != nil {
+		entry.UpstreamRequestID = upstreamRequestID(resp.Header)
+		entry.UpstreamHeaders = marshalObservationMapString(traceResponseHeaders(resp.Header))
+		entry.UpstreamResponseMeta = upstreamResponseMeta(resp, body)
+		entry.UpstreamResponseBodyExcerpt = requestBodyExcerpt(body)
+	}
 	if effect == nil {
 		return
 	}
@@ -152,8 +167,19 @@ func (r *Relay) executeRelayAttempt(
 		state.lastErr = fmt.Errorf("build request: %w", err)
 		return relayAttemptStop
 	}
+	upstreamReqBody, snapErr := snapshotRequestBody(upReq)
+	if snapErr != nil {
+		slog.Warn("upstream request snapshot failed",
+			"accountId", acct.ID,
+			"userId", prepared.keyInfo.ID,
+			"userName", prepared.keyInfo.Name,
+			"model", prepared.input.Model,
+			"path", prepared.input.Path,
+			"sessionUUID", prepared.sessionUUID,
+			"error", snapErr,
+		)
+	}
 	if r.shouldTraceCompat(prepared) {
-		upstreamBody, snapErr := snapshotRequestBody(upReq)
 		if snapErr != nil {
 			slog.Warn("compat trace request snapshot failed",
 				"traceId", compatTraceID(prepared),
@@ -161,8 +187,9 @@ func (r *Relay) executeRelayAttempt(
 				"upstreamURL", safeRequestURL(upReq),
 				"error", snapErr,
 			)
+		} else {
+			r.logCompatTraceRequest(prepared, acct, attempt, upReq, upstreamReqBody)
 		}
-		r.logCompatTraceRequest(prepared, acct, attempt, upReq, upstreamBody)
 	}
 
 	attemptStartedAt := time.Now()
@@ -178,6 +205,8 @@ func (r *Relay) executeRelayAttempt(
 		entry.Status = "transport_error"
 		entry.EffectKind = "transport_error"
 		entry.DurationMs = time.Since(attemptStartedAt).Milliseconds()
+		setRequestLogUpstreamRequest(entry, upReq, upstreamReqBody)
+		r.attachRequestLogArtifacts(entry, prepared, upstreamReqBody, nil)
 		r.logRequestAsync(entry)
 		slog.Error("upstream request failed",
 			"accountId", acct.ID,
@@ -240,8 +269,10 @@ func (r *Relay) executeRelayAttempt(
 		entry.Status = fmt.Sprintf("upstream_%d", resp.StatusCode)
 		entry.UpstreamStatus = resp.StatusCode
 		entry.DurationMs = time.Since(attemptStartedAt).Milliseconds()
+		setRequestLogUpstreamRequest(entry, upReq, upstreamReqBody)
 		effect := drv.Interpret(resp.StatusCode, resp.Header, errBody, prepared.input.Model, json.RawMessage(acct.ProviderStateJSON))
-		setRequestLogUpstream(entry, resp.Header, &effect)
+		setRequestLogUpstreamResponse(entry, resp, errBody, &effect)
+		r.attachRequestLogArtifacts(entry, prepared, upstreamReqBody, errBody)
 
 		if drv.ParseNonRetriable(resp.StatusCode, errBody) {
 			r.logRequestAsync(entry)
@@ -277,7 +308,9 @@ func (r *Relay) executeRelayAttempt(
 		entry.UpstreamStatus = resp.StatusCode
 		entry.EffectKind = relayEffectKind(effect.Kind)
 		entry.DurationMs = time.Since(attemptStartedAt).Milliseconds()
-		setRequestLogUpstream(entry, resp.Header, &effect)
+		setRequestLogUpstreamRequest(entry, upReq, upstreamReqBody)
+		setRequestLogUpstreamResponse(entry, resp, errBody, &effect)
+		r.attachRequestLogArtifacts(entry, prepared, upstreamReqBody, errBody)
 		r.logRequestAsync(entry)
 		r.pool.Observe(acct.ID, effect)
 
@@ -297,7 +330,7 @@ func (r *Relay) executeRelayAttempt(
 		return relayAttemptDone
 	}
 
-	r.finishRelaySuccess(ctx, w, drv, prepared, acct, resp, attemptStartedAt, attempt)
+	r.finishRelaySuccess(ctx, w, drv, prepared, acct, upReq, upstreamReqBody, resp, attemptStartedAt, attempt)
 	return relayAttemptDone
 }
 
@@ -307,6 +340,8 @@ func (r *Relay) finishRelaySuccess(
 	drv driver.ExecutionDriver,
 	prepared *preparedRelayRequest,
 	acct *domain.Account,
+	upReq *http.Request,
+	upstreamReqBody []byte,
 	resp *http.Response,
 	attemptStartedAt time.Time,
 	attempt int,
@@ -323,10 +358,12 @@ func (r *Relay) finishRelaySuccess(
 	}
 
 	var usage *driver.Usage
+	var respBody []byte
 	if prepared.input.IsStream {
 		_, usage = drv.StreamResponse(ctx, w, resp)
 	} else {
-		respBody, err := io.ReadAll(resp.Body)
+		var err error
+		respBody, err = io.ReadAll(resp.Body)
 		if err != nil {
 			drv.WriteError(w, http.StatusBadGateway, "failed to read upstream response")
 			return
@@ -341,7 +378,9 @@ func (r *Relay) finishRelaySuccess(
 	entry.Status = "ok"
 	entry.EffectKind = relayEffectKind(effect.Kind)
 	entry.DurationMs = time.Since(attemptStartedAt).Milliseconds()
-	setRequestLogUpstream(entry, resp.Header, &effect)
+	setRequestLogUpstreamRequest(entry, upReq, upstreamReqBody)
+	setRequestLogUpstreamResponse(entry, resp, respBody, &effect)
+	r.attachRequestLogArtifacts(entry, prepared, upstreamReqBody, respBody)
 	if usage != nil {
 		entry.InputTokens = usage.InputTokens
 		entry.OutputTokens = usage.OutputTokens

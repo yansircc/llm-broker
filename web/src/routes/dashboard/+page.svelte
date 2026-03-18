@@ -102,6 +102,14 @@
 		return accountInfo(accountID)?.email || '-';
 	}
 
+	function userInfo(userID: string) {
+		return data?.users.find((user) => user.id === userID);
+	}
+
+	function userLabel(userID: string): string {
+		return userInfo(userID)?.name || userID || '-';
+	}
+
 	function failureError(log: RecentRequestLog): string {
 		const parts: string[] = [];
 		if (log.upstream_error_type) parts.push(log.upstream_error_type);
@@ -115,9 +123,16 @@
 			log.binding_source ||
 			log.upstream_error_type ||
 			log.upstream_error_message ||
+			log.client_body_excerpt ||
 			log.request_meta ||
 			log.client_headers ||
-			log.upstream_headers
+			log.upstream_url ||
+			log.upstream_request_headers ||
+			log.upstream_request_meta ||
+			log.upstream_request_body_excerpt ||
+			log.upstream_headers ||
+			log.upstream_response_meta ||
+			log.upstream_response_body_excerpt
 		);
 	}
 
@@ -269,6 +284,7 @@
 			<thead>
 				<tr>
 					<th>time</th>
+					<th>key</th>
 					<th>provider</th>
 					<th>surface</th>
 					<th>model</th>
@@ -287,6 +303,7 @@
 				{#each data.recent_failures as log (log.id)}
 					<tr>
 						<td class="muted">{fmtDate(log.created_at)}</td>
+						<td>{userLabel(log.user_id)}</td>
 						<td>{log.provider}</td>
 						<td>{log.surface || '-'}</td>
 						<td>{shortModel(log.model)}</td>
@@ -307,9 +324,16 @@
 										<div><span class="muted">session</span> <span class="mono">{log.session_uuid || '-'}</span></div>
 										<div><span class="muted">binding</span> {log.binding_source || '-'}</div>
 										<div><span class="muted">error</span> {failureError(log)}</div>
+										<div><span class="muted">client body</span><pre>{log.client_body_excerpt || '-'}</pre></div>
 										<div><span class="muted">request meta</span><pre>{fmtJSON(log.request_meta)}</pre></div>
 										<div><span class="muted">client headers</span><pre>{fmtJSON(log.client_headers)}</pre></div>
-										<div><span class="muted">upstream headers</span><pre>{fmtJSON(log.upstream_headers)}</pre></div>
+										<div><span class="muted">upstream url</span> <span class="mono">{log.upstream_url || '-'}</span></div>
+										<div><span class="muted">upstream request headers</span><pre>{fmtJSON(log.upstream_request_headers)}</pre></div>
+										<div><span class="muted">upstream request meta</span><pre>{fmtJSON(log.upstream_request_meta)}</pre></div>
+										<div><span class="muted">upstream request body</span><pre>{log.upstream_request_body_excerpt || '-'}</pre></div>
+										<div><span class="muted">upstream response headers</span><pre>{fmtJSON(log.upstream_headers)}</pre></div>
+										<div><span class="muted">upstream response meta</span><pre>{fmtJSON(log.upstream_response_meta)}</pre></div>
+										<div><span class="muted">upstream response body</span><pre>{log.upstream_response_body_excerpt || '-'}</pre></div>
 									</div>
 								</details>
 							{:else}

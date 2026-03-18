@@ -59,6 +59,7 @@ export interface RecentRequestLog {
 	session_uuid?: string;
 	binding_source?: string;
 	client_headers?: Record<string, unknown> | null;
+	client_body_excerpt?: string;
 	request_meta?: Record<string, unknown> | null;
 	input_tokens: number;
 	output_tokens: number;
@@ -68,8 +69,14 @@ export interface RecentRequestLog {
 	status: string;
 	effect_kind?: string;
 	upstream_status?: number;
+	upstream_url?: string;
+	upstream_request_headers?: Record<string, unknown> | null;
+	upstream_request_meta?: Record<string, unknown> | null;
+	upstream_request_body_excerpt?: string;
 	upstream_request_id?: string;
 	upstream_headers?: Record<string, unknown> | null;
+	upstream_response_meta?: Record<string, unknown> | null;
+	upstream_response_body_excerpt?: string;
 	upstream_error_type?: string;
 	upstream_error_message?: string;
 	request_bytes: number;

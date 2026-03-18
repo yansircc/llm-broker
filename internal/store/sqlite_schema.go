@@ -70,6 +70,7 @@ var desiredRequestLogColumns = []string{
 	"session_uuid",
 	"binding_source",
 	"client_headers_json",
+	"client_body_excerpt",
 	"request_meta_json",
 	"input_tokens",
 	"output_tokens",
@@ -79,8 +80,14 @@ var desiredRequestLogColumns = []string{
 	"status",
 	"effect_kind",
 	"upstream_status",
+	"upstream_url",
+	"upstream_request_headers_json",
+	"upstream_request_meta_json",
+	"upstream_request_body_excerpt",
 	"upstream_request_id",
 	"upstream_headers_json",
+	"upstream_response_meta_json",
+	"upstream_response_body_excerpt",
 	"upstream_error_type",
 	"upstream_error_message",
 	"request_bytes",
@@ -305,14 +312,6 @@ func (s *SQLiteStore) migrateQuotaBucketsTable(ctx context.Context) error {
 		return fmt.Errorf("quota_buckets migration: unsupported schema %v", cols)
 	}
 
-	var count int
-	if err := s.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM quota_buckets").Scan(&count); err != nil {
-		return fmt.Errorf("count quota_buckets: %w", err)
-	}
-	if count > 0 {
-		return nil
-	}
-
 	accountCols, err := s.tableColumns(ctx, "accounts")
 	if err != nil {
 		return fmt.Errorf("inspect accounts schema for bucket seed: %w", err)
@@ -336,11 +335,12 @@ func (s *SQLiteStore) migrateQuotaBucketsTable(ctx context.Context) error {
 		bucketKeyExpr = "CASE WHEN bucket_key != '' THEN bucket_key WHEN subject != '' THEN provider || ':' || subject ELSE provider || ':' || id END"
 	}
 
-	seedSQL := fmt.Sprintf(`
-		INSERT INTO quota_buckets (
+	syncSQL := fmt.Sprintf(`
+		INSERT OR IGNORE INTO quota_buckets (
 			bucket_key, provider, cooldown_until, state_json, updated_at
 		)
 		SELECT
+			DISTINCT
 			%s,
 			provider,
 			%s,
@@ -348,8 +348,18 @@ func (s *SQLiteStore) migrateQuotaBucketsTable(ctx context.Context) error {
 			strftime('%%s', 'now')
 		FROM accounts
 		`, bucketKeyExpr, cooldownExpr, stateExpr)
-	if _, err := s.db.ExecContext(ctx, seedSQL); err != nil {
-		return fmt.Errorf("seed quota_buckets from accounts: %w", err)
+	if _, err := s.db.ExecContext(ctx, syncSQL); err != nil {
+		return fmt.Errorf("sync quota_buckets from accounts: %w", err)
+	}
+
+	pruneSQL := fmt.Sprintf(`
+		DELETE FROM quota_buckets
+		WHERE bucket_key NOT IN (
+			SELECT DISTINCT %s FROM accounts
+		)
+	`, bucketKeyExpr)
+	if _, err := s.db.ExecContext(ctx, pruneSQL); err != nil {
+		return fmt.Errorf("delete orphan quota_buckets: %w", err)
 	}
 	return nil
 }
@@ -467,6 +477,7 @@ func (s *SQLiteStore) migrateRequestLogTable(ctx context.Context) error {
 			session_uuid TEXT NOT NULL DEFAULT '',
 			binding_source TEXT NOT NULL DEFAULT '',
 			client_headers_json TEXT NOT NULL DEFAULT '{}',
+			client_body_excerpt TEXT NOT NULL DEFAULT '',
 			request_meta_json TEXT NOT NULL DEFAULT '{}',
 			input_tokens INTEGER NOT NULL DEFAULT 0,
 			output_tokens INTEGER NOT NULL DEFAULT 0,
@@ -476,8 +487,14 @@ func (s *SQLiteStore) migrateRequestLogTable(ctx context.Context) error {
 			status TEXT NOT NULL,
 			effect_kind TEXT NOT NULL DEFAULT '',
 			upstream_status INTEGER NOT NULL DEFAULT 0,
+			upstream_url TEXT NOT NULL DEFAULT '',
+			upstream_request_headers_json TEXT NOT NULL DEFAULT '{}',
+			upstream_request_meta_json TEXT NOT NULL DEFAULT '{}',
+			upstream_request_body_excerpt TEXT NOT NULL DEFAULT '',
 			upstream_request_id TEXT NOT NULL DEFAULT '',
 			upstream_headers_json TEXT NOT NULL DEFAULT '{}',
+			upstream_response_meta_json TEXT NOT NULL DEFAULT '{}',
+			upstream_response_body_excerpt TEXT NOT NULL DEFAULT '',
 			upstream_error_type TEXT NOT NULL DEFAULT '',
 			upstream_error_message TEXT NOT NULL DEFAULT '',
 			request_bytes INTEGER NOT NULL DEFAULT 0,
@@ -492,9 +509,11 @@ func (s *SQLiteStore) migrateRequestLogTable(ctx context.Context) error {
 	insertSQL := fmt.Sprintf(`
 		INSERT INTO request_log_new (
 			id, user_id, account_id, provider, surface, model, path, cell_id, bucket_key,
-			session_uuid, binding_source, client_headers_json, request_meta_json,
+			session_uuid, binding_source, client_headers_json, client_body_excerpt, request_meta_json,
 			input_tokens, output_tokens, cache_read_tokens, cache_create_tokens, cost_usd,
-			status, effect_kind, upstream_status, upstream_request_id, upstream_headers_json,
+			status, effect_kind, upstream_status, upstream_url, upstream_request_headers_json,
+			upstream_request_meta_json, upstream_request_body_excerpt, upstream_request_id,
+			upstream_headers_json, upstream_response_meta_json, upstream_response_body_excerpt,
 			upstream_error_type, upstream_error_message, request_bytes, attempt_count, duration_ms, created_at
 		)
 		SELECT
@@ -504,6 +523,7 @@ func (s *SQLiteStore) migrateRequestLogTable(ctx context.Context) error {
 			%s,
 			%s,
 			model,
+			%s,
 			%s,
 			%s,
 			%s,
@@ -526,6 +546,12 @@ func (s *SQLiteStore) migrateRequestLogTable(ctx context.Context) error {
 			%s,
 			%s,
 			%s,
+			%s,
+			%s,
+			%s,
+			%s,
+			%s,
+			%s,
 			created_at
 		FROM request_log
 	`,
@@ -537,6 +563,7 @@ func (s *SQLiteStore) migrateRequestLogTable(ctx context.Context) error {
 		copyExpr("session_uuid", "''"),
 		copyExpr("binding_source", "''"),
 		copyExpr("client_headers_json", "'{}'"),
+		copyExpr("client_body_excerpt", "''"),
 		copyExpr("request_meta_json", "'{}'"),
 		copyExpr("input_tokens", "0"),
 		copyExpr("output_tokens", "0"),
@@ -545,8 +572,14 @@ func (s *SQLiteStore) migrateRequestLogTable(ctx context.Context) error {
 		copyExpr("cost_usd", "0"),
 		copyExpr("effect_kind", "''"),
 		copyExpr("upstream_status", "0"),
+		copyExpr("upstream_url", "''"),
+		copyExpr("upstream_request_headers_json", "'{}'"),
+		copyExpr("upstream_request_meta_json", "'{}'"),
+		copyExpr("upstream_request_body_excerpt", "''"),
 		copyExpr("upstream_request_id", "''"),
 		copyExpr("upstream_headers_json", "'{}'"),
+		copyExpr("upstream_response_meta_json", "'{}'"),
+		copyExpr("upstream_response_body_excerpt", "''"),
 		copyExpr("upstream_error_type", "''"),
 		copyExpr("upstream_error_message", "''"),
 		copyExpr("request_bytes", "0"),
