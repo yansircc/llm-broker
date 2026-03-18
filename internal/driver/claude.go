@@ -43,6 +43,9 @@ func (d *ClaudeDriver) BuildRequest(ctx context.Context, input *RelayInput, acct
 	if err := json.Unmarshal(input.RawBody, &body); err != nil {
 		return nil, fmt.Errorf("body re-parse: %w", err)
 	}
+	if !input.IsCountTokens {
+		normalizeClaudeMessageEnvelope(body)
+	}
 
 	result, err := d.transformer.Transform(ctx, body, input.Headers, acct, input.UserID)
 	if err != nil {

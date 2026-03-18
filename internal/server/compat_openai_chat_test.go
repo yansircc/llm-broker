@@ -466,8 +466,17 @@ func TestHandleCompatOpenAIChatCompletions_MinimalLoop(t *testing.T) {
 			if body["model"] != "claude-sonnet-4-5" {
 				t.Fatalf("model = %#v", body["model"])
 			}
-			if body["system"] != "system prompt" {
-				t.Fatalf("system = %#v", body["system"])
+			system, ok := body["system"].([]any)
+			if !ok || len(system) != 2 {
+				t.Fatalf("system = %#v, want 2 Claude Code blocks", body["system"])
+			}
+			firstSystem, _ := system[0].(map[string]any)
+			secondSystem, _ := system[1].(map[string]any)
+			if firstSystem["text"] != "You are Claude Code, Anthropic's official CLI for Claude, running within the Claude Agent SDK." {
+				t.Fatalf("first system text = %#v", firstSystem["text"])
+			}
+			if secondSystem["text"] != "system prompt" {
+				t.Fatalf("second system text = %#v", secondSystem["text"])
 			}
 			stream, ok := body["stream"].(bool)
 			if !ok || stream {

@@ -324,25 +324,95 @@
    - 完整包络成功
 4. 因此问题属于“请求对齐”而不是“账号调度”。
 
-## 当前仍未精确到唯一字段的部分
+## 后续 replay 结论
 
-虽然已经足够做工程决策，但还不能仅靠日志 100% 证明：
+在补齐原始 request / upstream request / response artifact 之后，继续对 `native` 失败样本做了最小差异 replay。
 
-- 上游究竟最敏感的是
-  - `max_tokens=1`
-  - 缺 `system`
-  - 缺 `thinking`
-  - 缺 `output_config`
-  - 缺 `context_management`
-  - 还是 beta/header 组合太旧
+关键失败样本：
 
-原因不是观测不足，而是上游返回的错误过于泛化，只给：
+- `222611`
+  - `claude-sonnet-4-6`
+  - `top_level_keys=["max_tokens","messages","metadata","model","stream","system","tools"]`
+  - `system_count=1`
+- `222573`
+  - `claude-sonnet-4-6`
+  - `top_level_keys=["max_tokens","messages","metadata","model","output_config","stream","system","thinking","tools"]`
+  - `system_count=1`
+- `222613`
+  - `claude-sonnet-4-6`
+  - `top_level_keys=["max_tokens","messages","metadata","model"]`
+  - 无 `system`
 
-```json
-{"type":"error","error":{"type":"invalid_request_error","message":"Error"}}
-```
+对这三类失败样本，分别只做一个修改：
 
-如果要把根因压缩到“唯一触发字段”，下一步需要主动构造最小差异实验，而不是继续被动记日志。
+- 在 `system` 最前面补一个 Claude Code 风格前导 block
+- 文本为：
+  `You are Claude Code, Anthropic's official CLI for Claude, running within the Claude Agent SDK.`
+
+结果：
+
+- 三类样本全部从 `400` 变为 `200`
+
+这说明对当前 OAuth Claude 账号而言，`sonnet/opus` 相关 native 请求的决定性因素已经明确：
+
+1. 不是 `thinking` / `output_config` 单独决定
+2. 不是 `stream` 单独决定
+3. 关键是 `system` 必须具备 Claude Code 风格前导 block
+4. 对 `string system`，不能只保留字符串，要落成 Claude text block 数组
+
+## 已落地修复
+
+修复位置：
+
+- `internal/driver/claude.go`
+- `internal/driver/claude_envelope.go`
+
+修复策略：
+
+1. 只在 Claude driver 边界做规范化，不碰 core
+2. 只对 `messages` 请求做，不影响 `count_tokens`
+3. 只对 `claude-sonnet-4*` / `claude-opus-4*` 生效
+4. 规范化规则：
+   - `system` 缺失：补成一个 Claude Code block
+   - `system` 是字符串：改成 `[ClaudeCodeBlock, 原system文本block]`
+   - `system` 是 block 数组但第一块不是 Claude Code：前插 Claude Code block
+   - 已经是 Claude Code 风格：保持不变
+
+补充测试：
+
+- `internal/driver/claude_build_request_test.go`
+
+## 上线验证
+
+发布时间：
+
+- `2026-03-18 13:27 UTC` 左右
+
+上线后用历史失败样本原样 replay：
+
+- `222611` -> `HTTP 200`
+- `222573` -> `HTTP 200`
+- `222613` -> `HTTP 200`
+
+对应线上新日志：
+
+- `222737`
+  - `status=ok`
+  - `model=claude-sonnet-4-6`
+  - `system_kind=array`
+  - `system_count=2`
+- `222738`
+  - `status=ok`
+  - `model=claude-sonnet-4-6`
+  - `system_kind=array`
+  - `system_count=2`
+- `222739`
+  - `status=ok`
+  - `model=claude-sonnet-4-6`
+  - `system_kind=array`
+  - `system_count=1`
+
+并且在部署后窗口内，未再观察到新的 `upstream_400`。
 
 ## compat 切流后的观察重点
 
@@ -372,5 +442,5 @@
    - 入口识别
    - 返回可读错误
    - 或做显式升级/对齐
-3. 对 `Anthropic/JS 0.73.0` / OpenClaw 包络，单独做对齐实验。
+3. 对后续仍出现的 `native 400`，继续按“失败样本 replay + 单变量消融”处理，不再靠泛化猜测。
 4. compat 切流后，优先观察它是否天然绕开 native 当前的问题家族。
