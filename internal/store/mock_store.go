@@ -428,14 +428,136 @@ func (m *MockStore) InsertRequestLog(_ context.Context, log *domain.RequestLog) 
 	if m.InsertRequestErr != nil {
 		return m.InsertRequestErr
 	}
-	m.logs = append(m.logs, log)
+	copy := *log
+	m.logs = append(m.logs, &copy)
 	return nil
 }
 
-func (m *MockStore) QueryRequestLogs(_ context.Context, _ domain.RequestLogQuery) ([]*domain.RequestLog, int, error) {
+func (m *MockStore) QueryRequestLogs(_ context.Context, opts domain.RequestLogQuery) ([]*domain.RequestLog, int, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	return m.logs, len(m.logs), nil
+	var logs []*domain.RequestLog
+	for _, entry := range m.logs {
+		if opts.UserID != "" && entry.UserID != opts.UserID {
+			continue
+		}
+		if opts.AccountID != "" && entry.AccountID != opts.AccountID {
+			continue
+		}
+		if opts.FailuresOnly && entry.Status == "ok" {
+			continue
+		}
+		copy := *entry
+		logs = append(logs, &copy)
+	}
+	return logs, len(logs), nil
+}
+
+func (m *MockStore) QueryRelayOutcomeStats(_ context.Context, since time.Time) ([]domain.RelayOutcomeStat, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	type key struct {
+		provider string
+		surface  string
+		effect   string
+		status   int
+	}
+	stats := map[key]*domain.RelayOutcomeStat{}
+	userSeen := map[key]map[string]struct{}{}
+	accountSeen := map[key]map[string]struct{}{}
+	for _, entry := range m.logs {
+		if entry.CreatedAt.Before(since) {
+			continue
+		}
+		k := key{provider: entry.Provider, surface: entry.Surface, effect: entry.EffectKind, status: entry.UpstreamStatus}
+		stat := stats[k]
+		if stat == nil {
+			stat = &domain.RelayOutcomeStat{
+				Provider:       entry.Provider,
+				Surface:        entry.Surface,
+				EffectKind:     entry.EffectKind,
+				UpstreamStatus: entry.UpstreamStatus,
+			}
+			stats[k] = stat
+			userSeen[k] = map[string]struct{}{}
+			accountSeen[k] = map[string]struct{}{}
+		}
+		stat.Requests++
+		if entry.CreatedAt.After(stat.LastSeenAt) {
+			stat.LastSeenAt = entry.CreatedAt
+		}
+		userSeen[k][entry.UserID] = struct{}{}
+		accountSeen[k][entry.AccountID] = struct{}{}
+	}
+
+	result := make([]domain.RelayOutcomeStat, 0, len(stats))
+	for k, stat := range stats {
+		stat.DistinctUsers = len(userSeen[k])
+		stat.DistinctAccounts = len(accountSeen[k])
+		result = append(result, *stat)
+	}
+	return result, nil
+}
+
+func (m *MockStore) QueryCellRiskStats(_ context.Context, since time.Time) ([]domain.CellRiskStat, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	type key struct {
+		cellID   string
+		provider string
+	}
+	stats := map[key]*domain.CellRiskStat{}
+	userSeen := map[key]map[string]struct{}{}
+	accountSeen := map[key]map[string]struct{}{}
+	for _, entry := range m.logs {
+		if entry.CreatedAt.Before(since) {
+			continue
+		}
+		k := key{cellID: entry.CellID, provider: entry.Provider}
+		stat := stats[k]
+		if stat == nil {
+			stat = &domain.CellRiskStat{
+				CellID:   entry.CellID,
+				Provider: entry.Provider,
+			}
+			stats[k] = stat
+			userSeen[k] = map[string]struct{}{}
+			accountSeen[k] = map[string]struct{}{}
+		}
+		stat.Requests++
+		if entry.Status == "ok" {
+			stat.Successes++
+		}
+		switch entry.UpstreamStatus {
+		case 400:
+			stat.Status400++
+		case 403:
+			stat.Status403++
+		case 429:
+			stat.Status429++
+		}
+		if entry.EffectKind == "block" {
+			stat.Blocks++
+		}
+		if entry.Status == "transport_error" {
+			stat.TransportErrors++
+		}
+		if entry.CreatedAt.After(stat.LastSeenAt) {
+			stat.LastSeenAt = entry.CreatedAt
+		}
+		userSeen[k][entry.UserID] = struct{}{}
+		accountSeen[k][entry.AccountID] = struct{}{}
+	}
+
+	result := make([]domain.CellRiskStat, 0, len(stats))
+	for k, stat := range stats {
+		stat.DistinctUsers = len(userSeen[k])
+		stat.DistinctAccounts = len(accountSeen[k])
+		result = append(result, *stat)
+	}
+	return result, nil
 }
 
 func (m *MockStore) PurgeOldLogs(_ context.Context, _ time.Time) (int64, error) {

@@ -32,6 +32,58 @@ type relayAttemptState struct {
 	lastUpstreamBody   []byte
 }
 
+func relayEffectKind(kind driver.EffectKind) string {
+	switch kind {
+	case driver.EffectSuccess:
+		return "success"
+	case driver.EffectCooldown:
+		return "cooldown"
+	case driver.EffectOverload:
+		return "overload"
+	case driver.EffectBlock:
+		return "block"
+	case driver.EffectAuthFail:
+		return "auth_fail"
+	case driver.EffectServerError:
+		return "server_error"
+	default:
+		return ""
+	}
+}
+
+func upstreamRequestID(headers http.Header) string {
+	if headers == nil {
+		return ""
+	}
+	if v := headers.Get("request-id"); v != "" {
+		return v
+	}
+	return headers.Get("x-request-id")
+}
+
+func (r *Relay) baseRequestLog(prepared *preparedRelayRequest, acct *domain.Account, attempt int) *domain.RequestLog {
+	entry := &domain.RequestLog{
+		AttemptCount: attempt + 1,
+		CreatedAt:    time.Now().UTC(),
+	}
+	if prepared != nil && prepared.keyInfo != nil {
+		entry.UserID = prepared.keyInfo.ID
+	}
+	if prepared != nil && prepared.input != nil {
+		entry.Surface = string(prepared.surface)
+		entry.Model = prepared.input.Model
+		entry.Path = prepared.input.Path
+		entry.RequestBytes = len(prepared.input.RawBody)
+	}
+	if acct != nil {
+		entry.AccountID = acct.ID
+		entry.Provider = string(acct.Provider)
+		entry.CellID = acct.CellID
+		entry.BucketKey = acct.BucketKey
+	}
+	return entry
+}
+
 func newRelayAttemptState() *relayAttemptState {
 	return &relayAttemptState{
 		forbiddenRetries: make(map[string]int),
@@ -103,14 +155,11 @@ func (r *Relay) executeRelayAttempt(
 		if acct.CellID != "" && r.cfg.CellErrorPause > 0 && neterr.IsTransport(err) {
 			r.pool.CooldownCell(acct.CellID, time.Now().Add(r.cfg.CellErrorPause), fmt.Sprintf("relay transport error on account %s: %v", acct.Email, err))
 		}
-		r.logRequestAsync(&domain.RequestLog{
-			UserID:     prepared.keyInfo.ID,
-			AccountID:  acct.ID,
-			Model:      prepared.input.Model,
-			Status:     "transport_error",
-			DurationMs: time.Since(attemptStartedAt).Milliseconds(),
-			CreatedAt:  time.Now().UTC(),
-		})
+		entry := r.baseRequestLog(prepared, acct, attempt)
+		entry.Status = "transport_error"
+		entry.EffectKind = "transport_error"
+		entry.DurationMs = time.Since(attemptStartedAt).Milliseconds()
+		r.logRequestAsync(entry)
 		slog.Error("upstream request failed",
 			"accountId", acct.ID,
 			"userId", prepared.keyInfo.ID,
@@ -154,15 +203,6 @@ func (r *Relay) executeRelayAttempt(
 		}
 		resp.Body.Close()
 
-		r.logRequestAsync(&domain.RequestLog{
-			UserID:     prepared.keyInfo.ID,
-			AccountID:  acct.ID,
-			Model:      prepared.input.Model,
-			Status:     fmt.Sprintf("upstream_%d", resp.StatusCode),
-			DurationMs: time.Since(attemptStartedAt).Milliseconds(),
-			CreatedAt:  time.Now().UTC(),
-		})
-
 		slog.Warn("retriable upstream error",
 			"status", resp.StatusCode,
 			"accountId", acct.ID,
@@ -177,8 +217,14 @@ func (r *Relay) executeRelayAttempt(
 
 		state.lastUpstreamStatus = resp.StatusCode
 		state.lastUpstreamBody = errBody
+		entry := r.baseRequestLog(prepared, acct, attempt)
+		entry.Status = fmt.Sprintf("upstream_%d", resp.StatusCode)
+		entry.UpstreamStatus = resp.StatusCode
+		entry.UpstreamRequestID = upstreamRequestID(resp.Header)
+		entry.DurationMs = time.Since(attemptStartedAt).Milliseconds()
 
 		if drv.ParseNonRetriable(resp.StatusCode, errBody) {
+			r.logRequestAsync(entry)
 			drv.WriteUpstreamError(w, resp.StatusCode, errBody, prepared.input.IsStream)
 			return relayAttemptDone
 		}
@@ -190,6 +236,8 @@ func (r *Relay) executeRelayAttempt(
 		}
 
 		effect := drv.Interpret(resp.StatusCode, resp.Header, errBody, prepared.input.Model, json.RawMessage(acct.ProviderStateJSON))
+		entry.EffectKind = relayEffectKind(effect.Kind)
+		r.logRequestAsync(entry)
 		r.pool.Observe(acct.ID, effect)
 		state.exclude(acct, effect)
 		state.lastErr = fmt.Errorf("upstream %d", resp.StatusCode)
@@ -203,16 +251,14 @@ func (r *Relay) executeRelayAttempt(
 		}
 		resp.Body.Close()
 
-		r.logRequestAsync(&domain.RequestLog{
-			UserID:     prepared.keyInfo.ID,
-			AccountID:  acct.ID,
-			Model:      prepared.input.Model,
-			Status:     fmt.Sprintf("upstream_%d", resp.StatusCode),
-			DurationMs: time.Since(attemptStartedAt).Milliseconds(),
-			CreatedAt:  time.Now().UTC(),
-		})
-
 		effect := drv.Interpret(resp.StatusCode, resp.Header, errBody, prepared.input.Model, json.RawMessage(acct.ProviderStateJSON))
+		entry := r.baseRequestLog(prepared, acct, attempt)
+		entry.Status = fmt.Sprintf("upstream_%d", resp.StatusCode)
+		entry.UpstreamStatus = resp.StatusCode
+		entry.UpstreamRequestID = upstreamRequestID(resp.Header)
+		entry.EffectKind = relayEffectKind(effect.Kind)
+		entry.DurationMs = time.Since(attemptStartedAt).Milliseconds()
+		r.logRequestAsync(entry)
 		r.pool.Observe(acct.ID, effect)
 
 		slog.Warn("upstream non-retriable error",
@@ -231,7 +277,7 @@ func (r *Relay) executeRelayAttempt(
 		return relayAttemptDone
 	}
 
-	r.finishRelaySuccess(ctx, w, drv, prepared, acct, resp)
+	r.finishRelaySuccess(ctx, w, drv, prepared, acct, resp, attemptStartedAt, attempt)
 	return relayAttemptDone
 }
 
@@ -242,6 +288,8 @@ func (r *Relay) finishRelaySuccess(
 	prepared *preparedRelayRequest,
 	acct *domain.Account,
 	resp *http.Response,
+	attemptStartedAt time.Time,
+	attempt int,
 ) {
 	defer resp.Body.Close()
 
@@ -254,7 +302,6 @@ func (r *Relay) finishRelaySuccess(
 		}
 	}
 
-	startTime := time.Now()
 	var usage *driver.Usage
 	if prepared.input.IsStream {
 		_, usage = drv.StreamResponse(ctx, w, resp)
@@ -270,9 +317,19 @@ func (r *Relay) finishRelaySuccess(
 		w.Write(respBody)
 	}
 
+	entry := r.baseRequestLog(prepared, acct, attempt)
+	entry.Status = "ok"
+	entry.EffectKind = relayEffectKind(effect.Kind)
+	entry.UpstreamRequestID = upstreamRequestID(resp.Header)
+	entry.DurationMs = time.Since(attemptStartedAt).Milliseconds()
 	if usage != nil {
-		r.logUsageAsync(prepared.keyInfo.ID, acct.ID, prepared.input.Model, usage, drv.CalcCost(prepared.input.Model, usage), startTime)
+		entry.InputTokens = usage.InputTokens
+		entry.OutputTokens = usage.OutputTokens
+		entry.CacheReadTokens = usage.CacheReadTokens
+		entry.CacheCreateTokens = usage.CacheCreateTokens
+		entry.CostUSD = drv.CalcCost(prepared.input.Model, usage)
 	}
+	r.logRequestAsync(entry)
 }
 
 func (r *Relay) logRequestAsync(entry *domain.RequestLog) {
@@ -282,22 +339,6 @@ func (r *Relay) logRequestAsync(entry *domain.RequestLog) {
 	go func() {
 		_ = r.store.InsertRequestLog(context.Background(), entry)
 	}()
-}
-
-func (r *Relay) logUsageAsync(userID, accountID, model string, usage *driver.Usage, cost float64, startTime time.Time) {
-	r.logRequestAsync(&domain.RequestLog{
-		UserID:            userID,
-		AccountID:         accountID,
-		Model:             model,
-		InputTokens:       usage.InputTokens,
-		OutputTokens:      usage.OutputTokens,
-		CacheReadTokens:   usage.CacheReadTokens,
-		CacheCreateTokens: usage.CacheCreateTokens,
-		CostUSD:           cost,
-		Status:            "ok",
-		DurationMs:        time.Since(startTime).Milliseconds(),
-		CreatedAt:         time.Now().UTC(),
-	})
 }
 
 func (r *Relay) finishRelayFailure(w http.ResponseWriter, drv driver.ExecutionDriver, prepared *preparedRelayRequest, state *relayAttemptState) {

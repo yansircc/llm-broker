@@ -59,6 +59,8 @@ type Store interface {
 	// Request log
 	InsertRequestLog(ctx context.Context, log *domain.RequestLog) error
 	QueryRequestLogs(ctx context.Context, opts domain.RequestLogQuery) ([]*domain.RequestLog, int, error)
+	QueryRelayOutcomeStats(ctx context.Context, since time.Time) ([]domain.RelayOutcomeStat, error)
+	QueryCellRiskStats(ctx context.Context, since time.Time) ([]domain.CellRiskStat, error)
 	PurgeOldLogs(ctx context.Context, before time.Time) (int64, error)
 
 	// Dashboard & analytics

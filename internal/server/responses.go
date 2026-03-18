@@ -11,11 +11,14 @@ import (
 // ---------------------------------------------------------------------------
 
 type DashboardResponse struct {
-	Health   HealthInfo           `json:"health"`
-	Usage    []domain.UsagePeriod `json:"usage"`
-	Accounts []DashboardAccount   `json:"accounts"`
-	Users    []DashboardUser      `json:"users"`
-	Events   []DashboardEvent     `json:"events"`
+	Health         HealthInfo                 `json:"health"`
+	Usage          []domain.UsagePeriod       `json:"usage"`
+	Accounts       []DashboardAccount         `json:"accounts"`
+	Users          []DashboardUser            `json:"users"`
+	Events         []DashboardEvent           `json:"events"`
+	OutcomeStats   []RelayOutcomeStatResponse `json:"outcome_stats"`
+	CellRisk       []CellRiskResponse         `json:"cell_risk"`
+	RecentFailures []*domain.RequestLog       `json:"recent_failures"`
 }
 
 type HealthInfo struct {
@@ -80,6 +83,35 @@ type DashboardEvent struct {
 	UpstreamStatus int        `json:"upstream_status,omitempty"`
 	Message        string     `json:"message"`
 	Timestamp      string     `json:"ts"`
+}
+
+type RelayOutcomeStatResponse struct {
+	Provider         string    `json:"provider"`
+	Surface          string    `json:"surface"`
+	EffectKind       string    `json:"effect_kind"`
+	UpstreamStatus   int       `json:"upstream_status,omitempty"`
+	Requests         int       `json:"requests"`
+	DistinctUsers    int       `json:"distinct_users"`
+	DistinctAccounts int       `json:"distinct_accounts"`
+	LastSeenAt       time.Time `json:"last_seen_at"`
+}
+
+type CellRiskResponse struct {
+	CellID           string    `json:"cell_id,omitempty"`
+	CellName         string    `json:"cell_name"`
+	Provider         string    `json:"provider"`
+	Region           string    `json:"region"`
+	Transport        string    `json:"transport"`
+	Requests         int       `json:"requests"`
+	Successes        int       `json:"successes"`
+	Status400        int       `json:"status_400"`
+	Status403        int       `json:"status_403"`
+	Status429        int       `json:"status_429"`
+	Blocks           int       `json:"blocks"`
+	TransportErrors  int       `json:"transport_errors"`
+	DistinctUsers    int       `json:"distinct_users"`
+	DistinctAccounts int       `json:"distinct_accounts"`
+	LastSeenAt       time.Time `json:"last_seen_at"`
 }
 
 type ProviderOptionResponse struct {

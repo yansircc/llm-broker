@@ -10,16 +10,22 @@ import (
 
 func (s *SQLiteStore) InsertRequestLog(ctx context.Context, l *domain.RequestLog) error {
 	_, err := s.db.ExecContext(ctx,
-		`INSERT INTO request_log (user_id, account_id, model, input_tokens, output_tokens,
-			cache_read_tokens, cache_create_tokens, cost_usd, status, duration_ms, created_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		l.UserID, l.AccountID, l.Model, l.InputTokens, l.OutputTokens,
-		l.CacheReadTokens, l.CacheCreateTokens, l.CostUSD, l.Status, l.DurationMs, l.CreatedAt.Unix())
+		`INSERT INTO request_log (
+			user_id, account_id, provider, surface, model, path, cell_id, bucket_key,
+			input_tokens, output_tokens, cache_read_tokens, cache_create_tokens, cost_usd,
+			status, effect_kind, upstream_status, upstream_request_id, request_bytes, attempt_count,
+			duration_ms, created_at
+		)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		l.UserID, l.AccountID, l.Provider, l.Surface, l.Model, l.Path, l.CellID, l.BucketKey,
+		l.InputTokens, l.OutputTokens, l.CacheReadTokens, l.CacheCreateTokens, l.CostUSD,
+		l.Status, l.EffectKind, l.UpstreamStatus, l.UpstreamRequestID, l.RequestBytes, l.AttemptCount,
+		l.DurationMs, l.CreatedAt.Unix())
 	return err
 }
 
 func (s *SQLiteStore) QueryRequestLogs(ctx context.Context, opts domain.RequestLogQuery) ([]*domain.RequestLog, int, error) {
-	where, args := buildLogWhere(opts.UserID, opts.AccountID)
+	where, args := buildLogWhere(opts.UserID, opts.AccountID, opts.FailuresOnly)
 
 	var total int
 	_ = s.db.QueryRowContext(ctx,
@@ -33,8 +39,10 @@ func (s *SQLiteStore) QueryRequestLogs(ctx context.Context, opts domain.RequestL
 	copy(fetchArgs, args)
 	fetchArgs = append(fetchArgs, limit, opts.Offset)
 
-	query := fmt.Sprintf(`SELECT id, user_id, account_id, model, input_tokens, output_tokens,
-		cache_read_tokens, cache_create_tokens, cost_usd, status, duration_ms, created_at
+	query := fmt.Sprintf(`SELECT id, user_id, account_id, provider, surface, model, path, cell_id, bucket_key,
+		input_tokens, output_tokens, cache_read_tokens, cache_create_tokens, cost_usd,
+		status, effect_kind, upstream_status, upstream_request_id, request_bytes, attempt_count,
+		duration_ms, created_at
 		FROM request_log WHERE %s ORDER BY created_at DESC LIMIT ? OFFSET ?`, where)
 
 	rows, err := s.db.QueryContext(ctx, query, fetchArgs...)
@@ -46,15 +54,110 @@ func (s *SQLiteStore) QueryRequestLogs(ctx context.Context, opts domain.RequestL
 	for rows.Next() {
 		l := &domain.RequestLog{}
 		var ts int64
-		if err := rows.Scan(&l.ID, &l.UserID, &l.AccountID, &l.Model,
+		if err := rows.Scan(&l.ID, &l.UserID, &l.AccountID, &l.Provider, &l.Surface, &l.Model, &l.Path, &l.CellID, &l.BucketKey,
 			&l.InputTokens, &l.OutputTokens, &l.CacheReadTokens, &l.CacheCreateTokens,
-			&l.CostUSD, &l.Status, &l.DurationMs, &ts); err != nil {
+			&l.CostUSD, &l.Status, &l.EffectKind, &l.UpstreamStatus, &l.UpstreamRequestID,
+			&l.RequestBytes, &l.AttemptCount, &l.DurationMs, &ts); err != nil {
 			return nil, 0, err
 		}
 		l.CreatedAt = time.Unix(ts, 0).UTC()
 		logs = append(logs, l)
 	}
 	return logs, total, rows.Err()
+}
+
+func (s *SQLiteStore) QueryRelayOutcomeStats(ctx context.Context, since time.Time) ([]domain.RelayOutcomeStat, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT provider, surface, effect_kind, upstream_status,
+			COUNT(*),
+			COUNT(DISTINCT user_id),
+			COUNT(DISTINCT account_id),
+			MAX(created_at)
+		FROM request_log
+		WHERE created_at >= ?
+		GROUP BY provider, surface, effect_kind, upstream_status
+		ORDER BY COUNT(*) DESC, provider, surface, effect_kind, upstream_status
+	`, since.Unix())
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var result []domain.RelayOutcomeStat
+	for rows.Next() {
+		var stat domain.RelayOutcomeStat
+		var lastSeen int64
+		if err := rows.Scan(
+			&stat.Provider,
+			&stat.Surface,
+			&stat.EffectKind,
+			&stat.UpstreamStatus,
+			&stat.Requests,
+			&stat.DistinctUsers,
+			&stat.DistinctAccounts,
+			&lastSeen,
+		); err != nil {
+			return nil, err
+		}
+		stat.LastSeenAt = time.Unix(lastSeen, 0).UTC()
+		result = append(result, stat)
+	}
+	return result, rows.Err()
+}
+
+func (s *SQLiteStore) QueryCellRiskStats(ctx context.Context, since time.Time) ([]domain.CellRiskStat, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT COALESCE(cell_id, ''), provider,
+			COUNT(*),
+			SUM(CASE WHEN status = 'ok' THEN 1 ELSE 0 END),
+			SUM(CASE WHEN upstream_status = 400 THEN 1 ELSE 0 END),
+			SUM(CASE WHEN upstream_status = 403 THEN 1 ELSE 0 END),
+			SUM(CASE WHEN upstream_status = 429 THEN 1 ELSE 0 END),
+			SUM(CASE WHEN effect_kind = 'block' THEN 1 ELSE 0 END),
+			SUM(CASE WHEN status = 'transport_error' THEN 1 ELSE 0 END),
+			COUNT(DISTINCT user_id),
+			COUNT(DISTINCT account_id),
+			MAX(created_at)
+		FROM request_log
+		WHERE created_at >= ?
+		GROUP BY COALESCE(cell_id, ''), provider
+		ORDER BY
+			(SUM(CASE WHEN upstream_status IN (400, 403, 429) THEN 1 ELSE 0 END) +
+			 SUM(CASE WHEN effect_kind = 'block' THEN 1 ELSE 0 END) +
+			 SUM(CASE WHEN status = 'transport_error' THEN 1 ELSE 0 END)) DESC,
+			COUNT(*) DESC,
+			provider,
+			COALESCE(cell_id, '')
+	`, since.Unix())
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var result []domain.CellRiskStat
+	for rows.Next() {
+		var stat domain.CellRiskStat
+		var lastSeen int64
+		if err := rows.Scan(
+			&stat.CellID,
+			&stat.Provider,
+			&stat.Requests,
+			&stat.Successes,
+			&stat.Status400,
+			&stat.Status403,
+			&stat.Status429,
+			&stat.Blocks,
+			&stat.TransportErrors,
+			&stat.DistinctUsers,
+			&stat.DistinctAccounts,
+			&lastSeen,
+		); err != nil {
+			return nil, err
+		}
+		stat.LastSeenAt = time.Unix(lastSeen, 0).UTC()
+		result = append(result, stat)
+	}
+	return result, rows.Err()
 }
 
 func (s *SQLiteStore) PurgeOldLogs(ctx context.Context, before time.Time) (int64, error) {
@@ -65,7 +168,7 @@ func (s *SQLiteStore) PurgeOldLogs(ctx context.Context, before time.Time) (int64
 	return res.RowsAffected()
 }
 
-func buildLogWhere(userID, accountID string) (string, []interface{}) {
+func buildLogWhere(userID, accountID string, failuresOnly bool) (string, []interface{}) {
 	where := "1=1"
 	var args []interface{}
 	if userID != "" {
@@ -75,6 +178,9 @@ func buildLogWhere(userID, accountID string) (string, []interface{}) {
 	if accountID != "" {
 		where += " AND account_id = ?"
 		args = append(args, accountID)
+	}
+	if failuresOnly {
+		where += " AND status <> 'ok'"
 	}
 	return where, args
 }

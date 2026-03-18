@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"sort"
 	"time"
 
 	"github.com/yansircc/llm-broker/internal/domain"
@@ -13,11 +14,14 @@ import (
 func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	writeJSON(w, http.StatusOK, DashboardResponse{
-		Health:   s.buildHealthInfo(ctx),
-		Usage:    s.dashboardUsage(ctx, parseTZParam(r)),
-		Accounts: s.dashboardAccounts(),
-		Users:    s.dashboardUsers(ctx),
-		Events:   s.dashboardEvents(20),
+		Health:         s.buildHealthInfo(ctx),
+		Usage:          s.dashboardUsage(ctx, parseTZParam(r)),
+		Accounts:       s.dashboardAccounts(),
+		Users:          s.dashboardUsers(ctx),
+		Events:         s.dashboardEvents(20),
+		OutcomeStats:   s.dashboardOutcomeStats(ctx, 24*time.Hour),
+		CellRisk:       s.dashboardCellRisk(ctx, 7*24*time.Hour),
+		RecentFailures: s.dashboardRecentFailures(ctx, 30),
 	})
 }
 
@@ -101,6 +105,158 @@ func (s *Server) dashboardEvents(limit int) []DashboardEvent {
 		})
 	}
 	return views
+}
+
+func (s *Server) dashboardOutcomeStats(ctx context.Context, window time.Duration) []RelayOutcomeStatResponse {
+	stats, err := s.store.QueryRelayOutcomeStats(ctx, time.Now().UTC().Add(-window))
+	if err != nil {
+		slog.Warn("dashboard: query relay outcome stats failed", "error", err)
+		return []RelayOutcomeStatResponse{}
+	}
+	views := make([]RelayOutcomeStatResponse, 0, len(stats))
+	for _, stat := range stats {
+		views = append(views, RelayOutcomeStatResponse{
+			Provider:         stat.Provider,
+			Surface:          stat.Surface,
+			EffectKind:       stat.EffectKind,
+			UpstreamStatus:   stat.UpstreamStatus,
+			Requests:         stat.Requests,
+			DistinctUsers:    stat.DistinctUsers,
+			DistinctAccounts: stat.DistinctAccounts,
+			LastSeenAt:       stat.LastSeenAt,
+		})
+	}
+	return views
+}
+
+func (s *Server) dashboardRecentFailures(ctx context.Context, limit int) []*domain.RequestLog {
+	logs, _, err := s.store.QueryRequestLogs(ctx, domain.RequestLogQuery{
+		FailuresOnly: true,
+		Limit:        limit,
+	})
+	if err != nil {
+		slog.Warn("dashboard: query recent failures failed", "error", err)
+		return []*domain.RequestLog{}
+	}
+	if logs == nil {
+		return []*domain.RequestLog{}
+	}
+	return logs
+}
+
+func (s *Server) dashboardCellRisk(ctx context.Context, window time.Duration) []CellRiskResponse {
+	stats, err := s.store.QueryCellRiskStats(ctx, time.Now().UTC().Add(-window))
+	if err != nil {
+		slog.Warn("dashboard: query cell risk stats failed", "error", err)
+		return []CellRiskResponse{}
+	}
+
+	cells := s.pool.ListCells()
+	cellMap := make(map[string]*domain.EgressCell, len(cells))
+	for _, cell := range cells {
+		cellMap[cell.ID] = cell
+	}
+
+	views := make([]CellRiskResponse, 0, len(stats))
+	for _, stat := range stats {
+		cell := cellMap[stat.CellID]
+		views = append(views, CellRiskResponse{
+			CellID:           stat.CellID,
+			CellName:         dashboardCellName(cell, stat.CellID),
+			Provider:         stat.Provider,
+			Region:           dashboardCellRegion(cell),
+			Transport:        dashboardCellTransport(cell),
+			Requests:         stat.Requests,
+			Successes:        stat.Successes,
+			Status400:        stat.Status400,
+			Status403:        stat.Status403,
+			Status429:        stat.Status429,
+			Blocks:           stat.Blocks,
+			TransportErrors:  stat.TransportErrors,
+			DistinctUsers:    stat.DistinctUsers,
+			DistinctAccounts: stat.DistinctAccounts,
+			LastSeenAt:       stat.LastSeenAt,
+		})
+	}
+
+	sort.Slice(views, func(i, j int) bool {
+		leftRisk := views[i].Status400 + views[i].Status403 + views[i].Status429 + views[i].Blocks + views[i].TransportErrors
+		rightRisk := views[j].Status400 + views[j].Status403 + views[j].Status429 + views[j].Blocks + views[j].TransportErrors
+		if leftRisk != rightRisk {
+			return leftRisk > rightRisk
+		}
+		if views[i].Requests != views[j].Requests {
+			return views[i].Requests > views[j].Requests
+		}
+		if views[i].Provider != views[j].Provider {
+			return views[i].Provider < views[j].Provider
+		}
+		return views[i].CellName < views[j].CellName
+	})
+
+	return views
+}
+
+func dashboardCellName(cell *domain.EgressCell, cellID string) string {
+	if cell != nil {
+		if cell.Name != "" {
+			return cell.Name
+		}
+		if cell.ID != "" {
+			return cell.ID
+		}
+	}
+	if cellID == "" {
+		return "legacy direct"
+	}
+	return cellID
+}
+
+func dashboardCellRegion(cell *domain.EgressCell) string {
+	if cell == nil || len(cell.Labels) == 0 {
+		return "-"
+	}
+	if region := stringsJoinNonEmpty(cell.Labels["country"], cell.Labels["city"]); region != "" {
+		return region
+	}
+	if site := cell.Labels["site"]; site != "" {
+		return site
+	}
+	return "-"
+}
+
+func dashboardCellTransport(cell *domain.EgressCell) string {
+	if cell == nil || len(cell.Labels) == 0 {
+		return "legacy-direct"
+	}
+	if transport := cell.Labels["transport"]; transport != "" {
+		return transport
+	}
+	return "unknown"
+}
+
+func stringsJoinNonEmpty(parts ...string) string {
+	filtered := make([]string, 0, len(parts))
+	for _, part := range parts {
+		if part != "" {
+			filtered = append(filtered, part)
+		}
+	}
+	return joinWithSlash(filtered)
+}
+
+func joinWithSlash(parts []string) string {
+	if len(parts) == 0 {
+		return ""
+	}
+	if len(parts) == 1 {
+		return parts[0]
+	}
+	out := parts[0]
+	for _, part := range parts[1:] {
+		out += " / " + part
+	}
+	return out
 }
 
 func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
