@@ -1,8 +1,8 @@
 <script lang="ts">
 	import { base } from '$app/paths';
 	import { api } from '$lib/api';
-	import type { DashboardData, EgressCellView } from '$lib/admin-types';
-	import { fmtDate } from '$lib/format';
+	import type { CellRiskStat, DashboardData, EgressCellView, RecentRequestLog, RelayOutcomeStat } from '$lib/admin-types';
+	import { fmtDate, fmtJSON, fmtNum, shortModel, statusColor } from '$lib/format';
 
 	let data = $state<DashboardData | null>(null);
 	let cells = $state<EgressCellView[]>([]);
@@ -60,6 +60,85 @@
 			default: return 'tag';
 		}
 	}
+
+	function activeAccounts() {
+		return data?.accounts.filter((acct) => acct.status === 'active').length ?? 0;
+	}
+
+	function availableNativeAccounts() {
+		return data?.accounts.filter((acct) => acct.available_native).length ?? 0;
+	}
+
+	function availableCompatAccounts() {
+		return data?.accounts.filter((acct) => acct.available_compat).length ?? 0;
+	}
+
+	function outcomeLabel(stat: RelayOutcomeStat): string {
+		const parts = [stat.effect_kind || 'none'];
+		if (stat.upstream_status) parts.push(String(stat.upstream_status));
+		return parts.join(' / ');
+	}
+
+	function failureCell(log: RecentRequestLog): string {
+		return log.cell_id || 'legacy direct';
+	}
+
+	function failureUpstream(log: RecentRequestLog): string {
+		const parts: string[] = [];
+		if (log.effect_kind) parts.push(log.effect_kind);
+		if (log.upstream_status) parts.push(String(log.upstream_status));
+		return parts.join(' / ') || '-';
+	}
+
+	function failureRequestID(log: RecentRequestLog): string {
+		return log.upstream_request_id || '-';
+	}
+
+	function accountInfo(accountID: string) {
+		return data?.accounts.find((account) => account.id === accountID);
+	}
+
+	function accountLabel(accountID: string): string {
+		return accountInfo(accountID)?.email || '-';
+	}
+
+	function userInfo(userID: string) {
+		return data?.users.find((user) => user.id === userID);
+	}
+
+	function userLabel(userID: string): string {
+		return userInfo(userID)?.name || userID || '-';
+	}
+
+	function failureError(log: RecentRequestLog): string {
+		const parts: string[] = [];
+		if (log.upstream_error_type) parts.push(log.upstream_error_type);
+		if (log.upstream_error_message) parts.push(log.upstream_error_message);
+		return parts.join(': ') || '-';
+	}
+
+	function hasFailureDetails(log: RecentRequestLog): boolean {
+		return !!(
+			log.session_uuid ||
+			log.binding_source ||
+			log.upstream_error_type ||
+			log.upstream_error_message ||
+			log.client_body_excerpt ||
+			log.request_meta ||
+			log.client_headers ||
+			log.upstream_url ||
+			log.upstream_request_headers ||
+			log.upstream_request_meta ||
+			log.upstream_request_body_excerpt ||
+			log.upstream_headers ||
+			log.upstream_response_meta ||
+			log.upstream_response_body_excerpt
+		);
+	}
+
+	function cellRiskFailureCount(stat: CellRiskStat): number {
+		return stat.status_400 + stat.status_403 + stat.status_429 + stat.blocks + stat.transport_errors;
+	}
 </script>
 
 {#if error}
@@ -73,6 +152,9 @@
 	<div class="bar">
 		<span>cells {cells.length}</span>
 		<span>accounts {data.accounts.length}</span>
+		<span>active {activeAccounts()}</span>
+		<span>available native {availableNativeAccounts()}</span>
+		<span>available compat {availableCompatAccounts()}</span>
 		<span>legacy direct {data.accounts.filter((acct) => !acct.cell_id).length}</span>
 		<span>cooling cells {cells.filter((cell) => activeCooldownUntil(cell)).length}</span>
 		<span><a href="{base}/migrations">migration</a></span>
@@ -115,4 +197,164 @@
 			</tbody>
 		</table>
 	{/if}
+
+	<h2>relay outcomes (24h)</h2>
+	{#if !data.outcome_stats || data.outcome_stats.length === 0}
+		<p class="muted">no relay stats yet</p>
+	{:else}
+		<table>
+			<thead>
+				<tr>
+					<th>provider</th>
+					<th>surface</th>
+					<th>outcome</th>
+					<th class="num">requests</th>
+					<th class="num">users</th>
+					<th class="num">accounts</th>
+					<th>last seen</th>
+				</tr>
+			</thead>
+			<tbody>
+				{#each data.outcome_stats as stat (`${stat.provider}:${stat.surface}:${stat.effect_kind}:${stat.upstream_status ?? 0}`)}
+					<tr>
+						<td>{stat.provider}</td>
+						<td>{stat.surface || '-'}</td>
+						<td>{outcomeLabel(stat)}</td>
+						<td class="num">{fmtNum(stat.requests)}</td>
+						<td class="num">{fmtNum(stat.distinct_users)}</td>
+						<td class="num">{fmtNum(stat.distinct_accounts)}</td>
+						<td>{fmtDate(stat.last_seen_at)}</td>
+					</tr>
+				{/each}
+			</tbody>
+		</table>
+	{/if}
+
+	<h2>cell risk (7 days)</h2>
+	{#if !data.cell_risk || data.cell_risk.length === 0}
+		<p class="muted">no cell risk data yet</p>
+	{:else}
+		<table>
+			<thead>
+				<tr>
+					<th>cell</th>
+					<th>provider</th>
+					<th>region</th>
+					<th>transport</th>
+					<th class="num">reqs</th>
+					<th class="num">ok</th>
+					<th class="num">400</th>
+					<th class="num">403</th>
+					<th class="num">429</th>
+					<th class="num">block</th>
+					<th class="num">transport</th>
+					<th class="num">risk</th>
+					<th class="num">users</th>
+					<th>last seen</th>
+				</tr>
+			</thead>
+			<tbody>
+				{#each data.cell_risk as stat (`${stat.provider}:${stat.cell_id ?? 'legacy'}`)}
+					<tr>
+						<td>{stat.cell_name}</td>
+						<td>{stat.provider}</td>
+						<td>{stat.region}</td>
+						<td>{stat.transport}</td>
+						<td class="num">{fmtNum(stat.requests)}</td>
+						<td class="num">{fmtNum(stat.successes)}</td>
+						<td class="num">{fmtNum(stat.status_400)}</td>
+						<td class="num">{fmtNum(stat.status_403)}</td>
+						<td class="num">{fmtNum(stat.status_429)}</td>
+						<td class="num">{fmtNum(stat.blocks)}</td>
+						<td class="num">{fmtNum(stat.transport_errors)}</td>
+						<td class="num">{fmtNum(cellRiskFailureCount(stat))}</td>
+						<td class="num">{fmtNum(stat.distinct_users)}</td>
+						<td>{fmtDate(stat.last_seen_at)}</td>
+					</tr>
+				{/each}
+			</tbody>
+		</table>
+	{/if}
+
+	<h2>recent failed relays</h2>
+	{#if !data.recent_failures || data.recent_failures.length === 0}
+		<p class="muted">no failed relays yet</p>
+	{:else}
+		<table>
+			<thead>
+				<tr>
+					<th>time</th>
+					<th>key</th>
+					<th>provider</th>
+					<th>surface</th>
+					<th>model</th>
+					<th>path</th>
+					<th>account</th>
+					<th>cell</th>
+					<th>outcome</th>
+					<th>request id</th>
+					<th>error</th>
+					<th class="num">bytes</th>
+					<th class="num">attempt</th>
+					<th>details</th>
+				</tr>
+			</thead>
+			<tbody>
+				{#each data.recent_failures as log (log.id)}
+					<tr>
+						<td class="muted">{fmtDate(log.created_at)}</td>
+						<td>{userLabel(log.user_id)}</td>
+						<td>{log.provider}</td>
+						<td>{log.surface || '-'}</td>
+						<td>{shortModel(log.model)}</td>
+						<td>{log.path || '-'}</td>
+						<td>{accountLabel(log.account_id)}</td>
+						<td>{failureCell(log)}</td>
+						<td class={statusColor(log.status)}>{failureUpstream(log)}</td>
+						<td>{failureRequestID(log)}</td>
+						<td>{failureError(log)}</td>
+						<td class="num">{fmtNum(log.request_bytes)}</td>
+						<td class="num">{fmtNum(log.attempt_count)}</td>
+						<td>
+							{#if hasFailureDetails(log)}
+								<details>
+									<summary>view</summary>
+									<div class="detail-block">
+										<div><span class="muted">full account</span> <span class="mono">{log.account_id}</span></div>
+										<div><span class="muted">session</span> <span class="mono">{log.session_uuid || '-'}</span></div>
+										<div><span class="muted">binding</span> {log.binding_source || '-'}</div>
+										<div><span class="muted">error</span> {failureError(log)}</div>
+										<div><span class="muted">client body</span><pre>{log.client_body_excerpt || '-'}</pre></div>
+										<div><span class="muted">request meta</span><pre>{fmtJSON(log.request_meta)}</pre></div>
+										<div><span class="muted">client headers</span><pre>{fmtJSON(log.client_headers)}</pre></div>
+										<div><span class="muted">upstream url</span> <span class="mono">{log.upstream_url || '-'}</span></div>
+										<div><span class="muted">upstream request headers</span><pre>{fmtJSON(log.upstream_request_headers)}</pre></div>
+										<div><span class="muted">upstream request meta</span><pre>{fmtJSON(log.upstream_request_meta)}</pre></div>
+										<div><span class="muted">upstream request body</span><pre>{log.upstream_request_body_excerpt || '-'}</pre></div>
+										<div><span class="muted">upstream response headers</span><pre>{fmtJSON(log.upstream_headers)}</pre></div>
+										<div><span class="muted">upstream response meta</span><pre>{fmtJSON(log.upstream_response_meta)}</pre></div>
+										<div><span class="muted">upstream response body</span><pre>{log.upstream_response_body_excerpt || '-'}</pre></div>
+									</div>
+								</details>
+							{:else}
+								<span class="muted">-</span>
+							{/if}
+						</td>
+					</tr>
+				{/each}
+			</tbody>
+		</table>
+	{/if}
 {/if}
+
+<style>
+	.detail-block {
+		min-width: 320px;
+		max-width: 560px;
+	}
+	pre {
+		margin: 4px 0 0;
+		white-space: pre-wrap;
+		word-break: break-word;
+	}
+</style>

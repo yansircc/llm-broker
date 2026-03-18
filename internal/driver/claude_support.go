@@ -71,16 +71,24 @@ func parseClaudeUsage(data string) *Usage {
 }
 
 func sanitizeClaudeError(statusCode int, body []byte) (int, []byte) {
+	errType, message := parseClaudeErrorInfo(body)
+	if errType != "" {
+		return statusCode, buildClaudeErrorJSON(errType, message)
+	}
+	return statusCode, buildClaudeErrorJSON("api_error", "unexpected upstream error")
+}
+
+func parseClaudeErrorInfo(body []byte) (string, string) {
 	var parsed struct {
 		Error struct {
 			Type    string `json:"type"`
 			Message string `json:"message"`
 		} `json:"error"`
 	}
-	if json.Unmarshal(body, &parsed) == nil && parsed.Error.Type != "" {
-		return statusCode, buildClaudeErrorJSON(parsed.Error.Type, parsed.Error.Message)
+	if json.Unmarshal(body, &parsed) != nil {
+		return "", ""
 	}
-	return statusCode, buildClaudeErrorJSON("api_error", "unexpected upstream error")
+	return parsed.Error.Type, parsed.Error.Message
 }
 
 func sanitizeClaudeErrorJSON(statusCode int, body []byte) []byte {

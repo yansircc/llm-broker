@@ -21,7 +21,8 @@ type EffectKind int
 
 const (
 	EffectSuccess     EffectKind = iota
-	EffectCooldown               // 429, 403 non-ban
+	EffectCooldown               // rate-limit style rejection with cooldown
+	EffectReject                 // non-retriable reject without cooldown
 	EffectOverload               // 529
 	EffectBlock                  // provider block / disabled signal
 	EffectAuthFail               // 401
@@ -39,11 +40,14 @@ const (
 // Effect is the provider-agnostic outcome of an upstream request.
 // Pool.Observe applies it without knowing any provider-specific details.
 type Effect struct {
-	Kind          EffectKind
-	Scope         EffectScope
-	CooldownUntil time.Time
-	ErrorMessage  string
-	UpdatedState  json.RawMessage // opaque provider state blob
+	Kind                 EffectKind
+	Scope                EffectScope
+	CooldownUntil        time.Time
+	ErrorMessage         string
+	UpstreamStatus       int
+	UpstreamErrorType    string
+	UpstreamErrorMessage string
+	UpdatedState         json.RawMessage // opaque provider state blob
 }
 
 // RelayInput carries the parsed client request.
@@ -132,6 +136,27 @@ type Model struct {
 	Created       int64  `json:"created"`
 	OwnedBy       string `json:"owned_by"`
 	ContextWindow int    `json:"context_window"`
+}
+
+// RequestValidationError indicates that the client request is invalid at the
+// driver boundary and should be rejected locally without forwarding upstream.
+type RequestValidationError struct {
+	StatusCode int
+	Message    string
+}
+
+func (e *RequestValidationError) Error() string {
+	if e == nil {
+		return ""
+	}
+	return e.Message
+}
+
+func NewRequestValidationError(statusCode int, message string) error {
+	return &RequestValidationError{
+		StatusCode: statusCode,
+		Message:    message,
+	}
 }
 
 func mustMarshalJSON(v any) json.RawMessage {

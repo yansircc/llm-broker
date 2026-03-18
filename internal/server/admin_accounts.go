@@ -14,22 +14,26 @@ import (
 func (s *Server) handleListAccounts(w http.ResponseWriter, r *http.Request) {
 	accounts := s.pool.List()
 	cellCounts := accountCountsByCell(accounts)
+	availability := s.pool.SurfaceAvailabilityMap()
 
 	views := make([]AccountListItem, 0, len(accounts))
 	for _, a := range accounts {
 		proj := s.projectAccount(a)
+		avail := availability[a.ID]
 		views = append(views, AccountListItem{
-			ID:            a.ID,
-			Email:         a.Email,
-			Provider:      string(a.Provider),
-			Status:        string(a.Status),
-			Weight:        proj.effectiveWeight,
-			WeightMode:    a.PriorityMode,
-			LastUsedAt:    a.LastUsedAt,
-			CooldownUntil: a.CooldownUntil,
-			CellID:        a.CellID,
-			Cell:          toCellSummary(a.Cell, cellCounts[a.CellID]),
-			Windows:       proj.windows,
+			ID:              a.ID,
+			Email:           a.Email,
+			Provider:        string(a.Provider),
+			Status:          string(a.Status),
+			Weight:          proj.effectiveWeight,
+			WeightMode:      a.PriorityMode,
+			LastUsedAt:      a.LastUsedAt,
+			CooldownUntil:   a.CooldownUntil,
+			CellID:          a.CellID,
+			AvailableNative: avail.Native,
+			AvailableCompat: avail.Compat,
+			Cell:            toCellSummary(a.Cell, cellCounts[a.CellID]),
+			Windows:         proj.windows,
 		})
 	}
 	writeJSON(w, http.StatusOK, views)

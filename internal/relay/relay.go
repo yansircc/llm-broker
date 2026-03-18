@@ -25,6 +25,7 @@ type Config struct {
 	SessionBindingTTL time.Duration
 	CellErrorPause    time.Duration
 	TraceCompat       bool
+	RequestLogBlobDir string
 }
 
 type Relay struct {

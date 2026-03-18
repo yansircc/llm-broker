@@ -48,13 +48,37 @@ CREATE TABLE IF NOT EXISTS request_log (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     user_id TEXT NOT NULL,
     account_id TEXT NOT NULL,
+    provider TEXT NOT NULL DEFAULT '',
+    surface TEXT NOT NULL DEFAULT '',
     model TEXT NOT NULL,
+    path TEXT NOT NULL DEFAULT '',
+    cell_id TEXT NOT NULL DEFAULT '',
+    bucket_key TEXT NOT NULL DEFAULT '',
+    session_uuid TEXT NOT NULL DEFAULT '',
+    binding_source TEXT NOT NULL DEFAULT '',
+    client_headers_json TEXT NOT NULL DEFAULT '{}',
+    client_body_excerpt TEXT NOT NULL DEFAULT '',
+    request_meta_json TEXT NOT NULL DEFAULT '{}',
     input_tokens INTEGER NOT NULL DEFAULT 0,
     output_tokens INTEGER NOT NULL DEFAULT 0,
     cache_read_tokens INTEGER NOT NULL DEFAULT 0,
     cache_create_tokens INTEGER NOT NULL DEFAULT 0,
     cost_usd REAL NOT NULL DEFAULT 0,
     status TEXT NOT NULL,
+    effect_kind TEXT NOT NULL DEFAULT '',
+    upstream_status INTEGER NOT NULL DEFAULT 0,
+    upstream_url TEXT NOT NULL DEFAULT '',
+    upstream_request_headers_json TEXT NOT NULL DEFAULT '{}',
+    upstream_request_meta_json TEXT NOT NULL DEFAULT '{}',
+    upstream_request_body_excerpt TEXT NOT NULL DEFAULT '',
+    upstream_request_id TEXT NOT NULL DEFAULT '',
+    upstream_headers_json TEXT NOT NULL DEFAULT '{}',
+    upstream_response_meta_json TEXT NOT NULL DEFAULT '{}',
+    upstream_response_body_excerpt TEXT NOT NULL DEFAULT '',
+    upstream_error_type TEXT NOT NULL DEFAULT '',
+    upstream_error_message TEXT NOT NULL DEFAULT '',
+    request_bytes INTEGER NOT NULL DEFAULT 0,
+    attempt_count INTEGER NOT NULL DEFAULT 0,
     duration_ms INTEGER NOT NULL DEFAULT 0,
     created_at INTEGER NOT NULL
 );
@@ -80,6 +104,18 @@ CREATE TABLE IF NOT EXISTS session_bindings (
 
 CREATE INDEX IF NOT EXISTS idx_session_bindings_account ON session_bindings(account_id, last_used_at DESC);
 CREATE INDEX IF NOT EXISTS idx_session_bindings_expires ON session_bindings(expires_at);
+
+CREATE TABLE IF NOT EXISTS user_route_bindings (
+    user_id TEXT NOT NULL,
+    provider TEXT NOT NULL,
+    surface TEXT NOT NULL,
+    account_id TEXT NOT NULL,
+    created_at INTEGER NOT NULL,
+    last_used_at INTEGER NOT NULL,
+    PRIMARY KEY (user_id, provider, surface)
+);
+
+CREATE INDEX IF NOT EXISTS idx_user_route_bindings_account ON user_route_bindings(account_id, last_used_at DESC);
 
 CREATE TABLE IF NOT EXISTS stainless_bindings (
     account_id TEXT PRIMARY KEY,

@@ -61,13 +61,37 @@ var desiredRequestLogColumns = []string{
 	"id",
 	"user_id",
 	"account_id",
+	"provider",
+	"surface",
 	"model",
+	"path",
+	"cell_id",
+	"bucket_key",
+	"session_uuid",
+	"binding_source",
+	"client_headers_json",
+	"client_body_excerpt",
+	"request_meta_json",
 	"input_tokens",
 	"output_tokens",
 	"cache_read_tokens",
 	"cache_create_tokens",
 	"cost_usd",
 	"status",
+	"effect_kind",
+	"upstream_status",
+	"upstream_url",
+	"upstream_request_headers_json",
+	"upstream_request_meta_json",
+	"upstream_request_body_excerpt",
+	"upstream_request_id",
+	"upstream_headers_json",
+	"upstream_response_meta_json",
+	"upstream_response_body_excerpt",
+	"upstream_error_type",
+	"upstream_error_message",
+	"request_bytes",
+	"attempt_count",
 	"duration_ms",
 	"created_at",
 }
@@ -86,6 +110,15 @@ var desiredSessionBindingColumns = []string{
 	"created_at",
 	"last_used_at",
 	"expires_at",
+}
+
+var desiredUserRouteBindingColumns = []string{
+	"user_id",
+	"provider",
+	"surface",
+	"account_id",
+	"created_at",
+	"last_used_at",
 }
 
 var desiredStainlessBindingColumns = []string{
@@ -131,6 +164,12 @@ func Migrate(dbPath string) error {
 	if err := s.migrateUsersTable(context.Background()); err != nil {
 		return err
 	}
+	if err := s.migrateRequestLogTable(context.Background()); err != nil {
+		return err
+	}
+	if err := s.ensureRequestLogIndexes(context.Background()); err != nil {
+		return err
+	}
 	if err := s.validateCurrentSchema(context.Background()); err != nil {
 		return err
 	}
@@ -148,6 +187,7 @@ func (s *SQLiteStore) validateCurrentSchema(ctx context.Context) error {
 		{table: "request_log", want: desiredRequestLogColumns},
 		{table: "quota_buckets", want: desiredQuotaBucketColumns},
 		{table: "session_bindings", want: desiredSessionBindingColumns},
+		{table: "user_route_bindings", want: desiredUserRouteBindingColumns},
 		{table: "stainless_bindings", want: desiredStainlessBindingColumns},
 		{table: "oauth_sessions", want: desiredOAuthSessionColumns},
 		{table: "refresh_locks", want: desiredRefreshLockColumns},
@@ -282,14 +322,6 @@ func (s *SQLiteStore) migrateQuotaBucketsTable(ctx context.Context) error {
 		return fmt.Errorf("quota_buckets migration: unsupported schema %v", cols)
 	}
 
-	var count int
-	if err := s.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM quota_buckets").Scan(&count); err != nil {
-		return fmt.Errorf("count quota_buckets: %w", err)
-	}
-	if count > 0 {
-		return nil
-	}
-
 	accountCols, err := s.tableColumns(ctx, "accounts")
 	if err != nil {
 		return fmt.Errorf("inspect accounts schema for bucket seed: %w", err)
@@ -313,11 +345,12 @@ func (s *SQLiteStore) migrateQuotaBucketsTable(ctx context.Context) error {
 		bucketKeyExpr = "CASE WHEN bucket_key != '' THEN bucket_key WHEN subject != '' THEN provider || ':' || subject ELSE provider || ':' || id END"
 	}
 
-	seedSQL := fmt.Sprintf(`
-		INSERT INTO quota_buckets (
+	syncSQL := fmt.Sprintf(`
+		INSERT OR IGNORE INTO quota_buckets (
 			bucket_key, provider, cooldown_until, state_json, updated_at
 		)
 		SELECT
+			DISTINCT
 			%s,
 			provider,
 			%s,
@@ -325,8 +358,18 @@ func (s *SQLiteStore) migrateQuotaBucketsTable(ctx context.Context) error {
 			strftime('%%s', 'now')
 		FROM accounts
 		`, bucketKeyExpr, cooldownExpr, stateExpr)
-	if _, err := s.db.ExecContext(ctx, seedSQL); err != nil {
-		return fmt.Errorf("seed quota_buckets from accounts: %w", err)
+	if _, err := s.db.ExecContext(ctx, syncSQL); err != nil {
+		return fmt.Errorf("sync quota_buckets from accounts: %w", err)
+	}
+
+	pruneSQL := fmt.Sprintf(`
+		DELETE FROM quota_buckets
+		WHERE bucket_key NOT IN (
+			SELECT DISTINCT %s FROM accounts
+		)
+	`, bucketKeyExpr)
+	if _, err := s.db.ExecContext(ctx, pruneSQL); err != nil {
+		return fmt.Errorf("delete orphan quota_buckets: %w", err)
 	}
 	return nil
 }
@@ -401,6 +444,195 @@ func (s *SQLiteStore) migrateUsersTable(ctx context.Context) error {
 	}
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("commit users migration: %w", err)
+	}
+	return nil
+}
+
+func (s *SQLiteStore) migrateRequestLogTable(ctx context.Context) error {
+	cols, err := s.tableColumns(ctx, "request_log")
+	if err != nil {
+		return fmt.Errorf("inspect request_log schema: %w", err)
+	}
+	if sameColumns(cols, desiredRequestLogColumns) {
+		return nil
+	}
+	if !hasColumns(cols, "id", "user_id", "account_id", "model", "status", "created_at") {
+		return fmt.Errorf("request_log migration: unsupported schema %v", cols)
+	}
+
+	copyExpr := func(name, fallback string) string {
+		if slices.Contains(cols, name) {
+			return name
+		}
+		return fallback
+	}
+
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin request_log migration: %w", err)
+	}
+	defer tx.Rollback()
+
+	if _, err := tx.ExecContext(ctx, `
+		CREATE TABLE request_log_new (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			user_id TEXT NOT NULL,
+			account_id TEXT NOT NULL,
+			provider TEXT NOT NULL DEFAULT '',
+			surface TEXT NOT NULL DEFAULT '',
+			model TEXT NOT NULL,
+			path TEXT NOT NULL DEFAULT '',
+			cell_id TEXT NOT NULL DEFAULT '',
+			bucket_key TEXT NOT NULL DEFAULT '',
+			session_uuid TEXT NOT NULL DEFAULT '',
+			binding_source TEXT NOT NULL DEFAULT '',
+			client_headers_json TEXT NOT NULL DEFAULT '{}',
+			client_body_excerpt TEXT NOT NULL DEFAULT '',
+			request_meta_json TEXT NOT NULL DEFAULT '{}',
+			input_tokens INTEGER NOT NULL DEFAULT 0,
+			output_tokens INTEGER NOT NULL DEFAULT 0,
+			cache_read_tokens INTEGER NOT NULL DEFAULT 0,
+			cache_create_tokens INTEGER NOT NULL DEFAULT 0,
+			cost_usd REAL NOT NULL DEFAULT 0,
+			status TEXT NOT NULL,
+			effect_kind TEXT NOT NULL DEFAULT '',
+			upstream_status INTEGER NOT NULL DEFAULT 0,
+			upstream_url TEXT NOT NULL DEFAULT '',
+			upstream_request_headers_json TEXT NOT NULL DEFAULT '{}',
+			upstream_request_meta_json TEXT NOT NULL DEFAULT '{}',
+			upstream_request_body_excerpt TEXT NOT NULL DEFAULT '',
+			upstream_request_id TEXT NOT NULL DEFAULT '',
+			upstream_headers_json TEXT NOT NULL DEFAULT '{}',
+			upstream_response_meta_json TEXT NOT NULL DEFAULT '{}',
+			upstream_response_body_excerpt TEXT NOT NULL DEFAULT '',
+			upstream_error_type TEXT NOT NULL DEFAULT '',
+			upstream_error_message TEXT NOT NULL DEFAULT '',
+			request_bytes INTEGER NOT NULL DEFAULT 0,
+			attempt_count INTEGER NOT NULL DEFAULT 0,
+			duration_ms INTEGER NOT NULL DEFAULT 0,
+			created_at INTEGER NOT NULL
+		)
+	`); err != nil {
+		return fmt.Errorf("create request_log_new: %w", err)
+	}
+
+	insertSQL := fmt.Sprintf(`
+		INSERT INTO request_log_new (
+			id, user_id, account_id, provider, surface, model, path, cell_id, bucket_key,
+			session_uuid, binding_source, client_headers_json, client_body_excerpt, request_meta_json,
+			input_tokens, output_tokens, cache_read_tokens, cache_create_tokens, cost_usd,
+			status, effect_kind, upstream_status, upstream_url, upstream_request_headers_json,
+			upstream_request_meta_json, upstream_request_body_excerpt, upstream_request_id,
+			upstream_headers_json, upstream_response_meta_json, upstream_response_body_excerpt,
+			upstream_error_type, upstream_error_message, request_bytes, attempt_count, duration_ms, created_at
+		)
+		SELECT
+			id,
+			user_id,
+			account_id,
+			%s,
+			%s,
+			model,
+			%s,
+			%s,
+			%s,
+			%s,
+			%s,
+			%s,
+			%s,
+			%s,
+			%s,
+			%s,
+			%s,
+			%s,
+			%s,
+			status,
+			%s,
+			%s,
+			%s,
+			%s,
+			%s,
+			%s,
+			%s,
+			%s,
+			%s,
+			%s,
+			%s,
+			%s,
+			%s,
+			%s,
+			%s,
+			created_at
+		FROM request_log
+	`,
+		copyExpr("provider", "''"),
+		copyExpr("surface", "''"),
+		copyExpr("path", "''"),
+		copyExpr("cell_id", "''"),
+		copyExpr("bucket_key", "''"),
+		copyExpr("session_uuid", "''"),
+		copyExpr("binding_source", "''"),
+		copyExpr("client_headers_json", "'{}'"),
+		copyExpr("client_body_excerpt", "''"),
+		copyExpr("request_meta_json", "'{}'"),
+		copyExpr("input_tokens", "0"),
+		copyExpr("output_tokens", "0"),
+		copyExpr("cache_read_tokens", "0"),
+		copyExpr("cache_create_tokens", "0"),
+		copyExpr("cost_usd", "0"),
+		copyExpr("effect_kind", "''"),
+		copyExpr("upstream_status", "0"),
+		copyExpr("upstream_url", "''"),
+		copyExpr("upstream_request_headers_json", "'{}'"),
+		copyExpr("upstream_request_meta_json", "'{}'"),
+		copyExpr("upstream_request_body_excerpt", "''"),
+		copyExpr("upstream_request_id", "''"),
+		copyExpr("upstream_headers_json", "'{}'"),
+		copyExpr("upstream_response_meta_json", "'{}'"),
+		copyExpr("upstream_response_body_excerpt", "''"),
+		copyExpr("upstream_error_type", "''"),
+		copyExpr("upstream_error_message", "''"),
+		copyExpr("request_bytes", "0"),
+		copyExpr("attempt_count", "0"),
+		copyExpr("duration_ms", "0"),
+	)
+	if _, err := tx.ExecContext(ctx, insertSQL); err != nil {
+		return fmt.Errorf("copy request_log: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, `DROP TABLE request_log`); err != nil {
+		return fmt.Errorf("drop old request_log: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, `ALTER TABLE request_log_new RENAME TO request_log`); err != nil {
+		return fmt.Errorf("rename request_log_new: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, `CREATE INDEX idx_request_log_created ON request_log(created_at)`); err != nil {
+		return fmt.Errorf("create idx_request_log_created: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, `CREATE INDEX idx_request_log_user ON request_log(user_id, created_at)`); err != nil {
+		return fmt.Errorf("create idx_request_log_user: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, `CREATE INDEX idx_request_log_status ON request_log(status, created_at)`); err != nil {
+		return fmt.Errorf("create idx_request_log_status: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, `CREATE INDEX idx_request_log_cell ON request_log(cell_id, created_at)`); err != nil {
+		return fmt.Errorf("create idx_request_log_cell: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit request_log migration: %w", err)
+	}
+	return nil
+}
+
+func (s *SQLiteStore) ensureRequestLogIndexes(ctx context.Context) error {
+	for name, stmt := range map[string]string{
+		"idx_request_log_created": "CREATE INDEX IF NOT EXISTS idx_request_log_created ON request_log(created_at)",
+		"idx_request_log_user":    "CREATE INDEX IF NOT EXISTS idx_request_log_user ON request_log(user_id, created_at)",
+		"idx_request_log_status":  "CREATE INDEX IF NOT EXISTS idx_request_log_status ON request_log(status, created_at)",
+		"idx_request_log_cell":    "CREATE INDEX IF NOT EXISTS idx_request_log_cell ON request_log(cell_id, created_at)",
+	} {
+		if _, err := s.db.ExecContext(ctx, stmt); err != nil {
+			return fmt.Errorf("ensure %s: %w", name, err)
+		}
 	}
 	return nil
 }

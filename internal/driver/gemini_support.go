@@ -161,6 +161,34 @@ func parseGeminiRetryDelay(body []byte) time.Duration {
 	return 0
 }
 
+func parseGeminiErrorInfo(body []byte) (string, string) {
+	var single struct {
+		Error *struct {
+			Status  string `json:"status"`
+			Message string `json:"message"`
+		} `json:"error"`
+	}
+	if json.Unmarshal(body, &single) == nil && single.Error != nil {
+		return single.Error.Status, single.Error.Message
+	}
+
+	var many []struct {
+		Error *struct {
+			Status  string `json:"status"`
+			Message string `json:"message"`
+		} `json:"error"`
+	}
+	if json.Unmarshal(body, &many) != nil {
+		return "", ""
+	}
+	for _, item := range many {
+		if item.Error != nil {
+			return item.Error.Status, item.Error.Message
+		}
+	}
+	return "", ""
+}
+
 type geminiUsageMetadata struct {
 	PromptTokenCount        int `json:"promptTokenCount"`
 	CandidatesTokenCount    int `json:"candidatesTokenCount"`

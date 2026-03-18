@@ -5,12 +5,62 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"strings"
 	"time"
 
 	"github.com/yansircc/llm-broker/internal/domain"
 	"github.com/yansircc/llm-broker/internal/driver"
 	"github.com/yansircc/llm-broker/internal/events"
 )
+
+func cooldownEventType(status int) events.EventType {
+	switch status {
+	case 400, 403:
+		return events.EventReject
+	default:
+		return events.EventRateLimit
+	}
+}
+
+func cooldownEventMessage(status int) string {
+	switch status {
+	case 400, 403:
+		return "rejected request"
+	default:
+		return "cooldown"
+	}
+}
+
+func eventMessage(base string, status int, suffix string) string {
+	if base == "" {
+		base = "event"
+	}
+	if status > 0 {
+		return fmt.Sprintf("upstream %d %s%s", status, base, suffix)
+	}
+	return base + suffix
+}
+
+func effectErrorDetail(effect driver.Effect) string {
+	parts := make([]string, 0, 2)
+	if effect.UpstreamErrorType != "" {
+		parts = append(parts, effect.UpstreamErrorType)
+	}
+	if effect.UpstreamErrorMessage != "" {
+		parts = append(parts, effect.UpstreamErrorMessage)
+	}
+	if len(parts) == 0 {
+		return ""
+	}
+	return " | " + truncateEffectDetail(strings.Join(parts, ": "), 180)
+}
+
+func truncateEffectDetail(text string, maxLen int) string {
+	if maxLen <= 0 || len(text) <= maxLen {
+		return text
+	}
+	return text[:maxLen] + "..."
+}
 
 func (p *Pool) RunCleanup(ctx context.Context, interval time.Duration) {
 	ticker := time.NewTicker(interval)
@@ -211,9 +261,22 @@ func (p *Pool) Observe(accountID string, effect driver.Effect) {
 			p.persistBucketLocked(bucket)
 		}
 		pendingEvent = &events.Event{
-			Type: events.EventRateLimit, AccountID: acct.ID,
-			CooldownUntil: cooldownPtr(result),
-			Message:       "cooldown" + cooldownSuffix(result),
+			Type: cooldownEventType(effect.UpstreamStatus), AccountID: acct.ID,
+			CooldownUntil:        cooldownPtr(result),
+			UpstreamStatus:       effect.UpstreamStatus,
+			UpstreamErrorType:    effect.UpstreamErrorType,
+			UpstreamErrorMessage: effect.UpstreamErrorMessage,
+			Message:              eventMessage(cooldownEventMessage(effect.UpstreamStatus), effect.UpstreamStatus, cooldownSuffix(result)) + effectErrorDetail(effect),
+		}
+
+	case driver.EffectReject:
+		pendingEvent = &events.Event{
+			Type:                 events.EventReject,
+			AccountID:            acct.ID,
+			UpstreamStatus:       effect.UpstreamStatus,
+			UpstreamErrorType:    effect.UpstreamErrorType,
+			UpstreamErrorMessage: effect.UpstreamErrorMessage,
+			Message:              eventMessage("rejected request", effect.UpstreamStatus, "") + effectErrorDetail(effect),
 		}
 
 	case driver.EffectOverload:
@@ -224,8 +287,11 @@ func (p *Pool) Observe(accountID string, effect driver.Effect) {
 		}
 		pendingEvent = &events.Event{
 			Type: events.EventOverload, AccountID: acct.ID,
-			CooldownUntil: cooldownPtr(result),
-			Message:       "overloaded" + cooldownSuffix(result),
+			CooldownUntil:        cooldownPtr(result),
+			UpstreamStatus:       effect.UpstreamStatus,
+			UpstreamErrorType:    effect.UpstreamErrorType,
+			UpstreamErrorMessage: effect.UpstreamErrorMessage,
+			Message:              eventMessage("overloaded", effect.UpstreamStatus, cooldownSuffix(result)) + effectErrorDetail(effect),
 		}
 
 	case driver.EffectBlock:
@@ -239,8 +305,11 @@ func (p *Pool) Observe(accountID string, effect driver.Effect) {
 		markPersist(acct)
 		pendingEvent = &events.Event{
 			Type: events.EventBan, AccountID: acct.ID,
-			CooldownUntil: cooldownPtr(result),
-			Message:       effect.ErrorMessage + cooldownSuffix(result),
+			CooldownUntil:        cooldownPtr(result),
+			UpstreamStatus:       effect.UpstreamStatus,
+			UpstreamErrorType:    effect.UpstreamErrorType,
+			UpstreamErrorMessage: effect.UpstreamErrorMessage,
+			Message:              eventMessage(effect.ErrorMessage, effect.UpstreamStatus, cooldownSuffix(result)) + effectErrorDetail(effect),
 		}
 
 	case driver.EffectAuthFail:
@@ -251,8 +320,11 @@ func (p *Pool) Observe(accountID string, effect driver.Effect) {
 		}
 		pendingEvent = &events.Event{
 			Type: events.EventRefresh, AccountID: acct.ID,
-			CooldownUntil: cooldownPtr(result),
-			Message:       "auth failed, background refresh triggered",
+			CooldownUntil:        cooldownPtr(result),
+			UpstreamStatus:       effect.UpstreamStatus,
+			UpstreamErrorType:    effect.UpstreamErrorType,
+			UpstreamErrorMessage: effect.UpstreamErrorMessage,
+			Message:              eventMessage("auth failed, background refresh triggered", effect.UpstreamStatus, "") + effectErrorDetail(effect),
 		}
 		if p.onAuthFailure != nil {
 			go p.onAuthFailure(acct.ID)

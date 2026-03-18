@@ -13,6 +13,7 @@ import (
 	"github.com/yansircc/llm-broker/internal/auth"
 	"github.com/yansircc/llm-broker/internal/config"
 	"github.com/yansircc/llm-broker/internal/domain"
+	relaypkg "github.com/yansircc/llm-broker/internal/relay"
 )
 
 func (s *Server) handleCompatListModels(w http.ResponseWriter, r *http.Request) {
@@ -94,11 +95,28 @@ func (s *Server) handleCompatOpenAIChatCompletions(w http.ResponseWriter, r *htt
 	relayReq.Body = io.NopCloser(bytes.NewReader(target.upstreamBody))
 	relayReq.ContentLength = int64(len(target.upstreamBody))
 	relayReq.Header = r.Header.Clone()
+	relayReq = relaypkg.WithClientRequestObservation(relayReq, &relaypkg.ClientRequestObservation{
+		Path:     r.URL.Path,
+		RawQuery: r.URL.RawQuery,
+		Headers:  r.Header.Clone(),
+		Body:     rawBody,
+	})
 	relayReq.Header.Set("Content-Type", "application/json")
+	if clientMeta := buildCompatClientMeta(rawBody); clientMeta != "" {
+		relayReq.Header.Set("X-Broker-Compat-Client-Meta", clientMeta)
+	}
 	if traceID != "" {
 		relayReq.Header.Set("X-Broker-Compat-Trace-Id", traceID)
 	}
-	if target.stream {
+	for key, values := range target.upstreamHeaders {
+		relayReq.Header.Del(key)
+		for _, value := range values {
+			relayReq.Header.Add(key, value)
+		}
+	}
+	if target.upstreamAccept != "" {
+		relayReq.Header.Set("Accept", target.upstreamAccept)
+	} else if target.stream {
 		relayReq.Header.Set("Accept", "text/event-stream")
 	}
 
@@ -150,6 +168,8 @@ func buildCompatTarget(req *compatOpenAIChatRequest) (*compatTarget, error) {
 			requestedModel:  requestedModel,
 			relayPath:       "/v1/messages",
 			upstreamBody:    upstreamBody,
+			upstreamAccept:  "text/event-stream",
+			upstreamHeaders: compatClaudeUpstreamHeaders(claudeReq.Model),
 			stream:          req.Stream,
 			convertResponse: compatClaudeToOpenAIChatResponse,
 			newStreamWriter: func(w http.ResponseWriter, requestedModel string) compatStreamWriter {
@@ -184,6 +204,22 @@ func buildCompatTarget(req *compatOpenAIChatRequest) (*compatTarget, error) {
 	}
 
 	return nil, errCompat("unsupported compat provider")
+}
+
+func compatClaudeUpstreamHeaders(model string) http.Header {
+	headers := make(http.Header)
+	if !compatClaudeUsesModernEnvelope(model) {
+		return headers
+	}
+	headers.Set("Anthropic-Beta", strings.Join([]string{
+		"redact-thinking-2026-02-12",
+		"context-management-2025-06-27",
+		"prompt-caching-scope-2026-01-05",
+		"effort-2025-11-24",
+	}, ","))
+	headers.Set("Anthropic-Dangerous-Direct-Browser-Access", "true")
+	headers.Set("X-App", "cli")
+	return headers
 }
 
 func resolveCompatModel(model string) (domain.Provider, string, string, error) {

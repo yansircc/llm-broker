@@ -11,11 +11,14 @@ import (
 // ---------------------------------------------------------------------------
 
 type DashboardResponse struct {
-	Health   HealthInfo           `json:"health"`
-	Usage    []domain.UsagePeriod `json:"usage"`
-	Accounts []DashboardAccount   `json:"accounts"`
-	Users    []DashboardUser      `json:"users"`
-	Events   []DashboardEvent     `json:"events"`
+	Health         HealthInfo                 `json:"health"`
+	Usage          []domain.UsagePeriod       `json:"usage"`
+	Accounts       []DashboardAccount         `json:"accounts"`
+	Users          []DashboardUser            `json:"users"`
+	Events         []DashboardEvent           `json:"events"`
+	OutcomeStats   []RelayOutcomeStatResponse `json:"outcome_stats"`
+	CellRisk       []CellRiskResponse         `json:"cell_risk"`
+	RecentFailures []*domain.RequestLog       `json:"recent_failures"`
 }
 
 type HealthInfo struct {
@@ -45,16 +48,18 @@ type EgressCellSummaryResponse struct {
 }
 
 type DashboardAccount struct {
-	ID            string                      `json:"id"`
-	Email         string                      `json:"email"`
-	Provider      string                      `json:"provider"`
-	Status        string                      `json:"status"`
-	WeightMode    string                      `json:"weight_mode"`
-	Weight        int                         `json:"weight"`
-	CooldownUntil *time.Time                  `json:"cooldown_until,omitempty"`
-	LastUsedAt    *time.Time                  `json:"last_used_at,omitempty"`
-	CellID        string                      `json:"cell_id,omitempty"`
-	Windows       []UtilizationWindowResponse `json:"windows"`
+	ID              string                      `json:"id"`
+	Email           string                      `json:"email"`
+	Provider        string                      `json:"provider"`
+	Status          string                      `json:"status"`
+	WeightMode      string                      `json:"weight_mode"`
+	Weight          int                         `json:"weight"`
+	CooldownUntil   *time.Time                  `json:"cooldown_until,omitempty"`
+	LastUsedAt      *time.Time                  `json:"last_used_at,omitempty"`
+	CellID          string                      `json:"cell_id,omitempty"`
+	AvailableNative bool                        `json:"available_native"`
+	AvailableCompat bool                        `json:"available_compat"`
+	Windows         []UtilizationWindowResponse `json:"windows"`
 }
 
 type DashboardUser struct {
@@ -69,14 +74,46 @@ type DashboardUser struct {
 }
 
 type DashboardEvent struct {
-	Type          string     `json:"type"`
-	AccountID     string     `json:"account_id,omitempty"`
-	UserID        string     `json:"user_id,omitempty"`
-	BucketKey     string     `json:"bucket_key,omitempty"`
-	CellID        string     `json:"cell_id,omitempty"`
-	CooldownUntil *time.Time `json:"cooldown_until,omitempty"`
-	Message       string     `json:"message"`
-	Timestamp     string     `json:"ts"`
+	Type                 string     `json:"type"`
+	AccountID            string     `json:"account_id,omitempty"`
+	UserID               string     `json:"user_id,omitempty"`
+	BucketKey            string     `json:"bucket_key,omitempty"`
+	CellID               string     `json:"cell_id,omitempty"`
+	CooldownUntil        *time.Time `json:"cooldown_until,omitempty"`
+	UpstreamStatus       int        `json:"upstream_status,omitempty"`
+	UpstreamErrorType    string     `json:"upstream_error_type,omitempty"`
+	UpstreamErrorMessage string     `json:"upstream_error_message,omitempty"`
+	Message              string     `json:"message"`
+	Timestamp            string     `json:"ts"`
+}
+
+type RelayOutcomeStatResponse struct {
+	Provider         string    `json:"provider"`
+	Surface          string    `json:"surface"`
+	EffectKind       string    `json:"effect_kind"`
+	UpstreamStatus   int       `json:"upstream_status,omitempty"`
+	Requests         int       `json:"requests"`
+	DistinctUsers    int       `json:"distinct_users"`
+	DistinctAccounts int       `json:"distinct_accounts"`
+	LastSeenAt       time.Time `json:"last_seen_at"`
+}
+
+type CellRiskResponse struct {
+	CellID           string    `json:"cell_id,omitempty"`
+	CellName         string    `json:"cell_name"`
+	Provider         string    `json:"provider"`
+	Region           string    `json:"region"`
+	Transport        string    `json:"transport"`
+	Requests         int       `json:"requests"`
+	Successes        int       `json:"successes"`
+	Status400        int       `json:"status_400"`
+	Status403        int       `json:"status_403"`
+	Status429        int       `json:"status_429"`
+	Blocks           int       `json:"blocks"`
+	TransportErrors  int       `json:"transport_errors"`
+	DistinctUsers    int       `json:"distinct_users"`
+	DistinctAccounts int       `json:"distinct_accounts"`
+	LastSeenAt       time.Time `json:"last_seen_at"`
 }
 
 type ProviderOptionResponse struct {
@@ -119,17 +156,19 @@ type AccountDetailResponse struct {
 // ---------------------------------------------------------------------------
 
 type AccountListItem struct {
-	ID            string                      `json:"id"`
-	Email         string                      `json:"email"`
-	Provider      string                      `json:"provider"`
-	Status        string                      `json:"status"`
-	Weight        int                         `json:"weight"`
-	WeightMode    string                      `json:"weight_mode"`
-	LastUsedAt    *time.Time                  `json:"last_used_at,omitempty"`
-	CooldownUntil *time.Time                  `json:"cooldown_until,omitempty"`
-	CellID        string                      `json:"cell_id,omitempty"`
-	Cell          *EgressCellSummaryResponse  `json:"cell,omitempty"`
-	Windows       []UtilizationWindowResponse `json:"windows"`
+	ID              string                      `json:"id"`
+	Email           string                      `json:"email"`
+	Provider        string                      `json:"provider"`
+	Status          string                      `json:"status"`
+	Weight          int                         `json:"weight"`
+	WeightMode      string                      `json:"weight_mode"`
+	LastUsedAt      *time.Time                  `json:"last_used_at,omitempty"`
+	CooldownUntil   *time.Time                  `json:"cooldown_until,omitempty"`
+	CellID          string                      `json:"cell_id,omitempty"`
+	AvailableNative bool                        `json:"available_native"`
+	AvailableCompat bool                        `json:"available_compat"`
+	Cell            *EgressCellSummaryResponse  `json:"cell,omitempty"`
+	Windows         []UtilizationWindowResponse `json:"windows"`
 }
 
 type EgressCellResponse struct {

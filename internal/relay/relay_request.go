@@ -18,9 +18,11 @@ import (
 type preparedRelayRequest struct {
 	keyInfo               *auth.KeyInfo
 	input                 *driver.RelayInput
+	clientObservation     *ClientRequestObservation
 	surface               domain.Surface
 	sessionUUID           string
 	sessionBoundAccountID string
+	userRouteAccountID    string
 }
 
 func (r *Relay) prepareRelayRequest(w http.ResponseWriter, req *http.Request, drv driver.ExecutionDriver, surface domain.Surface) (*preparedRelayRequest, bool) {
@@ -48,13 +50,16 @@ func (r *Relay) prepareRelayRequest(w http.ResponseWriter, req *http.Request, dr
 	if !ok {
 		return nil, true
 	}
+	userRouteAccountID := r.resolveUserRouteAccount(req.Context(), drv, keyInfo, input.Model, surface, sessionBoundAccountID)
 
 	return &preparedRelayRequest{
 		keyInfo:               keyInfo,
 		input:                 input,
+		clientObservation:     clientObservationFromContext(req.Context()),
 		surface:               surface,
 		sessionUUID:           plan.SessionUUID,
 		sessionBoundAccountID: sessionBoundAccountID,
+		userRouteAccountID:    userRouteAccountID,
 	}, false
 }
 
@@ -129,4 +134,23 @@ func (r *Relay) resolveSessionBoundAccount(ctx context.Context, w http.ResponseW
 		return "", false
 	}
 	return "", true
+}
+
+func (r *Relay) resolveUserRouteAccount(ctx context.Context, drv driver.ExecutionDriver, keyInfo *auth.KeyInfo, model string, surface domain.Surface, sessionBoundAccountID string) string {
+	if keyInfo == nil || keyInfo.IsAdmin || keyInfo.BoundAccountID != "" || sessionBoundAccountID != "" {
+		return ""
+	}
+
+	accountID, ok, err := r.pool.GetUserRouteBinding(ctx, keyInfo.ID, drv.Provider(), surface)
+	if err != nil {
+		slog.Warn("load user route binding failed", "userId", keyInfo.ID, "provider", drv.Provider(), "surface", surface, "error", err)
+		return ""
+	}
+	if !ok {
+		return ""
+	}
+	if r.pool.IsAvailableForSurface(accountID, drv, model, surface) {
+		return accountID
+	}
+	return ""
 }

@@ -4,6 +4,7 @@ import (
 	"context"
 	"log/slog"
 	"os"
+	"path/filepath"
 	"time"
 
 	"github.com/yansircc/llm-broker/internal/auth"
@@ -166,6 +167,7 @@ func main() {
 		SessionBindingTTL: cfg.SessionBindingTTL,
 		CellErrorPause:    cfg.CellErrorPause,
 		TraceCompat:       cfg.TraceCompat,
+		RequestLogBlobDir: filepath.Join(filepath.Dir(cfg.DBPath), "request-log-blobs"),
 	}, transportPool, bus, executionDrivers)
 
 	// Start server

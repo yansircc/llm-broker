@@ -31,19 +31,39 @@ type compatMessage struct {
 }
 
 type compatClaudeRequest struct {
-	Model         string                `json:"model"`
-	System        string                `json:"system,omitempty"`
-	Messages      []compatClaudeMessage `json:"messages"`
-	MaxTokens     int                   `json:"max_tokens"`
-	Stream        bool                  `json:"stream,omitempty"`
-	Temperature   *float64              `json:"temperature,omitempty"`
-	TopP          *float64              `json:"top_p,omitempty"`
-	StopSequences []string              `json:"stop_sequences,omitempty"`
+	Model         string                    `json:"model"`
+	System        any                       `json:"system,omitempty"`
+	Messages      []compatClaudeMessage     `json:"messages"`
+	MaxTokens     int                       `json:"max_tokens"`
+	Stream        *bool                     `json:"stream,omitempty"`
+	OutputConfig  *compatClaudeOutputConfig `json:"output_config,omitempty"`
+	Thinking      *compatClaudeThinking     `json:"thinking,omitempty"`
+	Temperature   *float64                  `json:"temperature,omitempty"`
+	TopP          *float64                  `json:"top_p,omitempty"`
+	StopSequences []string                  `json:"stop_sequences,omitempty"`
 }
 
 type compatClaudeMessage struct {
 	Role    string `json:"role"`
 	Content string `json:"content"`
+}
+
+type compatClaudeSystemBlock struct {
+	Type         string                          `json:"type"`
+	Text         string                          `json:"text,omitempty"`
+	CacheControl *compatClaudeCacheControlPolicy `json:"cache_control,omitempty"`
+}
+
+type compatClaudeCacheControlPolicy struct {
+	Type string `json:"type"`
+}
+
+type compatClaudeOutputConfig struct {
+	Effort string `json:"effort,omitempty"`
+}
+
+type compatClaudeThinking struct {
+	Type string `json:"type,omitempty"`
 }
 
 type compatClaudeResponse struct {
@@ -174,6 +194,8 @@ type compatTarget struct {
 	requestedModel  string
 	relayPath       string
 	upstreamBody    []byte
+	upstreamAccept  string
+	upstreamHeaders http.Header
 	stream          bool
 	convertResponse func([]byte, string) (*compatOpenAIChatResponse, error)
 	newStreamWriter func(http.ResponseWriter, string) compatStreamWriter

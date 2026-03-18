@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"encoding/json"
 	"path/filepath"
 	"testing"
 	"time"
@@ -87,5 +88,179 @@ func TestLogAnalyticsIgnoreFailedAttempts(t *testing.T) {
 	}
 	if totalCosts["user-1"] != 1.25 {
 		t.Fatalf("totalCosts[user-1] = %v, want 1.25", totalCosts["user-1"])
+	}
+}
+
+func TestRequestLogObservabilityQueries(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "observability.db")
+	if err := Migrate(dbPath); err != nil {
+		t.Fatalf("Migrate: %v", err)
+	}
+
+	store, err := New(dbPath)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	defer store.Close()
+
+	now := time.Now().UTC()
+	entries := []*domain.RequestLog{
+		{
+			UserID:                      "user-1",
+			AccountID:                   "acct-1",
+			Provider:                    "claude",
+			Surface:                     "compat",
+			Model:                       "claude-sonnet-4-6",
+			Path:                        "/compat/v1/chat/completions",
+			CellID:                      "cell-compat-1",
+			BucketKey:                   "claude:bucket-1",
+			SessionUUID:                 "sess-compat-1",
+			BindingSource:               "session_bound",
+			ClientHeaders:               json.RawMessage(`{"Content-Type":"application/json","X-Stainless-Retry-Count":"1"}`),
+			ClientBodyExcerpt:           `{"messages":[{"role":"user","content":"hello compat"}]}`,
+			RequestMeta:                 json.RawMessage(`{"stream":false,"compat_client":{"requested_model":"claude/claude-sonnet-4-6"}}`),
+			Status:                      "upstream_400",
+			EffectKind:                  "cooldown",
+			UpstreamStatus:              400,
+			UpstreamURL:                 "https://api.anthropic.com/v1/messages?beta=true",
+			UpstreamRequestHeaders:      json.RawMessage(`{"Content-Type":"application/json","anthropic-version":"2023-06-01"}`),
+			UpstreamRequestMeta:         json.RawMessage(`{"method":"POST","body_bytes":1234,"message_count":1}`),
+			UpstreamRequestBodyExcerpt:  `{"messages":[{"role":"user","content":"hello upstream"}]}`,
+			UpstreamRequestID:           "req_400",
+			UpstreamHeaders:             json.RawMessage(`{"request-id":"req_400","Content-Type":"application/json"}`),
+			UpstreamResponseMeta:        json.RawMessage(`{"status":400,"has_error":true}`),
+			UpstreamResponseBodyExcerpt: `{"type":"error","error":{"type":"invalid_request_error","message":"Error"}}`,
+			UpstreamErrorType:           "invalid_request_error",
+			UpstreamErrorMessage:        "Error",
+			RequestBytes:                2048,
+			AttemptCount:                1,
+			DurationMs:                  1200,
+			CreatedAt:                   now,
+		},
+		{
+			UserID:            "user-2",
+			AccountID:         "acct-2",
+			Provider:          "claude",
+			Surface:           "native",
+			Model:             "claude-sonnet-4-6",
+			Path:              "/v1/messages",
+			CellID:            "cell-native-1",
+			BucketKey:         "claude:bucket-2",
+			Status:            "upstream_403",
+			EffectKind:        "block",
+			UpstreamStatus:    403,
+			UpstreamRequestID: "req_403",
+			RequestBytes:      1024,
+			AttemptCount:      2,
+			DurationMs:        800,
+			CreatedAt:         now.Add(2 * time.Second),
+		},
+		{
+			UserID:       "user-1",
+			AccountID:    "acct-1",
+			Provider:     "claude",
+			Surface:      "compat",
+			Model:        "claude-sonnet-4-6",
+			Path:         "/compat/v1/chat/completions",
+			CellID:       "cell-compat-1",
+			BucketKey:    "claude:bucket-1",
+			Status:       "ok",
+			EffectKind:   "success",
+			RequestBytes: 4096,
+			AttemptCount: 1,
+			DurationMs:   1500,
+			CreatedAt:    now.Add(4 * time.Second),
+		},
+	}
+	for _, entry := range entries {
+		if err := store.InsertRequestLog(context.Background(), entry); err != nil {
+			t.Fatalf("InsertRequestLog(%s): %v", entry.Status, err)
+		}
+	}
+
+	failures, total, err := store.QueryRequestLogs(context.Background(), domain.RequestLogQuery{
+		FailuresOnly: true,
+		Limit:        10,
+	})
+	if err != nil {
+		t.Fatalf("QueryRequestLogs(FailuresOnly): %v", err)
+	}
+	if total != 2 || len(failures) != 2 {
+		t.Fatalf("failures total=%d len=%d, want 2", total, len(failures))
+	}
+	if failures[0].UpstreamRequestID != "req_403" {
+		t.Fatalf("failures[0].UpstreamRequestID = %q, want req_403", failures[0].UpstreamRequestID)
+	}
+	if failures[1].Surface != "compat" {
+		t.Fatalf("failures[1].Surface = %q, want compat", failures[1].Surface)
+	}
+	if failures[1].SessionUUID != "sess-compat-1" {
+		t.Fatalf("failures[1].SessionUUID = %q, want sess-compat-1", failures[1].SessionUUID)
+	}
+	if failures[1].BindingSource != "session_bound" {
+		t.Fatalf("failures[1].BindingSource = %q, want session_bound", failures[1].BindingSource)
+	}
+	if string(failures[1].ClientHeaders) != `{"Content-Type":"application/json","X-Stainless-Retry-Count":"1"}` {
+		t.Fatalf("failures[1].ClientHeaders = %s", failures[1].ClientHeaders)
+	}
+	if failures[1].ClientBodyExcerpt != `{"messages":[{"role":"user","content":"hello compat"}]}` {
+		t.Fatalf("failures[1].ClientBodyExcerpt = %q", failures[1].ClientBodyExcerpt)
+	}
+	if string(failures[1].RequestMeta) != `{"stream":false,"compat_client":{"requested_model":"claude/claude-sonnet-4-6"}}` {
+		t.Fatalf("failures[1].RequestMeta = %s", failures[1].RequestMeta)
+	}
+	if failures[1].UpstreamURL != "https://api.anthropic.com/v1/messages?beta=true" {
+		t.Fatalf("failures[1].UpstreamURL = %q", failures[1].UpstreamURL)
+	}
+	if string(failures[1].UpstreamRequestHeaders) != `{"Content-Type":"application/json","anthropic-version":"2023-06-01"}` {
+		t.Fatalf("failures[1].UpstreamRequestHeaders = %s", failures[1].UpstreamRequestHeaders)
+	}
+	if string(failures[1].UpstreamRequestMeta) != `{"method":"POST","body_bytes":1234,"message_count":1}` {
+		t.Fatalf("failures[1].UpstreamRequestMeta = %s", failures[1].UpstreamRequestMeta)
+	}
+	if failures[1].UpstreamRequestBodyExcerpt != `{"messages":[{"role":"user","content":"hello upstream"}]}` {
+		t.Fatalf("failures[1].UpstreamRequestBodyExcerpt = %q", failures[1].UpstreamRequestBodyExcerpt)
+	}
+	if failures[1].UpstreamErrorType != "invalid_request_error" || failures[1].UpstreamErrorMessage != "Error" {
+		t.Fatalf("compat failure upstream error = %q / %q", failures[1].UpstreamErrorType, failures[1].UpstreamErrorMessage)
+	}
+	if string(failures[1].UpstreamHeaders) != `{"request-id":"req_400","Content-Type":"application/json"}` {
+		t.Fatalf("failures[1].UpstreamHeaders = %s", failures[1].UpstreamHeaders)
+	}
+	if string(failures[1].UpstreamResponseMeta) != `{"status":400,"has_error":true}` {
+		t.Fatalf("failures[1].UpstreamResponseMeta = %s", failures[1].UpstreamResponseMeta)
+	}
+	if failures[1].UpstreamResponseBodyExcerpt != `{"type":"error","error":{"type":"invalid_request_error","message":"Error"}}` {
+		t.Fatalf("failures[1].UpstreamResponseBodyExcerpt = %q", failures[1].UpstreamResponseBodyExcerpt)
+	}
+
+	outcomes, err := store.QueryRelayOutcomeStats(context.Background(), now.Add(-time.Minute))
+	if err != nil {
+		t.Fatalf("QueryRelayOutcomeStats: %v", err)
+	}
+	if len(outcomes) != 3 {
+		t.Fatalf("len(outcomes) = %d, want 3", len(outcomes))
+	}
+
+	cellRisk, err := store.QueryCellRiskStats(context.Background(), now.Add(-time.Minute))
+	if err != nil {
+		t.Fatalf("QueryCellRiskStats: %v", err)
+	}
+	if len(cellRisk) != 2 {
+		t.Fatalf("len(cellRisk) = %d, want 2", len(cellRisk))
+	}
+
+	var compatStat *domain.CellRiskStat
+	for i := range cellRisk {
+		if cellRisk[i].CellID == "cell-compat-1" {
+			compatStat = &cellRisk[i]
+			break
+		}
+	}
+	if compatStat == nil {
+		t.Fatal("missing compat cell risk stat")
+	}
+	if compatStat.Requests != 2 || compatStat.Successes != 1 || compatStat.Status400 != 1 {
+		t.Fatalf("compatStat = %+v, want requests=2 successes=1 status400=1", *compatStat)
 	}
 }

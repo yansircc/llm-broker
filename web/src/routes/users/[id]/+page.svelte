@@ -3,8 +3,8 @@
 	import { goto } from '$app/navigation';
 	import { base } from '$app/paths';
 	import { api } from '$lib/api';
-	import type { AccountListItem, UserSurface } from '$lib/admin-types';
-	import { timeAgo, fmtNum, fmtCost, fmtDate, tagClass, statusColor, shortModel } from '$lib/format';
+	import type { AccountListItem, RecentRequestLog, UserSurface } from '$lib/admin-types';
+	import { timeAgo, fmtNum, fmtCost, fmtDate, fmtJSON, tagClass, statusColor, shortModel } from '$lib/format';
 	import ConfirmAction from '$lib/components/ConfirmAction.svelte';
 
 	interface UsagePeriod {
@@ -25,21 +25,6 @@
 		cost_usd: number;
 	}
 
-	interface RecentRequest {
-		id: number;
-		user_id: string;
-		account_id: string;
-		model: string;
-		input_tokens: number;
-		output_tokens: number;
-		cache_read_tokens: number;
-		cache_create_tokens: number;
-		cost_usd: number;
-		status: string;
-		duration_ms: number;
-		created_at: string;
-	}
-
 	interface UserDetail {
 		id: string;
 		name: string;
@@ -52,7 +37,7 @@
 		last_active_at: string | null;
 		usage: UsagePeriod[];
 		model_usage: ModelUsageRow[];
-		recent_requests: RecentRequest[];
+		recent_requests: RecentRequestLog[];
 	}
 
 	let user = $state<UserDetail | null>(null);
@@ -198,6 +183,43 @@
 		} finally {
 			savingPolicy = false;
 		}
+	}
+
+	function requestOutcome(request: RecentRequestLog): string {
+		const parts: string[] = [];
+		if (request.effect_kind) parts.push(request.effect_kind);
+		if (request.upstream_status) parts.push(String(request.upstream_status));
+		return parts.join(' / ') || request.status;
+	}
+
+	function requestAccountLabel(request: RecentRequestLog): string {
+		return accounts.find((account) => account.id === request.account_id)?.email || '-';
+	}
+
+	function requestError(request: RecentRequestLog): string {
+		const parts: string[] = [];
+		if (request.upstream_error_type) parts.push(request.upstream_error_type);
+		if (request.upstream_error_message) parts.push(request.upstream_error_message);
+		return parts.join(': ') || '-';
+	}
+
+	function hasRequestDetails(request: RecentRequestLog): boolean {
+		return !!(
+			request.session_uuid ||
+			request.binding_source ||
+			request.upstream_error_type ||
+			request.upstream_error_message ||
+			request.client_body_excerpt ||
+			request.request_meta ||
+			request.client_headers ||
+			request.upstream_url ||
+			request.upstream_request_headers ||
+			request.upstream_request_meta ||
+			request.upstream_request_body_excerpt ||
+			request.upstream_headers ||
+			request.upstream_response_meta ||
+			request.upstream_response_body_excerpt
+		);
 	}
 </script>
 
@@ -357,24 +379,58 @@
 		<table><thead>
 			<tr>
 				<th>time</th>
+				<th>surface</th>
 				<th>model</th>
+				<th>path</th>
 				<th class="num">input</th>
 				<th class="num">output</th>
 				<th class="num">cache r/w</th>
 				<th>account</th>
-				<th>status</th>
+				<th>cell</th>
+				<th>outcome</th>
+				<th>error</th>
 				<th class="num">duration</th>
+				<th>details</th>
 			</tr></thead><tbody>
 			{#each requests as r (r.id)}
 				<tr>
 					<td class="muted">{new Date(r.created_at).toLocaleTimeString('en-GB', { hour12: false })}</td>
+					<td>{r.surface || '-'}</td>
 					<td>{shortModel(r.model)}</td>
+					<td>{r.path || '-'}</td>
 					<td class="num">{fmtNum(r.input_tokens)}</td>
 					<td class="num">{fmtNum(r.output_tokens)}</td>
 					<td class="num">{fmtNum(r.cache_read_tokens)} / {fmtNum(r.cache_create_tokens)}</td>
-					<td>{r.account_id}</td>
-					<td class={statusColor(r.status)}>{r.status}</td>
+					<td>{requestAccountLabel(r)}</td>
+					<td>{r.cell_id || 'legacy direct'}</td>
+					<td class={statusColor(r.status)}>{requestOutcome(r)}</td>
+					<td>{requestError(r)}</td>
 					<td class="num">{r.duration_ms > 0 ? (r.duration_ms / 1000).toFixed(1) + 's' : '-'}</td>
+					<td>
+						{#if hasRequestDetails(r)}
+							<details>
+								<summary>view</summary>
+								<div class="detail-block">
+									<div><span class="muted">full account</span> <span class="mono">{r.account_id}</span></div>
+									<div><span class="muted">session</span> <span class="mono">{r.session_uuid || '-'}</span></div>
+									<div><span class="muted">binding</span> {r.binding_source || '-'}</div>
+									<div><span class="muted">error</span> {requestError(r)}</div>
+									<div><span class="muted">client body</span><pre>{r.client_body_excerpt || '-'}</pre></div>
+									<div><span class="muted">request meta</span><pre>{fmtJSON(r.request_meta)}</pre></div>
+									<div><span class="muted">client headers</span><pre>{fmtJSON(r.client_headers)}</pre></div>
+									<div><span class="muted">upstream url</span> <span class="mono">{r.upstream_url || '-'}</span></div>
+									<div><span class="muted">upstream request headers</span><pre>{fmtJSON(r.upstream_request_headers)}</pre></div>
+									<div><span class="muted">upstream request meta</span><pre>{fmtJSON(r.upstream_request_meta)}</pre></div>
+									<div><span class="muted">upstream request body</span><pre>{r.upstream_request_body_excerpt || '-'}</pre></div>
+									<div><span class="muted">upstream response headers</span><pre>{fmtJSON(r.upstream_headers)}</pre></div>
+									<div><span class="muted">upstream response meta</span><pre>{fmtJSON(r.upstream_response_meta)}</pre></div>
+									<div><span class="muted">upstream response body</span><pre>{r.upstream_response_body_excerpt || '-'}</pre></div>
+								</div>
+							</details>
+						{:else}
+							<span class="muted">-</span>
+						{/if}
+					</td>
 				</tr>
 			{/each}
 		</tbody></table>
@@ -382,3 +438,18 @@
 
 	<p style="margin-top:16px;font-size:12px"><a href="{base}/users">&larr; back</a></p>
 {/if}
+
+<style>
+	.mono {
+		font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+	}
+	.detail-block {
+		min-width: 320px;
+		max-width: 560px;
+	}
+	pre {
+		margin: 4px 0 0;
+		white-space: pre-wrap;
+		word-break: break-word;
+	}
+</style>

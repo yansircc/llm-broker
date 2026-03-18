@@ -1,6 +1,7 @@
 package relay
 
 import (
+	"errors"
 	"log/slog"
 	"net/http"
 
@@ -12,7 +13,19 @@ import (
 func (r *Relay) handleCountTokens(w http.ResponseWriter, req *http.Request, drv driver.ExecutionDriver, input *driver.RelayInput, keyInfo *auth.KeyInfo, surface domain.Surface) {
 	ctx := req.Context()
 
-	acct, err := r.pool.PickForSurface(drv, nil, input.Model, keyInfo.BoundAccountID, surface)
+	boundAccountID := keyInfo.BoundAccountID
+	if boundAccountID == "" && keyInfo != nil && !keyInfo.IsAdmin {
+		if stickyAccountID, ok, err := r.pool.GetUserRouteBinding(ctx, keyInfo.ID, drv.Provider(), surface); err != nil {
+			slog.Warn("count_tokens: load user route binding failed", "userId", keyInfo.ID, "provider", drv.Provider(), "surface", surface, "error", err)
+		} else if ok && r.pool.IsAvailableForSurface(stickyAccountID, drv, input.Model, surface) {
+			boundAccountID = stickyAccountID
+		}
+	}
+
+	acct, err := r.pool.PickForSurface(drv, nil, input.Model, boundAccountID, surface)
+	if err != nil && boundAccountID != "" && boundAccountID != keyInfo.BoundAccountID {
+		acct, err = r.pool.PickForSurface(drv, nil, input.Model, "", surface)
+	}
 	if err != nil {
 		slog.Warn("count_tokens: account selection failed", "error", err)
 		drv.WriteError(w, http.StatusServiceUnavailable, "no available accounts")
@@ -28,6 +41,11 @@ func (r *Relay) handleCountTokens(w http.ResponseWriter, req *http.Request, drv 
 
 	upReq, err := drv.BuildRequest(ctx, input, acct, accessToken)
 	if err != nil {
+		var requestErr *driver.RequestValidationError
+		if errors.As(err, &requestErr) {
+			drv.WriteError(w, requestErr.StatusCode, requestErr.Message)
+			return
+		}
 		drv.WriteError(w, http.StatusInternalServerError, "failed to build request")
 		return
 	}

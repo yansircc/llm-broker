@@ -84,7 +84,7 @@ export function remainTime(resetTs: number | null): string {
 
 export function eventTypeColor(type: string): string {
 	const t = type.toUpperCase();
-	if (t === 'BAN' || t === '403' || t === '401') return 'r';
+	if (t === 'BAN' || t === 'REJECT' || t === '403' || t === '401') return 'r';
 	if (t === '429' || t === 'RATELIMIT' || t === '5H_STOP' || t === '5H-STOP') return 'o';
 	if (t === 'REFRESH' || t === 'RECOVER') return 'g';
 	if (t === 'OVERLOAD' || t === 'RELAY_ERROR') return 'o';
@@ -97,6 +97,22 @@ export function shortModel(model: string): string {
 		.replace('claude-', '')
 		.replace(/^gpt-/, '')
 		.replace(/-\d{8}$/, '');
+}
+
+export function shortId(id: string, head = 6, tail = 4): string {
+	if (!id) return '-';
+	if (id.length <= head + tail + 1) return id;
+	return `${id.slice(0, head)}...${id.slice(-tail)}`;
+}
+
+export function fmtJSON(value: unknown): string {
+	if (value == null) return '-';
+	if (typeof value === 'string') return value;
+	try {
+		return JSON.stringify(value, null, 2);
+	} catch {
+		return String(value);
+	}
 }
 
 export function dotClass(status: string): string {

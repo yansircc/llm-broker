@@ -225,6 +225,15 @@ func TestMigrate_LegacyUsersTable(t *testing.T) {
 			last_used_at INTEGER NOT NULL,
 			expires_at INTEGER NOT NULL
 		);
+		CREATE TABLE user_route_bindings (
+			user_id TEXT NOT NULL,
+			provider TEXT NOT NULL,
+			surface TEXT NOT NULL,
+			account_id TEXT NOT NULL,
+			created_at INTEGER NOT NULL,
+			last_used_at INTEGER NOT NULL,
+			PRIMARY KEY (user_id, provider, surface)
+		);
 		CREATE TABLE stainless_bindings (
 			account_id TEXT PRIMARY KEY,
 			headers_json TEXT NOT NULL,
@@ -342,11 +351,35 @@ func TestNew_AllowsRequestLogColumnOrderDrift(t *testing.T) {
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
 			user_id TEXT NOT NULL,
 			account_id TEXT NOT NULL,
+			provider TEXT NOT NULL DEFAULT '',
+			surface TEXT NOT NULL DEFAULT '',
 			model TEXT NOT NULL,
+			path TEXT NOT NULL DEFAULT '',
+			cell_id TEXT NOT NULL DEFAULT '',
+			bucket_key TEXT NOT NULL DEFAULT '',
+			upstream_request_meta_json TEXT NOT NULL DEFAULT '{}',
+			request_meta_json TEXT NOT NULL DEFAULT '{}',
+			upstream_request_body_excerpt TEXT NOT NULL DEFAULT '',
 			input_tokens INTEGER NOT NULL DEFAULT 0,
 			output_tokens INTEGER NOT NULL DEFAULT 0,
+			upstream_headers_json TEXT NOT NULL DEFAULT '{}',
 			cache_read_tokens INTEGER NOT NULL DEFAULT 0,
 			cache_create_tokens INTEGER NOT NULL DEFAULT 0,
+			upstream_error_type TEXT NOT NULL DEFAULT '',
+			session_uuid TEXT NOT NULL DEFAULT '',
+			upstream_url TEXT NOT NULL DEFAULT '',
+			request_bytes INTEGER NOT NULL DEFAULT 0,
+			attempt_count INTEGER NOT NULL DEFAULT 0,
+			client_headers_json TEXT NOT NULL DEFAULT '{}',
+			client_body_excerpt TEXT NOT NULL DEFAULT '',
+			upstream_request_id TEXT NOT NULL DEFAULT '',
+			upstream_status INTEGER NOT NULL DEFAULT 0,
+			upstream_request_headers_json TEXT NOT NULL DEFAULT '{}',
+			binding_source TEXT NOT NULL DEFAULT '',
+			upstream_response_body_excerpt TEXT NOT NULL DEFAULT '',
+			upstream_error_message TEXT NOT NULL DEFAULT '',
+			upstream_response_meta_json TEXT NOT NULL DEFAULT '{}',
+			effect_kind TEXT NOT NULL DEFAULT '',
 			status TEXT NOT NULL,
 			duration_ms INTEGER NOT NULL DEFAULT 0,
 			created_at INTEGER NOT NULL,
@@ -365,6 +398,15 @@ func TestNew_AllowsRequestLogColumnOrderDrift(t *testing.T) {
 			created_at INTEGER NOT NULL,
 			last_used_at INTEGER NOT NULL,
 			expires_at INTEGER NOT NULL
+		);
+		CREATE TABLE user_route_bindings (
+			user_id TEXT NOT NULL,
+			provider TEXT NOT NULL,
+			surface TEXT NOT NULL,
+			account_id TEXT NOT NULL,
+			created_at INTEGER NOT NULL,
+			last_used_at INTEGER NOT NULL,
+			PRIMARY KEY (user_id, provider, surface)
 		);
 		CREATE TABLE stainless_bindings (
 			account_id TEXT PRIMARY KEY,
@@ -393,6 +435,194 @@ func TestNew_AllowsRequestLogColumnOrderDrift(t *testing.T) {
 		t.Fatalf("New() with request_log order drift: %v", err)
 	}
 	defer store.Close()
+}
+
+func TestMigrate_QuotaBucketsPrunesOrphansAndBackfillsMissing(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "quota-buckets-sync.db")
+
+	db, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		t.Fatalf("open sqlite: %v", err)
+	}
+	t.Cleanup(func() { db.Close() })
+
+	if _, err := db.Exec(`
+		CREATE TABLE accounts (
+			id TEXT PRIMARY KEY,
+			email TEXT NOT NULL,
+			provider TEXT NOT NULL,
+			status TEXT NOT NULL DEFAULT 'created',
+			priority INTEGER NOT NULL DEFAULT 50,
+			priority_mode TEXT NOT NULL DEFAULT 'auto',
+			error_message TEXT NOT NULL DEFAULT '',
+			bucket_key TEXT NOT NULL DEFAULT '',
+			refresh_token_enc TEXT NOT NULL DEFAULT '',
+			access_token_enc TEXT NOT NULL DEFAULT '',
+			expires_at INTEGER NOT NULL DEFAULT 0,
+			created_at INTEGER NOT NULL,
+			last_used_at INTEGER,
+			last_refresh_at INTEGER,
+			proxy_json TEXT NOT NULL DEFAULT '',
+			cell_id TEXT NOT NULL DEFAULT '',
+			identity_json TEXT NOT NULL DEFAULT '',
+			subject TEXT NOT NULL
+		);
+		CREATE TABLE egress_cells (
+			id TEXT PRIMARY KEY,
+			name TEXT NOT NULL,
+			status TEXT NOT NULL DEFAULT 'active',
+			proxy_json TEXT NOT NULL DEFAULT '',
+			labels_json TEXT NOT NULL DEFAULT '',
+			cooldown_until INTEGER,
+			state_json TEXT NOT NULL DEFAULT '{}',
+			created_at INTEGER NOT NULL,
+			updated_at INTEGER NOT NULL
+		);
+		CREATE TABLE users (
+			id TEXT PRIMARY KEY,
+			name TEXT NOT NULL UNIQUE,
+			token_hash TEXT NOT NULL UNIQUE,
+			token_prefix TEXT NOT NULL,
+			status TEXT NOT NULL DEFAULT 'active',
+			allowed_surface TEXT NOT NULL DEFAULT 'native',
+			bound_account_id TEXT NOT NULL DEFAULT '',
+			created_at INTEGER NOT NULL,
+			last_active_at INTEGER
+		);
+		CREATE TABLE request_log (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			user_id TEXT NOT NULL,
+			account_id TEXT NOT NULL,
+			provider TEXT NOT NULL DEFAULT '',
+			surface TEXT NOT NULL DEFAULT '',
+			model TEXT NOT NULL,
+			path TEXT NOT NULL DEFAULT '',
+			cell_id TEXT NOT NULL DEFAULT '',
+			bucket_key TEXT NOT NULL DEFAULT '',
+			session_uuid TEXT NOT NULL DEFAULT '',
+			binding_source TEXT NOT NULL DEFAULT '',
+			client_headers_json TEXT NOT NULL DEFAULT '{}',
+			client_body_excerpt TEXT NOT NULL DEFAULT '',
+			request_meta_json TEXT NOT NULL DEFAULT '{}',
+			input_tokens INTEGER NOT NULL DEFAULT 0,
+			output_tokens INTEGER NOT NULL DEFAULT 0,
+			cache_read_tokens INTEGER NOT NULL DEFAULT 0,
+			cache_create_tokens INTEGER NOT NULL DEFAULT 0,
+			cost_usd REAL NOT NULL DEFAULT 0,
+			status TEXT NOT NULL,
+			effect_kind TEXT NOT NULL DEFAULT '',
+			upstream_status INTEGER NOT NULL DEFAULT 0,
+			upstream_url TEXT NOT NULL DEFAULT '',
+			upstream_request_headers_json TEXT NOT NULL DEFAULT '{}',
+			upstream_request_meta_json TEXT NOT NULL DEFAULT '{}',
+			upstream_request_body_excerpt TEXT NOT NULL DEFAULT '',
+			upstream_request_id TEXT NOT NULL DEFAULT '',
+			upstream_headers_json TEXT NOT NULL DEFAULT '{}',
+			upstream_response_meta_json TEXT NOT NULL DEFAULT '{}',
+			upstream_response_body_excerpt TEXT NOT NULL DEFAULT '',
+			upstream_error_type TEXT NOT NULL DEFAULT '',
+			upstream_error_message TEXT NOT NULL DEFAULT '',
+			request_bytes INTEGER NOT NULL DEFAULT 0,
+			attempt_count INTEGER NOT NULL DEFAULT 0,
+			duration_ms INTEGER NOT NULL DEFAULT 0,
+			created_at INTEGER NOT NULL
+		);
+		CREATE TABLE quota_buckets (
+			bucket_key TEXT PRIMARY KEY,
+			provider TEXT NOT NULL,
+			cooldown_until INTEGER,
+			state_json TEXT NOT NULL DEFAULT '{}',
+			updated_at INTEGER NOT NULL
+		);
+		CREATE TABLE session_bindings (
+			session_uuid TEXT PRIMARY KEY,
+			account_id TEXT NOT NULL,
+			created_at INTEGER NOT NULL,
+			last_used_at INTEGER NOT NULL,
+			expires_at INTEGER NOT NULL
+		);
+		CREATE TABLE user_route_bindings (
+			user_id TEXT NOT NULL,
+			provider TEXT NOT NULL,
+			surface TEXT NOT NULL,
+			account_id TEXT NOT NULL,
+			created_at INTEGER NOT NULL,
+			last_used_at INTEGER NOT NULL,
+			PRIMARY KEY (user_id, provider, surface)
+		);
+		CREATE TABLE stainless_bindings (
+			account_id TEXT PRIMARY KEY,
+			headers_json TEXT NOT NULL,
+			created_at INTEGER NOT NULL,
+			expires_at INTEGER NOT NULL
+		);
+		CREATE TABLE oauth_sessions (
+			session_id TEXT PRIMARY KEY,
+			data_json TEXT NOT NULL,
+			created_at INTEGER NOT NULL,
+			expires_at INTEGER NOT NULL
+		);
+		CREATE TABLE refresh_locks (
+			account_id TEXT PRIMARY KEY,
+			lock_id TEXT NOT NULL,
+			created_at INTEGER NOT NULL,
+			expires_at INTEGER NOT NULL
+		)
+	`); err != nil {
+		t.Fatalf("create current-like schema: %v", err)
+	}
+
+	now := time.Now().Unix()
+	if _, err := db.Exec(`
+		INSERT INTO accounts (
+			id, email, provider, status, priority, priority_mode, error_message, bucket_key,
+			refresh_token_enc, access_token_enc, expires_at, created_at, last_used_at, last_refresh_at,
+			proxy_json, cell_id, identity_json, subject
+		) VALUES
+			('acct-1', 'acct-1@example.com', 'claude', 'active', 50, 'auto', '', 'claude:subject-1', '', '', 0, ?, NULL, NULL, '', '', '{}', 'subject-1'),
+			('acct-2', 'acct-2@example.com', 'claude', 'active', 50, 'auto', '', 'claude:subject-2', '', '', 0, ?, NULL, NULL, '', '', '{}', 'subject-2')
+	`, now, now); err != nil {
+		t.Fatalf("insert accounts: %v", err)
+	}
+	if _, err := db.Exec(`
+		INSERT INTO quota_buckets (bucket_key, provider, cooldown_until, state_json, updated_at) VALUES
+			('claude:subject-1', 'claude', NULL, '{"keep":true}', ?),
+			('claude:orphan', 'claude', NULL, '{"drop":true}', ?)
+	`, now, now); err != nil {
+		t.Fatalf("insert quota_buckets: %v", err)
+	}
+
+	if err := Migrate(dbPath); err != nil {
+		t.Fatalf("Migrate(): %v", err)
+	}
+
+	store, err := New(dbPath)
+	if err != nil {
+		t.Fatalf("New(): %v", err)
+	}
+	defer store.Close()
+
+	buckets, err := store.ListQuotaBuckets(context.Background())
+	if err != nil {
+		t.Fatalf("ListQuotaBuckets(): %v", err)
+	}
+	if len(buckets) != 2 {
+		t.Fatalf("len(buckets) = %d, want 2", len(buckets))
+	}
+
+	got := map[string]domain.QuotaBucket{}
+	for _, bucket := range buckets {
+		got[bucket.BucketKey] = *bucket
+	}
+	if _, ok := got["claude:orphan"]; ok {
+		t.Fatal("orphan bucket still exists after migrate")
+	}
+	if got["claude:subject-1"].StateJSON != `{"keep":true}` {
+		t.Fatalf("subject-1 StateJSON = %q, want preserved state", got["claude:subject-1"].StateJSON)
+	}
+	if _, ok := got["claude:subject-2"]; !ok {
+		t.Fatal("missing bucket for subject-2 after migrate")
+	}
 }
 
 func TestSaveAccount_WritesCurrentSchema(t *testing.T) {
