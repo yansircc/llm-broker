@@ -1,8 +1,8 @@
 <script lang="ts">
 	import { api } from '$lib/api';
-	import type { DashboardData, DashboardEvent } from '$lib/admin-types';
+	import type { DashboardData, DashboardEvent, RecentRequestLog } from '$lib/admin-types';
 	import ConfirmAction from '$lib/components/ConfirmAction.svelte';
-	import { eventTypeColor, fmtCost, fmtDate, fmtNum, fmtTime } from '$lib/format';
+	import { eventTypeColor, fmtCost, fmtDate, fmtNum, fmtTime, shortModel, statusColor } from '$lib/format';
 
 	let data = $state<DashboardData | null>(null);
 	let error = $state('');
@@ -45,6 +45,13 @@
 		if (ev.cooldown_until) facts.push({ label: 'cooldown', value: fmtDate(ev.cooldown_until) });
 		return facts;
 	}
+
+	function failureOutcome(log: RecentRequestLog): string {
+		const parts: string[] = [];
+		if (log.effect_kind) parts.push(log.effect_kind);
+		if (log.upstream_status) parts.push(String(log.upstream_status));
+		return parts.join(' / ') || log.status;
+	}
 </script>
 
 {#if error}
@@ -79,6 +86,48 @@
 						<td class="num">{fmtNum(usage.output_tokens)}</td>
 						<td class="num">{fmtNum(usage.cache_read_tokens)}</td>
 						<td class="num">{#if i === data.usage.length - 1}<b>{fmtCost(usage.cost_usd)}</b>{:else}{fmtCost(usage.cost_usd)}{/if}</td>
+					</tr>
+				{/each}
+			</tbody>
+		</table>
+	{/if}
+
+	<div class="section-header">
+		<h2>recent failed relays</h2>
+	</div>
+	{#if !data.recent_failures || data.recent_failures.length === 0}
+		<p class="muted">no failed relays yet</p>
+	{:else}
+		<table>
+			<thead>
+				<tr>
+					<th>time</th>
+					<th>provider</th>
+					<th>surface</th>
+					<th>model</th>
+					<th>path</th>
+					<th>account</th>
+					<th>cell</th>
+					<th>outcome</th>
+					<th>request id</th>
+					<th class="num">bytes</th>
+					<th class="num">attempt</th>
+				</tr>
+			</thead>
+			<tbody>
+				{#each data.recent_failures as log (log.id)}
+					<tr>
+						<td class="muted">{fmtTime(log.created_at)}</td>
+						<td>{log.provider}</td>
+						<td>{log.surface || '-'}</td>
+						<td>{shortModel(log.model)}</td>
+						<td>{log.path || '-'}</td>
+						<td>{log.account_id}</td>
+						<td>{log.cell_id || 'legacy direct'}</td>
+						<td class={statusColor(log.status)}>{failureOutcome(log)}</td>
+						<td>{log.upstream_request_id || '-'}</td>
+						<td class="num">{fmtNum(log.request_bytes)}</td>
+						<td class="num">{fmtNum(log.attempt_count)}</td>
 					</tr>
 				{/each}
 			</tbody>

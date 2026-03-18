@@ -3,7 +3,7 @@
 	import { goto } from '$app/navigation';
 	import { base } from '$app/paths';
 	import { api } from '$lib/api';
-	import type { AccountListItem, UserSurface } from '$lib/admin-types';
+	import type { AccountListItem, RecentRequestLog, UserSurface } from '$lib/admin-types';
 	import { timeAgo, fmtNum, fmtCost, fmtDate, tagClass, statusColor, shortModel } from '$lib/format';
 	import ConfirmAction from '$lib/components/ConfirmAction.svelte';
 
@@ -25,21 +25,6 @@
 		cost_usd: number;
 	}
 
-	interface RecentRequest {
-		id: number;
-		user_id: string;
-		account_id: string;
-		model: string;
-		input_tokens: number;
-		output_tokens: number;
-		cache_read_tokens: number;
-		cache_create_tokens: number;
-		cost_usd: number;
-		status: string;
-		duration_ms: number;
-		created_at: string;
-	}
-
 	interface UserDetail {
 		id: string;
 		name: string;
@@ -52,7 +37,7 @@
 		last_active_at: string | null;
 		usage: UsagePeriod[];
 		model_usage: ModelUsageRow[];
-		recent_requests: RecentRequest[];
+		recent_requests: RecentRequestLog[];
 	}
 
 	let user = $state<UserDetail | null>(null);
@@ -198,6 +183,13 @@
 		} finally {
 			savingPolicy = false;
 		}
+	}
+
+	function requestOutcome(request: RecentRequestLog): string {
+		const parts: string[] = [];
+		if (request.effect_kind) parts.push(request.effect_kind);
+		if (request.upstream_status) parts.push(String(request.upstream_status));
+		return parts.join(' / ') || request.status;
 	}
 </script>
 
@@ -357,23 +349,29 @@
 		<table><thead>
 			<tr>
 				<th>time</th>
+				<th>surface</th>
 				<th>model</th>
+				<th>path</th>
 				<th class="num">input</th>
 				<th class="num">output</th>
 				<th class="num">cache r/w</th>
 				<th>account</th>
-				<th>status</th>
+				<th>cell</th>
+				<th>outcome</th>
 				<th class="num">duration</th>
 			</tr></thead><tbody>
 			{#each requests as r (r.id)}
 				<tr>
 					<td class="muted">{new Date(r.created_at).toLocaleTimeString('en-GB', { hour12: false })}</td>
+					<td>{r.surface || '-'}</td>
 					<td>{shortModel(r.model)}</td>
+					<td>{r.path || '-'}</td>
 					<td class="num">{fmtNum(r.input_tokens)}</td>
 					<td class="num">{fmtNum(r.output_tokens)}</td>
 					<td class="num">{fmtNum(r.cache_read_tokens)} / {fmtNum(r.cache_create_tokens)}</td>
 					<td>{r.account_id}</td>
-					<td class={statusColor(r.status)}>{r.status}</td>
+					<td>{r.cell_id || 'legacy direct'}</td>
+					<td class={statusColor(r.status)}>{requestOutcome(r)}</td>
 					<td class="num">{r.duration_ms > 0 ? (r.duration_ms / 1000).toFixed(1) + 's' : '-'}</td>
 				</tr>
 			{/each}

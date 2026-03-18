@@ -44,6 +44,60 @@ export interface DashboardEvent {
 	ts: string;
 }
 
+export interface RecentRequestLog {
+	id: number;
+	user_id: string;
+	account_id: string;
+	provider: string;
+	surface: string;
+	model: string;
+	path: string;
+	cell_id?: string;
+	bucket_key?: string;
+	input_tokens: number;
+	output_tokens: number;
+	cache_read_tokens: number;
+	cache_create_tokens: number;
+	cost_usd: number;
+	status: string;
+	effect_kind?: string;
+	upstream_status?: number;
+	upstream_request_id?: string;
+	request_bytes: number;
+	attempt_count: number;
+	duration_ms: number;
+	created_at: string;
+}
+
+export interface RelayOutcomeStat {
+	provider: string;
+	surface: string;
+	effect_kind: string;
+	upstream_status?: number;
+	requests: number;
+	distinct_users: number;
+	distinct_accounts: number;
+	last_seen_at: string;
+}
+
+export interface CellRiskStat {
+	cell_id?: string;
+	cell_name: string;
+	provider: string;
+	region: string;
+	transport: string;
+	requests: number;
+	successes: number;
+	status_400: number;
+	status_403: number;
+	status_429: number;
+	blocks: number;
+	transport_errors: number;
+	distinct_users: number;
+	distinct_accounts: number;
+	last_seen_at: string;
+}
+
 export interface EgressCellSummary {
 	id: string;
 	name: string;
@@ -75,6 +129,9 @@ export interface DashboardData {
 	accounts: AccountListItem[];
 	users: UserSummary[];
 	events: DashboardEvent[];
+	outcome_stats: RelayOutcomeStat[];
+	cell_risk: CellRiskStat[];
+	recent_failures: RecentRequestLog[];
 }
 
 export interface ProxyConfig {
