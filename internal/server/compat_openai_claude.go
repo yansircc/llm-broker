@@ -73,9 +73,42 @@ func compatOpenAIChatToClaudeRequest(req *compatOpenAIChatRequest) (*compatClaud
 	if instruction := compatClaudeResponseFormatInstruction(responseFormat); instruction != "" {
 		systemParts = append(systemParts, instruction)
 	}
-	claudeReq.System = strings.Join(systemParts, "\n\n")
+	claudeReq.Messages = compatInjectClaudeSystemReminders(claudeReq.Messages, systemParts)
 
 	return claudeReq, requestedModel, nil
+}
+
+func compatInjectClaudeSystemReminders(messages []compatClaudeMessage, systemParts []string) []compatClaudeMessage {
+	reminder := compatClaudeSystemReminder(systemParts)
+	if reminder == "" {
+		return messages
+	}
+
+	for i := range messages {
+		if messages[i].Role != "user" {
+			continue
+		}
+		if messages[i].Content == "" {
+			messages[i].Content = reminder
+		} else {
+			messages[i].Content = reminder + "\n\n" + messages[i].Content
+		}
+		return messages
+	}
+
+	return append([]compatClaudeMessage{{Role: "user", Content: reminder}}, messages...)
+}
+
+func compatClaudeSystemReminder(systemParts []string) string {
+	blocks := make([]string, 0, len(systemParts))
+	for _, part := range systemParts {
+		trimmed := strings.TrimSpace(part)
+		if trimmed == "" {
+			continue
+		}
+		blocks = append(blocks, "<system-reminder>\n"+trimmed+"\n</system-reminder>")
+	}
+	return strings.Join(blocks, "\n\n")
 }
 
 func compatClaudeToOpenAIChatResponse(body []byte, requestedModel string) (*compatOpenAIChatResponse, error) {
