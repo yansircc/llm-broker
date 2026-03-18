@@ -45,16 +45,18 @@ type EgressCellSummaryResponse struct {
 }
 
 type DashboardAccount struct {
-	ID            string                      `json:"id"`
-	Email         string                      `json:"email"`
-	Provider      string                      `json:"provider"`
-	Status        string                      `json:"status"`
-	WeightMode    string                      `json:"weight_mode"`
-	Weight        int                         `json:"weight"`
-	CooldownUntil *time.Time                  `json:"cooldown_until,omitempty"`
-	LastUsedAt    *time.Time                  `json:"last_used_at,omitempty"`
-	CellID        string                      `json:"cell_id,omitempty"`
-	Windows       []UtilizationWindowResponse `json:"windows"`
+	ID              string                      `json:"id"`
+	Email           string                      `json:"email"`
+	Provider        string                      `json:"provider"`
+	Status          string                      `json:"status"`
+	WeightMode      string                      `json:"weight_mode"`
+	Weight          int                         `json:"weight"`
+	CooldownUntil   *time.Time                  `json:"cooldown_until,omitempty"`
+	LastUsedAt      *time.Time                  `json:"last_used_at,omitempty"`
+	CellID          string                      `json:"cell_id,omitempty"`
+	AvailableNative bool                        `json:"available_native"`
+	AvailableCompat bool                        `json:"available_compat"`
+	Windows         []UtilizationWindowResponse `json:"windows"`
 }
 
 type DashboardUser struct {
@@ -69,14 +71,15 @@ type DashboardUser struct {
 }
 
 type DashboardEvent struct {
-	Type          string     `json:"type"`
-	AccountID     string     `json:"account_id,omitempty"`
-	UserID        string     `json:"user_id,omitempty"`
-	BucketKey     string     `json:"bucket_key,omitempty"`
-	CellID        string     `json:"cell_id,omitempty"`
-	CooldownUntil *time.Time `json:"cooldown_until,omitempty"`
-	Message       string     `json:"message"`
-	Timestamp     string     `json:"ts"`
+	Type           string     `json:"type"`
+	AccountID      string     `json:"account_id,omitempty"`
+	UserID         string     `json:"user_id,omitempty"`
+	BucketKey      string     `json:"bucket_key,omitempty"`
+	CellID         string     `json:"cell_id,omitempty"`
+	CooldownUntil  *time.Time `json:"cooldown_until,omitempty"`
+	UpstreamStatus int        `json:"upstream_status,omitempty"`
+	Message        string     `json:"message"`
+	Timestamp      string     `json:"ts"`
 }
 
 type ProviderOptionResponse struct {
@@ -119,17 +122,19 @@ type AccountDetailResponse struct {
 // ---------------------------------------------------------------------------
 
 type AccountListItem struct {
-	ID            string                      `json:"id"`
-	Email         string                      `json:"email"`
-	Provider      string                      `json:"provider"`
-	Status        string                      `json:"status"`
-	Weight        int                         `json:"weight"`
-	WeightMode    string                      `json:"weight_mode"`
-	LastUsedAt    *time.Time                  `json:"last_used_at,omitempty"`
-	CooldownUntil *time.Time                  `json:"cooldown_until,omitempty"`
-	CellID        string                      `json:"cell_id,omitempty"`
-	Cell          *EgressCellSummaryResponse  `json:"cell,omitempty"`
-	Windows       []UtilizationWindowResponse `json:"windows"`
+	ID              string                      `json:"id"`
+	Email           string                      `json:"email"`
+	Provider        string                      `json:"provider"`
+	Status          string                      `json:"status"`
+	Weight          int                         `json:"weight"`
+	WeightMode      string                      `json:"weight_mode"`
+	LastUsedAt      *time.Time                  `json:"last_used_at,omitempty"`
+	CooldownUntil   *time.Time                  `json:"cooldown_until,omitempty"`
+	CellID          string                      `json:"cell_id,omitempty"`
+	AvailableNative bool                        `json:"available_native"`
+	AvailableCompat bool                        `json:"available_compat"`
+	Cell            *EgressCellSummaryResponse  `json:"cell,omitempty"`
+	Windows         []UtilizationWindowResponse `json:"windows"`
 }
 
 type EgressCellResponse struct {

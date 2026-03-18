@@ -218,6 +218,38 @@ func TestDashboard_UsersIncludePolicy(t *testing.T) {
 	}
 }
 
+func TestDashboard_EventsIncludeUpstreamStatus(t *testing.T) {
+	srv := newTestServer(t)
+	until := time.Now().Add(10 * time.Minute).UTC()
+	srv.bus.Publish(events.Event{
+		Type:           events.EventReject,
+		AccountID:      "acct-1",
+		CooldownUntil:  &until,
+		UpstreamStatus: http.StatusForbidden,
+		Message:        "upstream 403 rejected request",
+	})
+
+	w := httptest.NewRecorder()
+	srv.handleDashboard(w, adminRequest("GET", "/admin/dashboard"))
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status %d, body: %s", w.Code, w.Body.String())
+	}
+
+	var result struct {
+		Events []map[string]any `json:"events"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &result); err != nil {
+		t.Fatalf("json.Unmarshal: %v", err)
+	}
+	if len(result.Events) != 1 {
+		t.Fatalf("len(events) = %d, want 1", len(result.Events))
+	}
+	if got := result.Events[0]["upstream_status"]; got != float64(http.StatusForbidden) {
+		t.Fatalf("upstream_status = %#v, want %d", got, http.StatusForbidden)
+	}
+}
+
 // ---------------------------------------------------------------------------
 // Account detail contract tests
 // ---------------------------------------------------------------------------
@@ -248,6 +280,77 @@ func TestGetAccount_EmptySessions(t *testing.T) {
 
 	// sessions must be [] not null
 	assertJSONArray(t, body, "sessions")
+}
+
+func TestListAccounts_IncludesSurfaceAvailability(t *testing.T) {
+	srv := newTestServer(t)
+
+	if err := srv.store.SaveAccount(context.Background(), &domain.Account{
+		ID:       "acct-native",
+		Email:    "native@example.com",
+		Provider: domain.ProviderClaude,
+		Status:   domain.StatusActive,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := srv.store.SaveAccount(context.Background(), &domain.Account{
+		ID:       "acct-compat",
+		Email:    "compat@example.com",
+		Provider: domain.ProviderClaude,
+		Status:   domain.StatusActive,
+		CellID:   "cell-compat-1",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := srv.store.SaveEgressCell(context.Background(), &domain.EgressCell{
+		ID:        "cell-compat-1",
+		Name:      "compat lane",
+		Status:    domain.EgressCellActive,
+		Proxy:     &domain.ProxyConfig{Type: "socks5", Host: "127.0.0.1", Port: 11082},
+		Labels:    map[string]string{"lane": "compat"},
+		CreatedAt: time.Now().UTC(),
+		UpdatedAt: time.Now().UTC(),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	srv.pool, _ = pool.New(srv.store, srv.bus)
+	srv.pool.SetDrivers(map[domain.Provider]driver.SchedulerDriver{
+		domain.ProviderClaude: driver.NewClaudeDriver(driver.ClaudeConfig{}, nil),
+	})
+
+	w := httptest.NewRecorder()
+	srv.handleListAccounts(w, adminRequest("GET", "/admin/accounts"))
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status %d, body: %s", w.Code, w.Body.String())
+	}
+
+	var result []map[string]any
+	if err := json.Unmarshal(w.Body.Bytes(), &result); err != nil {
+		t.Fatalf("json.Unmarshal: %v", err)
+	}
+	if len(result) != 2 {
+		t.Fatalf("len(accounts) = %d, want 2", len(result))
+	}
+
+	byID := make(map[string]map[string]any, len(result))
+	for _, item := range result {
+		id, _ := item["id"].(string)
+		byID[id] = item
+	}
+
+	if got := byID["acct-native"]["available_native"]; got != true {
+		t.Fatalf("acct-native available_native = %#v, want true", got)
+	}
+	if got := byID["acct-native"]["available_compat"]; got != false {
+		t.Fatalf("acct-native available_compat = %#v, want false", got)
+	}
+	if got := byID["acct-compat"]["available_native"]; got != false {
+		t.Fatalf("acct-compat available_native = %#v, want false", got)
+	}
+	if got := byID["acct-compat"]["available_compat"]; got != true {
+		t.Fatalf("acct-compat available_compat = %#v, want true", got)
+	}
 }
 
 func TestGetAccount_NullableFields(t *testing.T) {

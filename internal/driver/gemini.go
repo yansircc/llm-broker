@@ -80,10 +80,11 @@ func (d *GeminiDriver) Interpret(statusCode int, headers http.Header, body []byt
 		return Effect{Kind: EffectSuccess, Scope: EffectScopeBucket, UpdatedState: mustMarshalJSON(state)}
 	case 529:
 		return Effect{
-			Kind:          EffectOverload,
-			Scope:         EffectScopeBucket,
-			CooldownUntil: time.Now().Add(d.cfg.Pauses.Pause529),
-			UpdatedState:  mustMarshalJSON(state),
+			Kind:           EffectOverload,
+			Scope:          EffectScopeBucket,
+			CooldownUntil:  time.Now().Add(d.cfg.Pauses.Pause529),
+			UpstreamStatus: 529,
+			UpdatedState:   mustMarshalJSON(state),
 		}
 	case 429:
 		until := time.Now().Add(d.cfg.Pauses.Pause429)
@@ -93,30 +94,34 @@ func (d *GeminiDriver) Interpret(statusCode int, headers http.Header, body []byt
 			until = time.Now().Add(retryAfter)
 		}
 		return Effect{
-			Kind:          EffectCooldown,
-			Scope:         EffectScopeBucket,
-			CooldownUntil: until,
-			UpdatedState:  mustMarshalJSON(state),
+			Kind:           EffectCooldown,
+			Scope:          EffectScopeBucket,
+			CooldownUntil:  until,
+			UpstreamStatus: 429,
+			UpdatedState:   mustMarshalJSON(state),
 		}
 	case 403:
 		if geminiBanPattern.Match(body) {
 			return Effect{
-				Kind:          EffectBlock,
-				CooldownUntil: time.Now().Add(d.cfg.Pauses.Pause401),
-				ErrorMessage:  fmt.Sprintf("ban signal detected: %s", truncate(string(body), 200)),
-				UpdatedState:  mustMarshalJSON(state),
+				Kind:           EffectBlock,
+				CooldownUntil:  time.Now().Add(d.cfg.Pauses.Pause401),
+				ErrorMessage:   fmt.Sprintf("ban signal detected: %s", truncate(string(body), 200)),
+				UpstreamStatus: 403,
+				UpdatedState:   mustMarshalJSON(state),
 			}
 		}
 		return Effect{
-			Kind:          EffectCooldown,
-			CooldownUntil: time.Now().Add(d.cfg.Pauses.Pause403),
-			UpdatedState:  mustMarshalJSON(state),
+			Kind:           EffectCooldown,
+			CooldownUntil:  time.Now().Add(d.cfg.Pauses.Pause403),
+			UpstreamStatus: 403,
+			UpdatedState:   mustMarshalJSON(state),
 		}
 	case 401:
 		return Effect{
-			Kind:          EffectAuthFail,
-			CooldownUntil: time.Now().Add(d.cfg.Pauses.Pause401Refresh),
-			UpdatedState:  mustMarshalJSON(state),
+			Kind:           EffectAuthFail,
+			CooldownUntil:  time.Now().Add(d.cfg.Pauses.Pause401Refresh),
+			UpstreamStatus: 401,
+			UpdatedState:   mustMarshalJSON(state),
 		}
 	default:
 		return Effect{Kind: EffectSuccess, Scope: EffectScopeBucket, UpdatedState: mustMarshalJSON(state)}

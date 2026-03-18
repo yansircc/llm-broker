@@ -36,6 +36,11 @@ type bucketCandidate struct {
 	priority int
 }
 
+type SurfaceAvailability struct {
+	Native bool
+	Compat bool
+}
+
 func cellLane(cell *domain.EgressCell) domain.Surface {
 	if cell == nil || len(cell.Labels) == 0 {
 		return ""
@@ -97,6 +102,30 @@ func (p *Pool) IsAvailableForSurface(accountID string, drv driver.SchedulerDrive
 		return false
 	}
 	return p.isAvailable(acct, drv, model, time.Now())
+}
+
+func (p *Pool) SurfaceAvailabilityMap() map[string]SurfaceAvailability {
+	if err := p.refreshState(context.Background()); err != nil {
+		slog.Warn("pool refresh failed", "op", "surface_availability_map", "error", err)
+		return map[string]SurfaceAvailability{}
+	}
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+
+	now := time.Now()
+	result := make(map[string]SurfaceAvailability, len(p.accounts))
+	for _, acct := range p.accounts {
+		drv, ok := p.drivers[acct.Provider]
+		if !ok {
+			result[acct.ID] = SurfaceAvailability{}
+			continue
+		}
+		result[acct.ID] = SurfaceAvailability{
+			Native: p.allowedOnSurfaceLocked(acct, domain.SurfaceNative) && p.isAvailable(acct, drv, "", now),
+			Compat: p.allowedOnSurfaceLocked(acct, domain.SurfaceCompat) && p.isAvailable(acct, drv, "", now),
+		}
+	}
+	return result
 }
 
 func (p *Pool) Pick(drv driver.SchedulerDriver, exclusions []Exclusion, model string, boundAccountID string) (*domain.Account, error) {

@@ -39,6 +39,7 @@ export interface DashboardEvent {
 	bucket_key?: string;
 	cell_id?: string;
 	cooldown_until?: string;
+	upstream_status?: number;
 	message: string;
 	ts: string;
 }
@@ -62,6 +63,8 @@ export interface AccountListItem {
 	last_used_at: string | null;
 	cooldown_until: string | null;
 	cell_id?: string;
+	available_native: boolean;
+	available_compat: boolean;
 	cell?: EgressCellSummary | null;
 	windows: UtilWindow[];
 }

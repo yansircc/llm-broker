@@ -92,10 +92,11 @@ func (d *ClaudeDriver) Interpret(statusCode int, headers http.Header, body []byt
 
 	case 529:
 		return Effect{
-			Kind:          EffectOverload,
-			Scope:         EffectScopeBucket,
-			CooldownUntil: time.Now().Add(d.cfg.Pauses.Pause529),
-			UpdatedState:  mustMarshalJSON(state),
+			Kind:           EffectOverload,
+			Scope:          EffectScopeBucket,
+			CooldownUntil:  time.Now().Add(d.cfg.Pauses.Pause529),
+			UpstreamStatus: 529,
+			UpdatedState:   mustMarshalJSON(state),
 		}
 
 	case 429:
@@ -115,59 +116,66 @@ func (d *ClaudeDriver) Interpret(statusCode int, headers http.Header, body []byt
 			}
 		}
 		return Effect{
-			Kind:          EffectCooldown,
-			Scope:         EffectScopeBucket,
-			CooldownUntil: until,
-			UpdatedState:  mustMarshalJSON(state),
+			Kind:           EffectCooldown,
+			Scope:          EffectScopeBucket,
+			CooldownUntil:  until,
+			UpstreamStatus: 429,
+			UpdatedState:   mustMarshalJSON(state),
 		}
 
 	case 403:
 		if banSignalPattern.MatchString(string(body)) {
 			return Effect{
-				Kind:          EffectBlock,
-				Scope:         EffectScopeBucket,
-				CooldownUntil: time.Now().Add(d.cfg.Pauses.Pause401),
-				ErrorMessage:  fmt.Sprintf("ban signal detected: %s", truncate(string(body), 200)),
-				UpdatedState:  mustMarshalJSON(state),
+				Kind:           EffectBlock,
+				Scope:          EffectScopeBucket,
+				CooldownUntil:  time.Now().Add(d.cfg.Pauses.Pause401),
+				ErrorMessage:   fmt.Sprintf("ban signal detected: %s", truncate(string(body), 200)),
+				UpstreamStatus: 403,
+				UpdatedState:   mustMarshalJSON(state),
 			}
 		}
 		return Effect{
-			Kind:          EffectCooldown,
-			Scope:         EffectScopeBucket,
-			CooldownUntil: time.Now().Add(d.cfg.Pauses.Pause403),
-			UpdatedState:  mustMarshalJSON(state),
+			Kind:           EffectCooldown,
+			Scope:          EffectScopeBucket,
+			CooldownUntil:  time.Now().Add(d.cfg.Pauses.Pause403),
+			UpstreamStatus: 403,
+			UpdatedState:   mustMarshalJSON(state),
 		}
 
 	case 400:
 		if banSignalPattern.MatchString(string(body)) {
 			return Effect{
-				Kind:          EffectBlock,
-				Scope:         EffectScopeBucket,
-				CooldownUntil: time.Now().Add(d.cfg.Pauses.Pause401),
-				ErrorMessage:  fmt.Sprintf("ban signal detected: %s", truncate(string(body), 200)),
-				UpdatedState:  mustMarshalJSON(state),
+				Kind:           EffectBlock,
+				Scope:          EffectScopeBucket,
+				CooldownUntil:  time.Now().Add(d.cfg.Pauses.Pause401),
+				ErrorMessage:   fmt.Sprintf("ban signal detected: %s", truncate(string(body), 200)),
+				UpstreamStatus: 400,
+				UpdatedState:   mustMarshalJSON(state),
 			}
 		}
 		return Effect{
-			Kind:          EffectCooldown,
-			Scope:         EffectScopeBucket,
-			CooldownUntil: time.Now().Add(d.cfg.Pauses.Pause403),
-			UpdatedState:  mustMarshalJSON(state),
+			Kind:           EffectCooldown,
+			Scope:          EffectScopeBucket,
+			CooldownUntil:  time.Now().Add(d.cfg.Pauses.Pause403),
+			UpstreamStatus: 400,
+			UpdatedState:   mustMarshalJSON(state),
 		}
 
 	case 401:
 		return Effect{
-			Kind:          EffectAuthFail,
-			Scope:         EffectScopeBucket,
-			CooldownUntil: time.Now().Add(d.cfg.Pauses.Pause401Refresh),
-			UpdatedState:  mustMarshalJSON(state),
+			Kind:           EffectAuthFail,
+			Scope:          EffectScopeBucket,
+			CooldownUntil:  time.Now().Add(d.cfg.Pauses.Pause401Refresh),
+			UpstreamStatus: 401,
+			UpdatedState:   mustMarshalJSON(state),
 		}
 
 	case 500:
 		return Effect{
-			Kind:         EffectServerError,
-			Scope:        EffectScopeBucket,
-			UpdatedState: mustMarshalJSON(state),
+			Kind:           EffectServerError,
+			Scope:          EffectScopeBucket,
+			UpstreamStatus: 500,
+			UpdatedState:   mustMarshalJSON(state),
 		}
 	}
 
@@ -301,23 +309,32 @@ func claudeRequiresFreshSession(body map[string]interface{}) bool {
 	if len(messages) > 1 {
 		return true
 	}
-	if len(messages) == 1 {
-		if m, ok := messages[0].(map[string]interface{}); ok {
-			if content, ok := m["content"].([]interface{}); ok {
-				userTexts := 0
-				for _, block := range content {
-					if b, ok := block.(map[string]interface{}); ok && b["type"] == "text" {
-						userTexts++
-					}
-				}
-				if userTexts > 1 {
-					return true
-				}
+	for _, raw := range messages {
+		msg, ok := raw.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		role, _ := msg["role"].(string)
+		if role != "" && role != "user" {
+			return true
+		}
+		content, ok := msg["content"].([]interface{})
+		if !ok {
+			continue
+		}
+		for _, block := range content {
+			part, ok := block.(map[string]interface{})
+			if !ok {
+				continue
+			}
+			kind, _ := part["type"].(string)
+			if kind == "tool_use" || kind == "tool_result" {
+				return true
 			}
 		}
 	}
 	tools, _ := body["tools"].([]interface{})
-	return len(tools) == 0
+	return len(tools) > 0
 }
 
 func (d *ClaudeDriver) ParseJSONUsage(body []byte) *Usage {

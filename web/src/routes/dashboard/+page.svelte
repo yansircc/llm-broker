@@ -60,6 +60,18 @@
 			default: return 'tag';
 		}
 	}
+
+	function activeAccounts() {
+		return data?.accounts.filter((acct) => acct.status === 'active').length ?? 0;
+	}
+
+	function availableNativeAccounts() {
+		return data?.accounts.filter((acct) => acct.available_native).length ?? 0;
+	}
+
+	function availableCompatAccounts() {
+		return data?.accounts.filter((acct) => acct.available_compat).length ?? 0;
+	}
 </script>
 
 {#if error}
@@ -73,6 +85,9 @@
 	<div class="bar">
 		<span>cells {cells.length}</span>
 		<span>accounts {data.accounts.length}</span>
+		<span>active {activeAccounts()}</span>
+		<span>available native {availableNativeAccounts()}</span>
+		<span>available compat {availableCompatAccounts()}</span>
 		<span>legacy direct {data.accounts.filter((acct) => !acct.cell_id).length}</span>
 		<span>cooling cells {cells.filter((cell) => activeCooldownUntil(cell)).length}</span>
 		<span><a href="{base}/migrations">migration</a></span>

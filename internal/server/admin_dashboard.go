@@ -34,20 +34,24 @@ func (s *Server) dashboardUsage(ctx context.Context, loc *time.Location) []domai
 
 func (s *Server) dashboardAccounts() []DashboardAccount {
 	accounts := s.pool.List()
+	availability := s.pool.SurfaceAvailabilityMap()
 	views := make([]DashboardAccount, 0, len(accounts))
 	for _, acct := range accounts {
 		proj := s.projectAccount(acct)
+		avail := availability[acct.ID]
 		views = append(views, DashboardAccount{
-			ID:            acct.ID,
-			Email:         acct.Email,
-			Provider:      string(acct.Provider),
-			Status:        string(acct.Status),
-			WeightMode:    acct.PriorityMode,
-			Weight:        proj.effectiveWeight,
-			CooldownUntil: acct.CooldownUntil,
-			LastUsedAt:    acct.LastUsedAt,
-			CellID:        acct.CellID,
-			Windows:       proj.windows,
+			ID:              acct.ID,
+			Email:           acct.Email,
+			Provider:        string(acct.Provider),
+			Status:          string(acct.Status),
+			WeightMode:      acct.PriorityMode,
+			Weight:          proj.effectiveWeight,
+			CooldownUntil:   acct.CooldownUntil,
+			LastUsedAt:      acct.LastUsedAt,
+			CellID:          acct.CellID,
+			AvailableNative: avail.Native,
+			AvailableCompat: avail.Compat,
+			Windows:         proj.windows,
 		})
 	}
 	return views
@@ -85,14 +89,15 @@ func (s *Server) dashboardEvents(limit int) []DashboardEvent {
 	for i := len(recentEvents) - 1; i >= 0; i-- {
 		event := recentEvents[i]
 		views = append(views, DashboardEvent{
-			Type:          string(event.Type),
-			AccountID:     event.AccountID,
-			UserID:        event.UserID,
-			BucketKey:     event.BucketKey,
-			CellID:        event.CellID,
-			CooldownUntil: event.CooldownUntil,
-			Message:       event.Message,
-			Timestamp:     event.Timestamp.Format(time.RFC3339),
+			Type:           string(event.Type),
+			AccountID:      event.AccountID,
+			UserID:         event.UserID,
+			BucketKey:      event.BucketKey,
+			CellID:         event.CellID,
+			CooldownUntil:  event.CooldownUntil,
+			UpstreamStatus: event.UpstreamStatus,
+			Message:        event.Message,
+			Timestamp:      event.Timestamp.Format(time.RFC3339),
 		})
 	}
 	return views

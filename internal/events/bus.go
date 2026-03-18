@@ -11,6 +11,7 @@ type EventType string
 
 const (
 	EventBan        EventType = "ban"
+	EventReject     EventType = "reject"
 	EventRefresh    EventType = "refresh"
 	EventRateLimit  EventType = "ratelimit"
 	EventRecover    EventType = "recover"
@@ -21,14 +22,15 @@ const (
 )
 
 type Event struct {
-	Type          EventType  `json:"type"`
-	AccountID     string     `json:"account_id,omitempty"`
-	UserID        string     `json:"user_id,omitempty"`
-	BucketKey     string     `json:"bucket_key,omitempty"`
-	CellID        string     `json:"cell_id,omitempty"`
-	CooldownUntil *time.Time `json:"cooldown_until,omitempty"`
-	Message       string     `json:"message"`
-	Timestamp     time.Time  `json:"ts"`
+	Type           EventType  `json:"type"`
+	AccountID      string     `json:"account_id,omitempty"`
+	UserID         string     `json:"user_id,omitempty"`
+	BucketKey      string     `json:"bucket_key,omitempty"`
+	CellID         string     `json:"cell_id,omitempty"`
+	CooldownUntil  *time.Time `json:"cooldown_until,omitempty"`
+	UpstreamStatus int        `json:"upstream_status,omitempty"`
+	Message        string     `json:"message"`
+	Timestamp      time.Time  `json:"ts"`
 }
 
 type Bus struct {
@@ -75,6 +77,9 @@ func (b *Bus) Publish(e Event) {
 	}
 	if e.CooldownUntil != nil {
 		attrs = append(attrs, "cooldownUntil", e.CooldownUntil.Format(time.RFC3339))
+	}
+	if e.UpstreamStatus > 0 {
+		attrs = append(attrs, "upstreamStatus", e.UpstreamStatus)
 	}
 	if e.Message != "" {
 		attrs = append(attrs, "detail", e.Message)

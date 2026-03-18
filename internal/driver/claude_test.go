@@ -74,6 +74,9 @@ func TestClaudeInterpret_400DisabledOrganizationBlocks(t *testing.T) {
 	if effect.Scope != EffectScopeBucket {
 		t.Fatalf("Scope = %v, want bucket", effect.Scope)
 	}
+	if effect.UpstreamStatus != http.StatusBadRequest {
+		t.Fatalf("UpstreamStatus = %d, want %d", effect.UpstreamStatus, http.StatusBadRequest)
+	}
 	if effect.CooldownUntil.Before(before.Add(50 * time.Second)) {
 		t.Fatalf("CooldownUntil = %s, want around now+1m", effect.CooldownUntil.Format(time.RFC3339))
 	}
@@ -82,5 +85,96 @@ func TestClaudeInterpret_400DisabledOrganizationBlocks(t *testing.T) {
 	}
 	if !json.Valid(effect.UpdatedState) {
 		t.Fatalf("UpdatedState = %q, want valid JSON", string(effect.UpdatedState))
+	}
+}
+
+func TestClaudeInterpret_403NonBanKeepsRejectStatus(t *testing.T) {
+	d := NewClaudeDriver(ClaudeConfig{
+		Pauses: ErrorPauses{Pause403: 10 * time.Minute},
+	}, nil)
+
+	effect := d.Interpret(http.StatusForbidden, make(http.Header), []byte(`{"error":{"message":"request rejected"}}`), "claude-sonnet-4-6", json.RawMessage(`{}`))
+
+	if effect.Kind != EffectCooldown {
+		t.Fatalf("Kind = %v, want cooldown", effect.Kind)
+	}
+	if effect.UpstreamStatus != http.StatusForbidden {
+		t.Fatalf("UpstreamStatus = %d, want %d", effect.UpstreamStatus, http.StatusForbidden)
+	}
+}
+
+func TestClaudeRequiresFreshSession(t *testing.T) {
+	tests := []struct {
+		name string
+		body map[string]interface{}
+		want bool
+	}{
+		{
+			name: "one-shot user text stays portable",
+			body: map[string]interface{}{
+				"messages": []interface{}{
+					map[string]interface{}{
+						"role": "user",
+						"content": []interface{}{
+							map[string]interface{}{"type": "text", "text": "hello"},
+						},
+					},
+				},
+			},
+			want: false,
+		},
+		{
+			name: "tools require same session",
+			body: map[string]interface{}{
+				"messages": []interface{}{
+					map[string]interface{}{"role": "user", "content": "hello"},
+				},
+				"tools": []interface{}{
+					map[string]interface{}{"name": "run"},
+				},
+			},
+			want: true,
+		},
+		{
+			name: "assistant turn requires same session",
+			body: map[string]interface{}{
+				"messages": []interface{}{
+					map[string]interface{}{"role": "assistant", "content": "hello"},
+				},
+			},
+			want: true,
+		},
+		{
+			name: "tool result requires same session",
+			body: map[string]interface{}{
+				"messages": []interface{}{
+					map[string]interface{}{
+						"role": "user",
+						"content": []interface{}{
+							map[string]interface{}{"type": "tool_result", "tool_use_id": "tool-1", "content": "done"},
+						},
+					},
+				},
+			},
+			want: true,
+		},
+		{
+			name: "multi-turn requires same session",
+			body: map[string]interface{}{
+				"messages": []interface{}{
+					map[string]interface{}{"role": "user", "content": "hello"},
+					map[string]interface{}{"role": "user", "content": "follow up"},
+				},
+			},
+			want: true,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := claudeRequiresFreshSession(tc.body); got != tc.want {
+				t.Fatalf("claudeRequiresFreshSession() = %v, want %v", got, tc.want)
+			}
+		})
 	}
 }

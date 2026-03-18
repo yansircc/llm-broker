@@ -41,6 +41,7 @@
 		if (ev.account_id) facts.push({ label: 'account', value: ev.account_id });
 		if (ev.bucket_key) facts.push({ label: 'bucket', value: ev.bucket_key });
 		if (ev.cell_id) facts.push({ label: 'cell', value: ev.cell_id });
+		if (ev.upstream_status) facts.push({ label: 'status', value: String(ev.upstream_status) });
 		if (ev.cooldown_until) facts.push({ label: 'cooldown', value: fmtDate(ev.cooldown_until) });
 		return facts;
 	}

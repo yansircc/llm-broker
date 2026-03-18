@@ -274,6 +274,43 @@ func TestPickForSurface_SeparatesNativeAndCompatLanes(t *testing.T) {
 	}
 }
 
+func TestSurfaceAvailabilityMap_RespectsSurfaceLanes(t *testing.T) {
+	native := activeAccount("native-avail", "native@x")
+	compat := activeAccount("compat-avail", "compat@x")
+	compat.CellID = "cell-compat"
+
+	p := newTestPool(t, native, compat)
+	p.SetDrivers(map[domain.Provider]driver.SchedulerDriver{
+		domain.ProviderClaude: testDriver,
+	})
+	if err := p.SaveCell(&domain.EgressCell{
+		ID:        "cell-compat",
+		Name:      "compat",
+		Status:    domain.EgressCellActive,
+		Proxy:     &domain.ProxyConfig{Type: "socks5", Host: "10.0.0.3", Port: 11082},
+		Labels:    map[string]string{"lane": "compat"},
+		CreatedAt: time.Now().UTC(),
+		UpdatedAt: time.Now().UTC(),
+	}); err != nil {
+		t.Fatalf("SaveCell(cell-compat): %v", err)
+	}
+
+	availability := p.SurfaceAvailabilityMap()
+
+	if !availability[native.ID].Native {
+		t.Fatal("native legacy-direct account should be native-available")
+	}
+	if availability[native.ID].Compat {
+		t.Fatal("native legacy-direct account should not be compat-available")
+	}
+	if availability[compat.ID].Native {
+		t.Fatal("compat lane account should not be native-available")
+	}
+	if !availability[compat.ID].Compat {
+		t.Fatal("compat lane account should be compat-available")
+	}
+}
+
 func TestCooldownCellForAccount(t *testing.T) {
 	acct := activeAccount("a", "a@x")
 	acct.CellID = "cell-a"
@@ -870,16 +907,18 @@ func TestObserve_EventCooldownUsesActualValue(t *testing.T) {
 
 	longCooldown := time.Now().Add(30 * time.Minute)
 	p.Observe(acct.ID, driver.Effect{
-		Kind:          driver.EffectCooldown,
-		Scope:         driver.EffectScopeBucket,
-		CooldownUntil: longCooldown,
+		Kind:           driver.EffectCooldown,
+		Scope:          driver.EffectScopeBucket,
+		CooldownUntil:  longCooldown,
+		UpstreamStatus: 429,
 	})
 
 	shortCooldown := time.Now().Add(5 * time.Minute)
 	p.Observe(acct.ID, driver.Effect{
-		Kind:          driver.EffectCooldown,
-		Scope:         driver.EffectScopeBucket,
-		CooldownUntil: shortCooldown,
+		Kind:           driver.EffectCooldown,
+		Scope:          driver.EffectScopeBucket,
+		CooldownUntil:  shortCooldown,
+		UpstreamStatus: 429,
 	})
 
 	recent := p.bus.Recent(1)
@@ -890,6 +929,9 @@ func TestObserve_EventCooldownUsesActualValue(t *testing.T) {
 	if evt.Type != events.EventRateLimit {
 		t.Fatalf("expected EventRateLimit, got %s", evt.Type)
 	}
+	if evt.UpstreamStatus != 429 {
+		t.Fatalf("event UpstreamStatus = %d, want 429", evt.UpstreamStatus)
+	}
 	if evt.CooldownUntil == nil {
 		t.Fatal("event CooldownUntil is nil")
 	}
@@ -898,6 +940,40 @@ func TestObserve_EventCooldownUsesActualValue(t *testing.T) {
 	}
 	if !strings.Contains(evt.Message, longCooldown.UTC().Format(time.RFC3339)) {
 		t.Fatalf("event Message should contain actual cooldown time, got %q", evt.Message)
+	}
+	if !strings.Contains(evt.Message, "upstream 429") {
+		t.Fatalf("event Message should contain upstream status, got %q", evt.Message)
+	}
+}
+
+func TestObserve_Cooldown403EmitsRejectEvent(t *testing.T) {
+	acct := activeAccount("rej-1", "rej@test.com")
+	p := newTestPool(t, acct)
+	p.SetDrivers(map[domain.Provider]driver.SchedulerDriver{
+		domain.ProviderClaude: testDriver,
+	})
+
+	until := time.Now().Add(10 * time.Minute)
+	p.Observe(acct.ID, driver.Effect{
+		Kind:           driver.EffectCooldown,
+		Scope:          driver.EffectScopeBucket,
+		CooldownUntil:  until,
+		UpstreamStatus: 403,
+	})
+
+	recent := p.bus.Recent(1)
+	if len(recent) != 1 {
+		t.Fatalf("len(recent) = %d, want 1", len(recent))
+	}
+	evt := recent[0]
+	if evt.Type != events.EventReject {
+		t.Fatalf("expected EventReject, got %s", evt.Type)
+	}
+	if evt.UpstreamStatus != 403 {
+		t.Fatalf("event UpstreamStatus = %d, want 403", evt.UpstreamStatus)
+	}
+	if !strings.Contains(evt.Message, "upstream 403") {
+		t.Fatalf("event Message = %q, want upstream 403", evt.Message)
 	}
 }
 
