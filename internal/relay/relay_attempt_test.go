@@ -208,6 +208,44 @@ func valueAny(v slog.Value) any {
 	}
 }
 
+func waitRequestLogsCount(t *testing.T, mockStore *store.MockStore, want int) []*domain.RequestLog {
+	t.Helper()
+
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		logs, total, err := mockStore.QueryRequestLogs(context.Background(), domain.RequestLogQuery{})
+		if err != nil {
+			t.Fatalf("QueryRequestLogs: %v", err)
+		}
+		if total == want {
+			return logs
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	logs, _, err := mockStore.QueryRequestLogs(context.Background(), domain.RequestLogQuery{})
+	if err != nil {
+		t.Fatalf("QueryRequestLogs: %v", err)
+	}
+	t.Fatalf("len(logs) = %d, want %d", len(logs), want)
+	return nil
+}
+
+func saveRelayTestAccount(t *testing.T, mockStore *store.MockStore, acct *domain.Account) {
+	t.Helper()
+	if err := mockStore.SaveAccount(context.Background(), acct); err != nil {
+		t.Fatalf("SaveAccount(%s): %v", acct.ID, err)
+	}
+	if err := mockStore.SaveQuotaBucket(context.Background(), &domain.QuotaBucket{
+		BucketKey: acct.BucketKey,
+		Provider:  acct.Provider,
+		StateJSON: "{}",
+		UpdatedAt: time.Now().UTC(),
+	}); err != nil {
+		t.Fatalf("SaveQuotaBucket(%s): %v", acct.BucketKey, err)
+	}
+}
+
 func TestExecuteRelayAttemptLogsRetriableFailure(t *testing.T) {
 	mockStore := store.NewMockStore()
 	account := &domain.Account{
@@ -665,6 +703,283 @@ func TestExecuteRelayAttemptReturnsDriverValidationError(t *testing.T) {
 	}
 	if len(driverStub.interpretCalls) != 0 {
 		t.Fatalf("Interpret call count = %d, want 0", len(driverStub.interpretCalls))
+	}
+}
+
+func TestRelayStoresAndReusesUserRouteBinding(t *testing.T) {
+	mockStore := store.NewMockStore()
+	accountA := &domain.Account{
+		ID:        "acct-stick-a",
+		Email:     "stick-a@example.com",
+		Provider:  domain.ProviderClaude,
+		Status:    domain.StatusActive,
+		Subject:   "subject-stick-a",
+		BucketKey: "claude:subject-stick-a",
+		CreatedAt: time.Now().UTC(),
+	}
+	saveRelayTestAccount(t, mockStore, accountA)
+
+	bus := events.NewBus(16)
+	p, err := pool.New(mockStore, bus)
+	if err != nil {
+		t.Fatalf("pool.New: %v", err)
+	}
+
+	driverStub := &relayTestDriver{provider: domain.ProviderClaude}
+	transport := relayTestTransport{
+		client: &http.Client{
+			Transport: roundTripFunc(func(_ *http.Request) (*http.Response, error) {
+				return &http.Response{
+					StatusCode: http.StatusOK,
+					Header:     make(http.Header),
+					Body:       io.NopCloser(strings.NewReader(`{"id":"msg_1","type":"message","usage":{"input_tokens":1,"output_tokens":1}}`)),
+				}, nil
+			}),
+		},
+	}
+	relaySvc := New(
+		p,
+		relayTestTokenProvider{},
+		mockStore,
+		Config{MaxRetryAccounts: 1},
+		transport,
+		bus,
+		map[domain.Provider]driver.ExecutionDriver{domain.ProviderClaude: driverStub},
+	)
+
+	keyInfo := &auth.KeyInfo{ID: "user-stick", Name: "mike"}
+	prepared1 := &preparedRelayRequest{
+		keyInfo: keyInfo,
+		input: &driver.RelayInput{
+			Headers: make(http.Header),
+			Path:    "/v1/messages",
+			Model:   "claude-sonnet-4-6",
+		},
+		surface: domain.SurfaceNative,
+	}
+	if outcome := relaySvc.executeRelayAttempt(context.Background(), httptest.NewRecorder(), driverStub, prepared1, newRelayAttemptState(), 0); outcome != relayAttemptDone {
+		t.Fatalf("first executeRelayAttempt outcome = %v, want %v", outcome, relayAttemptDone)
+	}
+
+	accountID, ok, err := p.GetUserRouteBinding(context.Background(), keyInfo.ID, domain.ProviderClaude, domain.SurfaceNative)
+	if err != nil {
+		t.Fatalf("GetUserRouteBinding: %v", err)
+	}
+	if !ok || accountID != accountA.ID {
+		t.Fatalf("sticky binding = (%q, %v), want %q", accountID, ok, accountA.ID)
+	}
+
+	accountB := &domain.Account{
+		ID:        "acct-stick-b",
+		Email:     "stick-b@example.com",
+		Provider:  domain.ProviderClaude,
+		Status:    domain.StatusActive,
+		Subject:   "subject-stick-b",
+		BucketKey: "claude:subject-stick-b",
+		CreatedAt: time.Now().UTC(),
+	}
+	saveRelayTestAccount(t, mockStore, accountB)
+
+	stickyID := relaySvc.resolveUserRouteAccount(context.Background(), driverStub, keyInfo, "claude-sonnet-4-6", domain.SurfaceNative, "")
+	if stickyID != accountA.ID {
+		t.Fatalf("resolveUserRouteAccount() = %q, want %q", stickyID, accountA.ID)
+	}
+	prepared2 := &preparedRelayRequest{
+		keyInfo: keyInfo,
+		input: &driver.RelayInput{
+			Headers: make(http.Header),
+			Path:    "/v1/messages",
+			Model:   "claude-sonnet-4-6",
+		},
+		surface:            domain.SurfaceNative,
+		userRouteAccountID: stickyID,
+	}
+	if outcome := relaySvc.executeRelayAttempt(context.Background(), httptest.NewRecorder(), driverStub, prepared2, newRelayAttemptState(), 0); outcome != relayAttemptDone {
+		t.Fatalf("second executeRelayAttempt outcome = %v, want %v", outcome, relayAttemptDone)
+	}
+
+	logs := waitRequestLogsCount(t, mockStore, 2)
+	var stickyLog *domain.RequestLog
+	for _, entry := range logs {
+		if entry.BindingSource == "user_sticky" {
+			stickyLog = entry
+			break
+		}
+	}
+	if stickyLog == nil {
+		t.Fatalf("missing request log with BindingSource user_sticky: %+v", logs)
+	}
+	if stickyLog.AccountID != accountA.ID {
+		t.Fatalf("sticky AccountID = %q, want %q", stickyLog.AccountID, accountA.ID)
+	}
+}
+
+func TestRelayRebindsUserRouteBindingWhenStickyAccountUnavailable(t *testing.T) {
+	mockStore := store.NewMockStore()
+	accountA := &domain.Account{
+		ID:        "acct-route-a",
+		Email:     "route-a@example.com",
+		Provider:  domain.ProviderClaude,
+		Status:    domain.StatusActive,
+		Subject:   "subject-route-a",
+		BucketKey: "claude:subject-route-a",
+		CreatedAt: time.Now().UTC(),
+	}
+	accountB := &domain.Account{
+		ID:        "acct-route-b",
+		Email:     "route-b@example.com",
+		Provider:  domain.ProviderClaude,
+		Status:    domain.StatusActive,
+		Subject:   "subject-route-b",
+		BucketKey: "claude:subject-route-b",
+		CreatedAt: time.Now().UTC(),
+	}
+	saveRelayTestAccount(t, mockStore, accountA)
+	saveRelayTestAccount(t, mockStore, accountB)
+
+	bus := events.NewBus(16)
+	p, err := pool.New(mockStore, bus)
+	if err != nil {
+		t.Fatalf("pool.New: %v", err)
+	}
+	if err := p.SetUserRouteBinding(context.Background(), "user-route", domain.ProviderClaude, domain.SurfaceNative, accountA.ID); err != nil {
+		t.Fatalf("SetUserRouteBinding: %v", err)
+	}
+	p.Observe(accountA.ID, driver.Effect{
+		Kind:          driver.EffectCooldown,
+		Scope:         driver.EffectScopeBucket,
+		CooldownUntil: time.Now().Add(time.Hour),
+		UpstreamStatus: 429,
+	})
+
+	driverStub := &relayTestDriver{provider: domain.ProviderClaude}
+	transport := relayTestTransport{
+		client: &http.Client{
+			Transport: roundTripFunc(func(_ *http.Request) (*http.Response, error) {
+				return &http.Response{
+					StatusCode: http.StatusOK,
+					Header:     make(http.Header),
+					Body:       io.NopCloser(strings.NewReader(`{"id":"msg_2","type":"message","usage":{"input_tokens":1,"output_tokens":1}}`)),
+				}, nil
+			}),
+		},
+	}
+	relaySvc := New(
+		p,
+		relayTestTokenProvider{},
+		mockStore,
+		Config{MaxRetryAccounts: 1},
+		transport,
+		bus,
+		map[domain.Provider]driver.ExecutionDriver{domain.ProviderClaude: driverStub},
+	)
+
+	keyInfo := &auth.KeyInfo{ID: "user-route", Name: "mike"}
+	if stickyID := relaySvc.resolveUserRouteAccount(context.Background(), driverStub, keyInfo, "claude-sonnet-4-6", domain.SurfaceNative, ""); stickyID != "" {
+		t.Fatalf("resolveUserRouteAccount() = %q, want empty when sticky account unavailable", stickyID)
+	}
+	prepared := &preparedRelayRequest{
+		keyInfo: keyInfo,
+		input: &driver.RelayInput{
+			Headers: make(http.Header),
+			Path:    "/v1/messages",
+			Model:   "claude-sonnet-4-6",
+		},
+		surface: domain.SurfaceNative,
+	}
+	if outcome := relaySvc.executeRelayAttempt(context.Background(), httptest.NewRecorder(), driverStub, prepared, newRelayAttemptState(), 0); outcome != relayAttemptDone {
+		t.Fatalf("executeRelayAttempt outcome = %v, want %v", outcome, relayAttemptDone)
+	}
+
+	accountID, ok, err := p.GetUserRouteBinding(context.Background(), keyInfo.ID, domain.ProviderClaude, domain.SurfaceNative)
+	if err != nil {
+		t.Fatalf("GetUserRouteBinding: %v", err)
+	}
+	if !ok || accountID != accountB.ID {
+		t.Fatalf("sticky binding = (%q, %v), want rebound %q", accountID, ok, accountB.ID)
+	}
+	logs := waitRequestLogsCount(t, mockStore, 1)
+	if logs[0].AccountID != accountB.ID {
+		t.Fatalf("AccountID = %q, want rerouted %q", logs[0].AccountID, accountB.ID)
+	}
+}
+
+func TestRelayStoresUserRouteBindingOnReject(t *testing.T) {
+	mockStore := store.NewMockStore()
+	account := &domain.Account{
+		ID:        "acct-reject-stick",
+		Email:     "reject-stick@example.com",
+		Provider:  domain.ProviderClaude,
+		Status:    domain.StatusActive,
+		Subject:   "subject-reject-stick",
+		BucketKey: "claude:subject-reject-stick",
+		CreatedAt: time.Now().UTC(),
+	}
+	saveRelayTestAccount(t, mockStore, account)
+
+	bus := events.NewBus(16)
+	p, err := pool.New(mockStore, bus)
+	if err != nil {
+		t.Fatalf("pool.New: %v", err)
+	}
+
+	driverStub := &relayTestDriver{
+		provider: domain.ProviderClaude,
+		interpretFn: func(statusCode int, _ []byte) driver.Effect {
+			if statusCode == http.StatusNotFound {
+				return driver.Effect{
+					Kind:           driver.EffectReject,
+					Scope:          driver.EffectScopeBucket,
+					UpstreamStatus: http.StatusNotFound,
+				}
+			}
+			return driver.Effect{Kind: driver.EffectSuccess, Scope: driver.EffectScopeBucket}
+		},
+	}
+	transport := relayTestTransport{
+		client: &http.Client{
+			Transport: roundTripFunc(func(_ *http.Request) (*http.Response, error) {
+				return &http.Response{
+					StatusCode: http.StatusNotFound,
+					Header:     make(http.Header),
+					Body:       io.NopCloser(strings.NewReader(`{"error":{"type":"not_found_error","message":"model not found"}}`)),
+				}, nil
+			}),
+		},
+	}
+	relaySvc := New(
+		p,
+		relayTestTokenProvider{},
+		mockStore,
+		Config{MaxRetryAccounts: 1},
+		transport,
+		bus,
+		map[domain.Provider]driver.ExecutionDriver{domain.ProviderClaude: driverStub},
+	)
+
+	prepared := &preparedRelayRequest{
+		keyInfo: &auth.KeyInfo{ID: "user-reject-stick", Name: "mike"},
+		input: &driver.RelayInput{
+			Headers: make(http.Header),
+			Path:    "/v1/messages",
+			Model:   "claude-sonnet-4-6",
+		},
+		surface: domain.SurfaceNative,
+	}
+	recorder := httptest.NewRecorder()
+	if outcome := relaySvc.executeRelayAttempt(context.Background(), recorder, driverStub, prepared, newRelayAttemptState(), 0); outcome != relayAttemptDone {
+		t.Fatalf("executeRelayAttempt outcome = %v, want %v", outcome, relayAttemptDone)
+	}
+	if recorder.Code != http.StatusNotFound {
+		t.Fatalf("response status = %d, want %d", recorder.Code, http.StatusNotFound)
+	}
+
+	accountID, ok, err := p.GetUserRouteBinding(context.Background(), "user-reject-stick", domain.ProviderClaude, domain.SurfaceNative)
+	if err != nil {
+		t.Fatalf("GetUserRouteBinding: %v", err)
+	}
+	if !ok || accountID != account.ID {
+		t.Fatalf("sticky binding after reject = (%q, %v), want %q", accountID, ok, account.ID)
 	}
 }
 

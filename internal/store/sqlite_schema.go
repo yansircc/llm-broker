@@ -112,6 +112,15 @@ var desiredSessionBindingColumns = []string{
 	"expires_at",
 }
 
+var desiredUserRouteBindingColumns = []string{
+	"user_id",
+	"provider",
+	"surface",
+	"account_id",
+	"created_at",
+	"last_used_at",
+}
+
 var desiredStainlessBindingColumns = []string{
 	"account_id",
 	"headers_json",
@@ -178,6 +187,7 @@ func (s *SQLiteStore) validateCurrentSchema(ctx context.Context) error {
 		{table: "request_log", want: desiredRequestLogColumns},
 		{table: "quota_buckets", want: desiredQuotaBucketColumns},
 		{table: "session_bindings", want: desiredSessionBindingColumns},
+		{table: "user_route_bindings", want: desiredUserRouteBindingColumns},
 		{table: "stainless_bindings", want: desiredStainlessBindingColumns},
 		{table: "oauth_sessions", want: desiredOAuthSessionColumns},
 		{table: "refresh_locks", want: desiredRefreshLockColumns},

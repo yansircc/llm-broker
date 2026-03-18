@@ -24,6 +24,9 @@ func requestBindingSource(prepared *preparedRelayRequest) string {
 	if prepared.sessionBoundAccountID != "" {
 		return "session_bound"
 	}
+	if prepared.userRouteAccountID != "" {
+		return "user_sticky"
+	}
 	return "none"
 }
 

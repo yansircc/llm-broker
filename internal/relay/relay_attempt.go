@@ -130,6 +130,9 @@ func (s *relayAttemptState) boundAccountID(prepared *preparedRelayRequest, attem
 	if attempt == 0 && prepared.sessionBoundAccountID != "" && boundID == "" {
 		return prepared.sessionBoundAccountID
 	}
+	if attempt == 0 && prepared.userRouteAccountID != "" && boundID == "" {
+		return prepared.userRouteAccountID
+	}
 	return boundID
 }
 
@@ -149,7 +152,20 @@ func (r *Relay) executeRelayAttempt(
 	state *relayAttemptState,
 	attempt int,
 ) relayAttemptOutcome {
-	acct, err := r.pool.PickForSurface(drv, state.exclusions, prepared.input.Model, state.boundAccountID(prepared, attempt), prepared.surface)
+	boundAccountID := state.boundAccountID(prepared, attempt)
+	acct, err := r.pool.PickForSurface(drv, state.exclusions, prepared.input.Model, boundAccountID, prepared.surface)
+	if err != nil && boundAccountID != "" && boundAccountID == prepared.userRouteAccountID {
+		slog.Info("sticky account unavailable, rerouting request",
+			"userId", prepared.keyInfo.ID,
+			"userName", prepared.keyInfo.Name,
+			"provider", drv.Provider(),
+			"surface", prepared.surface,
+			"accountId", boundAccountID,
+			"model", prepared.input.Model,
+			"path", prepared.input.Path,
+		)
+		acct, err = r.pool.PickForSurface(drv, state.exclusions, prepared.input.Model, "", prepared.surface)
+	}
 	if err != nil {
 		state.lastErr = err
 		return relayAttemptStop
@@ -306,6 +322,7 @@ func (r *Relay) executeRelayAttempt(
 		entry.EffectKind = relayEffectKind(effect.Kind)
 		r.logRequestAsync(entry)
 		r.pool.Observe(acct.ID, effect)
+		r.maybeSetUserRouteBinding(ctx, prepared, drv, acct, effect)
 		state.exclude(acct, effect)
 		state.lastErr = fmt.Errorf("upstream %d", resp.StatusCode)
 		return relayAttemptContinue
@@ -329,6 +346,7 @@ func (r *Relay) executeRelayAttempt(
 		r.attachRequestLogArtifacts(entry, prepared, upstreamReqBody, errBody)
 		r.logRequestAsync(entry)
 		r.pool.Observe(acct.ID, effect)
+		r.maybeSetUserRouteBinding(ctx, prepared, drv, acct, effect)
 
 		slog.Warn("upstream non-retriable error",
 			"status", resp.StatusCode,
@@ -366,6 +384,7 @@ func (r *Relay) finishRelaySuccess(
 
 	effect := drv.Interpret(http.StatusOK, resp.Header, nil, prepared.input.Model, json.RawMessage(acct.ProviderStateJSON))
 	r.pool.Observe(acct.ID, effect)
+	r.maybeSetUserRouteBinding(ctx, prepared, drv, acct, effect)
 
 	if prepared.sessionUUID != "" {
 		if err := r.pool.SetSessionBinding(ctx, prepared.sessionUUID, acct.ID, r.cfg.SessionBindingTTL); err != nil {
@@ -405,6 +424,27 @@ func (r *Relay) finishRelaySuccess(
 		entry.CostUSD = drv.CalcCost(prepared.input.Model, usage)
 	}
 	r.logRequestAsync(entry)
+}
+
+func (r *Relay) maybeSetUserRouteBinding(ctx context.Context, prepared *preparedRelayRequest, drv driver.ExecutionDriver, acct *domain.Account, effect driver.Effect) {
+	if r == nil || prepared == nil || prepared.keyInfo == nil || acct == nil {
+		return
+	}
+	if prepared.keyInfo.IsAdmin || prepared.keyInfo.BoundAccountID != "" {
+		return
+	}
+	if effect.Kind != driver.EffectSuccess && effect.Kind != driver.EffectReject {
+		return
+	}
+	if err := r.pool.SetUserRouteBinding(ctx, prepared.keyInfo.ID, drv.Provider(), prepared.surface, acct.ID); err != nil {
+		slog.Warn("save user route binding failed",
+			"userId", prepared.keyInfo.ID,
+			"provider", drv.Provider(),
+			"surface", prepared.surface,
+			"accountId", acct.ID,
+			"error", err,
+		)
+	}
 }
 
 func (r *Relay) logRequestAsync(entry *domain.RequestLog) {

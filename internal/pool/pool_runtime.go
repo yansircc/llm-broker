@@ -42,6 +42,29 @@ func (p *Pool) RenewSessionBinding(ctx context.Context, sessionUUID string, ttl 
 	return p.store.SaveSessionBinding(ctx, binding)
 }
 
+func (p *Pool) GetUserRouteBinding(ctx context.Context, userID string, provider domain.Provider, surface domain.Surface) (string, bool, error) {
+	binding, err := p.store.GetUserRouteBinding(ctx, userID, provider, surface)
+	if err != nil {
+		return "", false, err
+	}
+	if binding == nil {
+		return "", false, nil
+	}
+	return binding.AccountID, true, nil
+}
+
+func (p *Pool) SetUserRouteBinding(ctx context.Context, userID string, provider domain.Provider, surface domain.Surface, accountID string) error {
+	now := time.Now().UTC()
+	return p.store.SaveUserRouteBinding(ctx, &domain.UserRouteBinding{
+		UserID:     userID,
+		Provider:   provider,
+		Surface:    surface,
+		AccountID:  accountID,
+		CreatedAt:  now,
+		LastUsedAt: now,
+	})
+}
+
 func (p *Pool) ListSessionBindingsForAccount(ctx context.Context, accountID string) ([]domain.SessionBindingInfo, error) {
 	bindings, err := p.store.ListSessionBindingsByAccount(ctx, accountID)
 	if err != nil {

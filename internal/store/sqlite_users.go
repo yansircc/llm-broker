@@ -45,11 +45,23 @@ func (s *SQLiteStore) ListUsers(ctx context.Context) ([]*domain.User, error) {
 }
 
 func (s *SQLiteStore) DeleteUser(ctx context.Context, id string) error {
-	result, err := s.db.ExecContext(ctx, "DELETE FROM users WHERE id = ?", id)
+	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
-	return ensureRowsAffected(result)
+	defer tx.Rollback()
+
+	if _, err := tx.ExecContext(ctx, "DELETE FROM user_route_bindings WHERE user_id = ?", id); err != nil {
+		return err
+	}
+	result, err := tx.ExecContext(ctx, "DELETE FROM users WHERE id = ?", id)
+	if err != nil {
+		return err
+	}
+	if err := ensureRowsAffected(result); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 func (s *SQLiteStore) UpdateUserStatus(ctx context.Context, id, status string) error {

@@ -225,6 +225,15 @@ func TestMigrate_LegacyUsersTable(t *testing.T) {
 			last_used_at INTEGER NOT NULL,
 			expires_at INTEGER NOT NULL
 		);
+		CREATE TABLE user_route_bindings (
+			user_id TEXT NOT NULL,
+			provider TEXT NOT NULL,
+			surface TEXT NOT NULL,
+			account_id TEXT NOT NULL,
+			created_at INTEGER NOT NULL,
+			last_used_at INTEGER NOT NULL,
+			PRIMARY KEY (user_id, provider, surface)
+		);
 		CREATE TABLE stainless_bindings (
 			account_id TEXT PRIMARY KEY,
 			headers_json TEXT NOT NULL,
@@ -390,6 +399,15 @@ func TestNew_AllowsRequestLogColumnOrderDrift(t *testing.T) {
 			last_used_at INTEGER NOT NULL,
 			expires_at INTEGER NOT NULL
 		);
+		CREATE TABLE user_route_bindings (
+			user_id TEXT NOT NULL,
+			provider TEXT NOT NULL,
+			surface TEXT NOT NULL,
+			account_id TEXT NOT NULL,
+			created_at INTEGER NOT NULL,
+			last_used_at INTEGER NOT NULL,
+			PRIMARY KEY (user_id, provider, surface)
+		);
 		CREATE TABLE stainless_bindings (
 			account_id TEXT PRIMARY KEY,
 			headers_json TEXT NOT NULL,
@@ -522,6 +540,15 @@ func TestMigrate_QuotaBucketsPrunesOrphansAndBackfillsMissing(t *testing.T) {
 			created_at INTEGER NOT NULL,
 			last_used_at INTEGER NOT NULL,
 			expires_at INTEGER NOT NULL
+		);
+		CREATE TABLE user_route_bindings (
+			user_id TEXT NOT NULL,
+			provider TEXT NOT NULL,
+			surface TEXT NOT NULL,
+			account_id TEXT NOT NULL,
+			created_at INTEGER NOT NULL,
+			last_used_at INTEGER NOT NULL,
+			PRIMARY KEY (user_id, provider, surface)
 		);
 		CREATE TABLE stainless_bindings (
 			account_id TEXT PRIMARY KEY,
