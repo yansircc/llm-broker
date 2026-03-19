@@ -165,6 +165,32 @@ func TestCompatOpenAIChatToClaudeRequest_ModernEnvelope(t *testing.T) {
 	}
 }
 
+func TestCompatOpenAIChatToClaudeRequest_ModernEnvelopeAlias(t *testing.T) {
+	req := &compatOpenAIChatRequest{
+		Model: "claude/claude-sonnet-4-20250514",
+		Messages: []compatMessage{
+			{Role: "user", Content: json.RawMessage(`"hello"`)},
+		},
+	}
+
+	got, requestedModel, err := compatOpenAIChatToClaudeRequest(req)
+	if err != nil {
+		t.Fatalf("compatOpenAIChatToClaudeRequest() error = %v", err)
+	}
+	if requestedModel != "claude/claude-sonnet-4-6" {
+		t.Fatalf("requestedModel = %q", requestedModel)
+	}
+	if got.Model != "claude-sonnet-4-6" {
+		t.Fatalf("model = %q", got.Model)
+	}
+	if got.OutputConfig == nil || got.OutputConfig.Effort != "medium" {
+		t.Fatalf("output_config = %#v", got.OutputConfig)
+	}
+	if got.Thinking == nil || got.Thinking.Type != "adaptive" {
+		t.Fatalf("thinking = %#v", got.Thinking)
+	}
+}
+
 func TestResolveCompatModelAliases(t *testing.T) {
 	tests := []struct {
 		model         string
@@ -175,6 +201,12 @@ func TestResolveCompatModelAliases(t *testing.T) {
 		{"claude/claude-sonnet-4-5", domain.ProviderClaude, "claude-sonnet-4-5", "claude/claude-sonnet-4-5"},
 		{"anthropic/claude-sonnet-4-5", domain.ProviderClaude, "claude-sonnet-4-5", "claude/claude-sonnet-4-5"},
 		{"claude-sonnet-4-5", domain.ProviderClaude, "claude-sonnet-4-5", "claude/claude-sonnet-4-5"},
+		{"anthropic/claude-sonnet-4.5", domain.ProviderClaude, "claude-sonnet-4-5", "claude/claude-sonnet-4-5"},
+		{"claude-sonnet-4-5-20250929", domain.ProviderClaude, "claude-sonnet-4-5", "claude/claude-sonnet-4-5"},
+		{"anthropic/claude-opus-4.6", domain.ProviderClaude, "claude-opus-4-6", "claude/claude-opus-4-6"},
+		{"claude-opus-4-1-20250805", domain.ProviderClaude, "claude-opus-4-1", "claude/claude-opus-4-1"},
+		{"anthropic/claude-haiku-4.5", domain.ProviderClaude, "claude-haiku-4-5", "claude/claude-haiku-4-5"},
+		{"claude-sonnet-4-20250514", domain.ProviderClaude, "claude-sonnet-4-6", "claude/claude-sonnet-4-6"},
 		{"gemini/gemini-2.5-flash", domain.ProviderGemini, "gemini-2.5-flash", "gemini/gemini-2.5-flash"},
 		{"google/gemini-2.5-pro", domain.ProviderGemini, "gemini-2.5-pro", "gemini/gemini-2.5-pro"},
 		{"gemini-2.5-pro", domain.ProviderGemini, "gemini-2.5-pro", "gemini/gemini-2.5-pro"},
@@ -1086,6 +1118,135 @@ func TestHandleCompatOpenAIChatCompletions_RateLimited(t *testing.T) {
 	if !strings.Contains(second.Body.String(), "rate limit") {
 		t.Fatalf("second body = %s", second.Body.String())
 	}
+
+	logs := waitForCompatRequestLogsCount(t, srv, 2)
+	entry := findCompatRequestLogByStatus(t, logs, "compat_429")
+	if entry.Status != "compat_429" {
+		t.Fatalf("entry.Status = %q, want compat_429", entry.Status)
+	}
+	if entry.EffectKind != "overload" {
+		t.Fatalf("entry.EffectKind = %q, want overload", entry.EffectKind)
+	}
+	var meta map[string]any
+	if err := json.Unmarshal(entry.RequestMeta, &meta); err != nil {
+		t.Fatalf("Unmarshal RequestMeta: %v", err)
+	}
+	if meta["phase"] != "compat_preflight" {
+		t.Fatalf("phase = %#v, want compat_preflight", meta["phase"])
+	}
+}
+
+func TestHandleCompatOpenAIChatCompletions_LogsConvertFailure(t *testing.T) {
+	upstreamClient := &http.Client{
+		Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+			respBody := `{"id":"msg_bad","model":"claude-sonnet-4-5","content":"wrong-shape"}`
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Header:     make(http.Header),
+				Body:       io.NopCloser(strings.NewReader(respBody)),
+			}, nil
+		}),
+	}
+	srv := newCompatTestServer(t, upstreamClient)
+
+	reqBody := `{
+		"model":"claude/claude-sonnet-4-5",
+		"messages":[{"role":"user","content":"hello"}]
+	}`
+	req := httptest.NewRequest(http.MethodPost, "/compat/v1/chat/completions", strings.NewReader(reqBody))
+	req.Header.Set("Content-Type", "application/json")
+	ctx := context.WithValue(req.Context(), auth.KeyInfoKey, &auth.KeyInfo{ID: "user-1", Name: "test"})
+	req = req.WithContext(ctx)
+
+	w := httptest.NewRecorder()
+	srv.handleCompatOpenAIChatCompletions(w, req)
+
+	if w.Code != http.StatusBadGateway {
+		t.Fatalf("status = %d, want %d, body = %s", w.Code, http.StatusBadGateway, w.Body.String())
+	}
+
+	logs := waitForCompatRequestLogsCount(t, srv, 2)
+	entry := findCompatRequestLogByStatus(t, logs, "compat_502")
+	if entry.Status != "compat_502" {
+		t.Fatalf("entry.Status = %q, want compat_502", entry.Status)
+	}
+	if entry.EffectKind != "server_error" {
+		t.Fatalf("entry.EffectKind = %q, want server_error", entry.EffectKind)
+	}
+	var meta map[string]any
+	if err := json.Unmarshal(entry.RequestMeta, &meta); err != nil {
+		t.Fatalf("Unmarshal RequestMeta: %v", err)
+	}
+	if meta["phase"] != "compat_final" {
+		t.Fatalf("phase = %#v, want compat_final", meta["phase"])
+	}
+}
+
+func TestHandleCompatOpenAIChatCompletions_StreamIncompleteWritesLifecycleFailure(t *testing.T) {
+	upstreamClient := &http.Client{
+		Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+			respBody := strings.Join([]string{
+				`event: message_start`,
+				`data: {"type":"message_start","message":{"id":"msg_stream_incomplete","type":"message","role":"assistant","content":[],"model":"claude-sonnet-4-5"}}`,
+				``,
+				`event: content_block_delta`,
+				`data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"hello"}}`,
+				``,
+				`event: message_delta`,
+				`data: {"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":2}}`,
+				``,
+			}, "\n")
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Header:     make(http.Header),
+				Body:       io.NopCloser(strings.NewReader(respBody)),
+			}, nil
+		}),
+	}
+	srv := newCompatTestServer(t, upstreamClient)
+
+	reqBody := `{
+		"model":"claude/claude-sonnet-4-5",
+		"stream": true,
+		"messages":[{"role":"user","content":"hello"}]
+	}`
+	req := httptest.NewRequest(http.MethodPost, "/compat/v1/chat/completions", strings.NewReader(reqBody))
+	req.Header.Set("Content-Type", "application/json")
+	ctx := context.WithValue(req.Context(), auth.KeyInfoKey, &auth.KeyInfo{ID: "user-1", Name: "test"})
+	req = req.WithContext(ctx)
+
+	w := httptest.NewRecorder()
+	srv.handleCompatOpenAIChatCompletions(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d, body = %s", w.Code, http.StatusOK, w.Body.String())
+	}
+
+	logs := waitForCompatRequestLogsCount(t, srv, 2)
+	last := findCompatRequestLogByStatus(t, logs, "compat_stream_incomplete")
+	if last.Status != "compat_stream_incomplete" {
+		t.Fatalf("entry.Status = %q, want compat_stream_incomplete", last.Status)
+	}
+	if last.EffectKind != "stream_incomplete" {
+		t.Fatalf("entry.EffectKind = %q, want stream_incomplete", last.EffectKind)
+	}
+	var meta map[string]any
+	if err := json.Unmarshal(last.RequestMeta, &meta); err != nil {
+		t.Fatalf("Unmarshal RequestMeta: %v", err)
+	}
+	if meta["phase"] != "compat_final" {
+		t.Fatalf("phase = %#v, want compat_final", meta["phase"])
+	}
+	streamWriter, ok := meta["stream_writer"].(map[string]any)
+	if !ok {
+		t.Fatalf("stream_writer = %#v, want object", meta["stream_writer"])
+	}
+	if streamWriter["delivery_completed"] != false {
+		t.Fatalf("delivery_completed = %#v, want false", streamWriter["delivery_completed"])
+	}
+	if streamWriter["synthetic_done"] != true {
+		t.Fatalf("synthetic_done = %#v, want true", streamWriter["synthetic_done"])
+	}
 }
 
 func TestHandleCompatOpenAIChatCompletions_TraceLogsRawClientBody(t *testing.T) {
@@ -1164,6 +1325,36 @@ func waitForCompatRequestLog(t *testing.T, srv *Server) *domain.RequestLog {
 		time.Sleep(10 * time.Millisecond)
 	}
 	t.Fatal("request log was not persisted in time")
+	return nil
+}
+
+func waitForCompatRequestLogsCount(t *testing.T, srv *Server, want int) []*domain.RequestLog {
+	t.Helper()
+
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		logs, total, err := srv.store.QueryRequestLogs(context.Background(), domain.RequestLogQuery{Limit: want + 4})
+		if err != nil {
+			t.Fatalf("QueryRequestLogs() error = %v", err)
+		}
+		if total >= want && len(logs) >= want {
+			return logs
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatalf("request logs did not reach count %d in time", want)
+	return nil
+}
+
+func findCompatRequestLogByStatus(t *testing.T, logs []*domain.RequestLog, want string) *domain.RequestLog {
+	t.Helper()
+
+	for _, entry := range logs {
+		if entry.Status == want {
+			return entry
+		}
+	}
+	t.Fatalf("request logs do not contain status %q", want)
 	return nil
 }
 

@@ -249,7 +249,10 @@ func (d *ClaudeDriver) StreamResponse(ctx context.Context, w http.ResponseWriter
 			break
 		}
 		line := scanner.Text()
-		fmt.Fprintf(w, "%s\n", line)
+		if _, err := fmt.Fprintf(w, "%s\n", line); err != nil {
+			completed = false
+			break
+		}
 		if line == "" {
 			flusher.Flush()
 		}
@@ -261,6 +264,9 @@ func (d *ClaudeDriver) StreamResponse(ctx context.Context, w http.ResponseWriter
 				capturedUsage = u
 			}
 		}
+	}
+	if scanner.Err() != nil {
+		completed = false
 	}
 	flusher.Flush()
 	return completed, capturedUsage
@@ -296,9 +302,13 @@ func (d *ClaudeDriver) ParseNonRetriable(statusCode int, body []byte) bool {
 }
 
 func (d *ClaudeDriver) WriteError(w http.ResponseWriter, status int, msg string) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(status)
-	fmt.Fprintf(w, `{"type":"error","error":{"type":"api_error","message":"%s"}}`, msg)
+	writeDriverJSON(w, status, map[string]any{
+		"type": "error",
+		"error": map[string]any{
+			"type":    "api_error",
+			"message": msg,
+		},
+	})
 }
 
 func (d *ClaudeDriver) WriteUpstreamError(w http.ResponseWriter, statusCode int, body []byte, isStream bool) {

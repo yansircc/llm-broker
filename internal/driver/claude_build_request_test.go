@@ -177,6 +177,26 @@ func TestClaudeBuildRequestRejectsUnsupportedModelsLocally(t *testing.T) {
 			t.Fatalf("Message = %q", requestErr.Message)
 		}
 	})
+
+	t.Run("compat-only alias remains rejected on native path", func(t *testing.T) {
+		body := buildClaudeRequestBody(t, "claude-sonnet-4-5-20250929", map[string]interface{}{
+			"max_tokens": 1,
+			"messages": []interface{}{
+				map[string]interface{}{"role": "user", "content": "hello"},
+			},
+		})
+		_, err := buildClaudeUpstreamBodyE(t, body, false)
+		var requestErr *RequestValidationError
+		if !errors.As(err, &requestErr) {
+			t.Fatalf("error = %v, want RequestValidationError", err)
+		}
+		if requestErr.StatusCode != http.StatusBadRequest {
+			t.Fatalf("StatusCode = %d, want 400", requestErr.StatusCode)
+		}
+		if !strings.Contains(requestErr.Message, "unsupported Claude model") {
+			t.Fatalf("Message = %q", requestErr.Message)
+		}
+	})
 }
 
 func buildClaudeRequestBody(t *testing.T, model string, body map[string]interface{}) []byte {

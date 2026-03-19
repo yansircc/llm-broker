@@ -204,6 +204,8 @@ type compatTarget struct {
 type compatStreamWriter interface {
 	http.ResponseWriter
 	finalize()
+	completed() bool
+	ClientResponseObservation() map[string]any
 }
 
 type compatResponseCapture struct {

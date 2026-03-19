@@ -54,6 +54,19 @@ func relayEffectKind(kind driver.EffectKind) string {
 	}
 }
 
+func requestValidationEffectKind(statusCode int) string {
+	switch {
+	case statusCode == http.StatusTooManyRequests:
+		return "overload"
+	case statusCode == http.StatusUnauthorized:
+		return "auth_fail"
+	case statusCode >= 500:
+		return "server_error"
+	default:
+		return "reject"
+	}
+}
+
 func upstreamRequestID(headers http.Header) string {
 	if headers == nil {
 		return ""
@@ -179,10 +192,24 @@ func (r *Relay) executeRelayAttempt(
 		return relayAttemptContinue
 	}
 
+	attemptStartedAt := time.Now()
 	upReq, err := drv.BuildRequest(ctx, prepared.input, acct, accessToken)
 	if err != nil {
 		var requestErr *driver.RequestValidationError
 		if errors.As(err, &requestErr) {
+			entry := r.baseRequestLog(prepared, acct, attempt)
+			entry.Status = fmt.Sprintf("validation_%d", requestErr.StatusCode)
+			entry.EffectKind = requestValidationEffectKind(requestErr.StatusCode)
+			entry.UpstreamStatus = requestErr.StatusCode
+			entry.UpstreamErrorType = "request_validation_error"
+			entry.UpstreamErrorMessage = requestErr.Message
+			entry.DurationMs = time.Since(attemptStartedAt).Milliseconds()
+			entry.RequestMeta = mergeObservationMeta(entry.RequestMeta, map[string]any{
+				"error_phase": "build_request",
+			})
+			r.attachRequestLogArtifacts(entry, prepared, nil, nil)
+			r.logRequestAsync(entry)
+
 			slog.Warn("driver rejected request before upstream",
 				"accountId", acct.ID,
 				"userId", prepared.keyInfo.ID,
@@ -224,7 +251,6 @@ func (r *Relay) executeRelayAttempt(
 		}
 	}
 
-	attemptStartedAt := time.Now()
 	resp, err := r.transport.ClientForAccount(acct).Do(upReq)
 	if err != nil {
 		if r.shouldTraceCompat(prepared) {
@@ -394,8 +420,9 @@ func (r *Relay) finishRelaySuccess(
 
 	var usage *driver.Usage
 	var respBody []byte
+	streamCompleted := true
 	if prepared.input.IsStream {
-		_, usage = drv.StreamResponse(ctx, w, resp)
+		streamCompleted, usage = drv.StreamResponse(ctx, w, resp)
 	} else {
 		var err error
 		respBody, err = io.ReadAll(resp.Body)
@@ -411,11 +438,34 @@ func (r *Relay) finishRelaySuccess(
 
 	entry := r.baseRequestLog(prepared, acct, attempt)
 	entry.Status = "ok"
+	if prepared.input.IsStream && !streamCompleted {
+		entry.Status = "stream_incomplete"
+	}
 	entry.EffectKind = relayEffectKind(effect.Kind)
 	entry.DurationMs = time.Since(attemptStartedAt).Milliseconds()
 	setRequestLogUpstreamRequest(entry, upReq, upstreamReqBody)
 	setRequestLogUpstreamResponse(entry, resp, respBody, &effect)
 	r.attachRequestLogArtifacts(entry, prepared, upstreamReqBody, respBody)
+	if prepared.input.IsStream {
+		entry.RequestMeta = mergeObservationMeta(entry.RequestMeta, map[string]any{
+			"stream_completed": streamCompleted,
+		})
+		if observer, ok := w.(interface{ ClientResponseObservation() map[string]any }); ok {
+			entry.RequestMeta = mergeObservationMeta(entry.RequestMeta, map[string]any{
+				"client_response": observer.ClientResponseObservation(),
+			})
+		}
+		if !streamCompleted {
+			slog.Warn("stream relay ended before completion",
+				"accountId", acct.ID,
+				"userId", prepared.keyInfo.ID,
+				"userName", prepared.keyInfo.Name,
+				"model", prepared.input.Model,
+				"path", prepared.input.Path,
+				"sessionUUID", prepared.sessionUUID,
+			)
+		}
+	}
 	if usage != nil {
 		entry.InputTokens = usage.InputTokens
 		entry.OutputTokens = usage.OutputTokens

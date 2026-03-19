@@ -704,6 +704,22 @@ func TestExecuteRelayAttemptReturnsDriverValidationError(t *testing.T) {
 	if len(driverStub.interpretCalls) != 0 {
 		t.Fatalf("Interpret call count = %d, want 0", len(driverStub.interpretCalls))
 	}
+	logs := waitRequestLogsCount(t, mockStore, 1)
+	if logs[0].Status != "validation_400" {
+		t.Fatalf("request log status = %q, want validation_400", logs[0].Status)
+	}
+	if logs[0].EffectKind != "reject" {
+		t.Fatalf("request log effect kind = %q, want reject", logs[0].EffectKind)
+	}
+	if logs[0].UpstreamStatus != http.StatusBadRequest {
+		t.Fatalf("request log upstream status = %d, want 400", logs[0].UpstreamStatus)
+	}
+	if logs[0].UpstreamErrorType != "request_validation_error" {
+		t.Fatalf("request log upstream error type = %q, want request_validation_error", logs[0].UpstreamErrorType)
+	}
+	if !strings.Contains(logs[0].UpstreamErrorMessage, "does not belong to Claude") {
+		t.Fatalf("request log upstream error message = %q", logs[0].UpstreamErrorMessage)
+	}
 }
 
 func TestRelayStoresAndReusesUserRouteBinding(t *testing.T) {
@@ -846,9 +862,9 @@ func TestRelayRebindsUserRouteBindingWhenStickyAccountUnavailable(t *testing.T) 
 		t.Fatalf("SetUserRouteBinding: %v", err)
 	}
 	p.Observe(accountA.ID, driver.Effect{
-		Kind:          driver.EffectCooldown,
-		Scope:         driver.EffectScopeBucket,
-		CooldownUntil: time.Now().Add(time.Hour),
+		Kind:           driver.EffectCooldown,
+		Scope:          driver.EffectScopeBucket,
+		CooldownUntil:  time.Now().Add(time.Hour),
 		UpstreamStatus: 429,
 	})
 

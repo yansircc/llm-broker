@@ -24,6 +24,13 @@ type compatOpenAIStreamWriter struct {
 	chunkID       string
 	roleSent      bool
 	doneSent      bool
+
+	chunksEmitted      int
+	contentChunks      int
+	terminalSignalSeen bool
+	syntheticDone      bool
+	downstreamBytes    int
+	downstreamErr      error
 }
 
 type compatGeminiStreamWriter struct {
@@ -41,6 +48,13 @@ type compatGeminiStreamWriter struct {
 	doneSent     bool
 	roleSent     bool
 	chunkID      string
+
+	chunksEmitted      int
+	contentChunks      int
+	terminalSignalSeen bool
+	syntheticDone      bool
+	downstreamBytes    int
+	downstreamErr      error
 }
 
 func newCompatOpenAIStreamWriter(dst http.ResponseWriter, requestedModel string) *compatOpenAIStreamWriter {
@@ -70,6 +84,9 @@ func (w *compatOpenAIStreamWriter) Write(p []byte) (int, error) {
 	if w.status == 0 {
 		w.status = http.StatusOK
 	}
+	if w.downstreamErr != nil {
+		return len(p), w.downstreamErr
+	}
 	if w.status != http.StatusOK {
 		_, _ = w.rawErrorBody.Write(p)
 		return len(p), nil
@@ -81,7 +98,9 @@ func (w *compatOpenAIStreamWriter) Write(p []byte) (int, error) {
 		if !ok {
 			break
 		}
-		w.handleClaudeStreamLine(line)
+		if !w.handleClaudeStreamLine(line) {
+			return len(p), w.downstreamErr
+		}
 	}
 	return len(p), nil
 }
@@ -103,16 +122,16 @@ func (w *compatOpenAIStreamWriter) nextLine() (string, bool) {
 	return line, true
 }
 
-func (w *compatOpenAIStreamWriter) handleClaudeStreamLine(line string) {
+func (w *compatOpenAIStreamWriter) handleClaudeStreamLine(line string) bool {
 	if line == "" {
-		return
+		return true
 	}
 	if strings.HasPrefix(line, "event: ") {
 		w.lastEventType = strings.TrimPrefix(line, "event: ")
-		return
+		return true
 	}
 	if !strings.HasPrefix(line, "data: ") {
-		return
+		return true
 	}
 
 	payload := strings.TrimPrefix(line, "data: ")
@@ -128,7 +147,7 @@ func (w *compatOpenAIStreamWriter) handleClaudeStreamLine(line string) {
 		}
 		if !w.roleSent {
 			w.roleSent = true
-			w.emitChunk(compatOpenAIChatDelta{Role: "assistant"}, nil)
+			return w.emitChunk(compatOpenAIChatDelta{Role: "assistant"}, nil)
 		}
 
 	case "content_block_delta":
@@ -139,10 +158,10 @@ func (w *compatOpenAIStreamWriter) handleClaudeStreamLine(line string) {
 			} `json:"delta"`
 		}
 		if json.Unmarshal([]byte(payload), &event) != nil {
-			return
+			return true
 		}
 		if event.Delta.Type == "text_delta" && event.Delta.Text != "" {
-			w.emitChunk(compatOpenAIChatDelta{Content: event.Delta.Text}, nil)
+			return w.emitChunk(compatOpenAIChatDelta{Content: event.Delta.Text}, nil)
 		}
 
 	case "message_delta":
@@ -152,17 +171,19 @@ func (w *compatOpenAIStreamWriter) handleClaudeStreamLine(line string) {
 			} `json:"delta"`
 		}
 		if json.Unmarshal([]byte(payload), &event) != nil {
-			return
+			return true
 		}
 		if strings.TrimSpace(event.Delta.StopReason) == "" {
-			return
+			return true
 		}
 		finishReason := compatClaudeFinishReason(event.Delta.StopReason)
-		w.emitChunk(compatOpenAIChatDelta{}, &finishReason)
+		return w.emitChunk(compatOpenAIChatDelta{}, &finishReason)
 
 	case "message_stop":
-		w.emitDone()
+		w.terminalSignalSeen = true
+		return w.emitDone(false)
 	}
+	return true
 }
 
 func (w *compatOpenAIStreamWriter) ensureSuccessHeaders() {
@@ -183,7 +204,7 @@ func (w *compatOpenAIStreamWriter) streamChunkID() string {
 	return "chatcmpl-compat"
 }
 
-func (w *compatOpenAIStreamWriter) emitChunk(delta compatOpenAIChatDelta, finishReason *string) {
+func (w *compatOpenAIStreamWriter) emitChunk(delta compatOpenAIChatDelta, finishReason *string) bool {
 	w.ensureSuccessHeaders()
 
 	body, err := json.Marshal(compatOpenAIChatStreamChunk{
@@ -200,26 +221,43 @@ func (w *compatOpenAIStreamWriter) emitChunk(delta compatOpenAIChatDelta, finish
 		},
 	})
 	if err != nil {
-		return
+		return true
 	}
-
-	_, _ = w.dst.Write([]byte("data: "))
-	_, _ = w.dst.Write(body)
-	_, _ = w.dst.Write([]byte("\n\n"))
+	if delta.Content != "" {
+		w.contentChunks++
+	}
+	w.chunksEmitted++
+	if !w.writeDownstream([]byte("data: ")) {
+		return false
+	}
+	if !w.writeDownstream(body) {
+		return false
+	}
+	if !w.writeDownstream([]byte("\n\n")) {
+		return false
+	}
 	w.Flush()
+	return w.downstreamErr == nil
 }
 
-func (w *compatOpenAIStreamWriter) emitDone() {
+func (w *compatOpenAIStreamWriter) emitDone(synthetic bool) bool {
 	if w.doneSent {
-		return
+		return w.downstreamErr == nil
 	}
 	w.ensureSuccessHeaders()
-	_, _ = w.dst.Write([]byte("data: [DONE]\n\n"))
+	w.syntheticDone = synthetic
+	if !w.writeDownstream([]byte("data: [DONE]\n\n")) {
+		return false
+	}
 	w.Flush()
 	w.doneSent = true
+	return w.downstreamErr == nil
 }
 
 func (w *compatOpenAIStreamWriter) finalize() {
+	if w.downstreamErr != nil {
+		return
+	}
 	if w.status != 0 && w.status != http.StatusOK {
 		writeCompatOpenAIUpstreamError(w.dst, w.status, compatExtractErrorBody(w.rawErrorBody.Bytes()))
 		return
@@ -229,10 +267,51 @@ func (w *compatOpenAIStreamWriter) finalize() {
 		line := strings.TrimRight(w.lineBuf.String(), "\r\n")
 		w.lineBuf.Reset()
 		if line != "" {
-			w.handleClaudeStreamLine(line)
+			if !w.handleClaudeStreamLine(line) {
+				return
+			}
 		}
 	}
-	w.emitDone()
+	_ = w.emitDone(!w.terminalSignalSeen)
+}
+
+func (w *compatOpenAIStreamWriter) writeDownstream(p []byte) bool {
+	n, err := w.dst.Write(p)
+	w.downstreamBytes += n
+	if err != nil && w.downstreamErr == nil {
+		w.downstreamErr = err
+	}
+	return err == nil
+}
+
+func (w *compatOpenAIStreamWriter) completed() bool {
+	return (w.status == 0 || w.status == http.StatusOK) && w.downstreamErr == nil && w.terminalSignalSeen && w.doneSent
+}
+
+func (w *compatOpenAIStreamWriter) ClientResponseObservation() map[string]any {
+	meta := map[string]any{
+		"http_status":          w.statusOrOK(),
+		"headers_written":      w.headersWritten,
+		"chunks_emitted":       w.chunksEmitted,
+		"content_chunks":       w.contentChunks,
+		"role_sent":            w.roleSent,
+		"done_sent":            w.doneSent,
+		"terminal_signal_seen": w.terminalSignalSeen,
+		"synthetic_done":       w.syntheticDone,
+		"downstream_bytes":     w.downstreamBytes,
+		"delivery_completed":   w.completed(),
+	}
+	if w.downstreamErr != nil {
+		meta["downstream_error"] = w.downstreamErr.Error()
+	}
+	return meta
+}
+
+func (w *compatOpenAIStreamWriter) statusOrOK() int {
+	if w.status == 0 {
+		return http.StatusOK
+	}
+	return w.status
 }
 
 func newCompatGeminiStreamWriter(dst http.ResponseWriter, requestedModel string) *compatGeminiStreamWriter {
@@ -262,6 +341,9 @@ func (w *compatGeminiStreamWriter) Write(p []byte) (int, error) {
 	if w.status == 0 {
 		w.status = http.StatusOK
 	}
+	if w.downstreamErr != nil {
+		return len(p), w.downstreamErr
+	}
 	if w.status != http.StatusOK {
 		_, _ = w.rawErrorBody.Write(p)
 		return len(p), nil
@@ -273,7 +355,9 @@ func (w *compatGeminiStreamWriter) Write(p []byte) (int, error) {
 		if !ok {
 			break
 		}
-		w.handleGeminiStreamLine(line)
+		if !w.handleGeminiStreamLine(line) {
+			return len(p), w.downstreamErr
+		}
 	}
 	return len(p), nil
 }
@@ -295,31 +379,33 @@ func (w *compatGeminiStreamWriter) nextLine() (string, bool) {
 	return line, true
 }
 
-func (w *compatGeminiStreamWriter) handleGeminiStreamLine(line string) {
+func (w *compatGeminiStreamWriter) handleGeminiStreamLine(line string) bool {
 	if line == "" || !strings.HasPrefix(line, "data: ") {
-		return
+		return true
 	}
 	payload := strings.TrimSpace(strings.TrimPrefix(line, "data: "))
 	if payload == "" || payload == "[DONE]" {
-		w.emitDone()
-		return
+		w.terminalSignalSeen = true
+		return w.emitDone(false)
 	}
 
 	resp, err := compatParseGeminiResponse([]byte(payload))
 	if err != nil || resp == nil {
-		return
+		return true
 	}
 	if strings.TrimSpace(resp.ResponseID) != "" {
 		w.chunkID = resp.ResponseID
 	}
 	if len(resp.Candidates) == 0 {
-		return
+		return true
 	}
 	candidate := resp.Candidates[0]
 	if candidate.Content != nil {
 		if !w.roleSent {
 			w.roleSent = true
-			w.emitChunk(compatOpenAIChatDelta{Role: "assistant"}, nil)
+			if !w.emitChunk(compatOpenAIChatDelta{Role: "assistant"}, nil) {
+				return false
+			}
 		}
 
 		var text strings.Builder
@@ -329,14 +415,18 @@ func (w *compatGeminiStreamWriter) handleGeminiStreamLine(line string) {
 			}
 		}
 		if text.Len() > 0 {
-			w.emitChunk(compatOpenAIChatDelta{Content: text.String()}, nil)
+			if !w.emitChunk(compatOpenAIChatDelta{Content: text.String()}, nil) {
+				return false
+			}
 		}
 	}
 
 	if strings.TrimSpace(candidate.FinishReason) != "" {
 		finishReason := compatGeminiFinishReason(candidate.FinishReason)
-		w.emitChunk(compatOpenAIChatDelta{}, &finishReason)
+		w.terminalSignalSeen = true
+		return w.emitChunk(compatOpenAIChatDelta{}, &finishReason)
 	}
+	return true
 }
 
 func (w *compatGeminiStreamWriter) ensureSuccessHeaders() {
@@ -357,7 +447,7 @@ func (w *compatGeminiStreamWriter) streamChunkID() string {
 	return "chatcmpl-compat"
 }
 
-func (w *compatGeminiStreamWriter) emitChunk(delta compatOpenAIChatDelta, finishReason *string) {
+func (w *compatGeminiStreamWriter) emitChunk(delta compatOpenAIChatDelta, finishReason *string) bool {
 	w.ensureSuccessHeaders()
 
 	body, err := json.Marshal(compatOpenAIChatStreamChunk{
@@ -374,26 +464,43 @@ func (w *compatGeminiStreamWriter) emitChunk(delta compatOpenAIChatDelta, finish
 		},
 	})
 	if err != nil {
-		return
+		return true
 	}
-
-	_, _ = w.dst.Write([]byte("data: "))
-	_, _ = w.dst.Write(body)
-	_, _ = w.dst.Write([]byte("\n\n"))
+	if delta.Content != "" {
+		w.contentChunks++
+	}
+	w.chunksEmitted++
+	if !w.writeDownstream([]byte("data: ")) {
+		return false
+	}
+	if !w.writeDownstream(body) {
+		return false
+	}
+	if !w.writeDownstream([]byte("\n\n")) {
+		return false
+	}
 	w.Flush()
+	return w.downstreamErr == nil
 }
 
-func (w *compatGeminiStreamWriter) emitDone() {
+func (w *compatGeminiStreamWriter) emitDone(synthetic bool) bool {
 	if w.doneSent {
-		return
+		return w.downstreamErr == nil
 	}
 	w.ensureSuccessHeaders()
-	_, _ = w.dst.Write([]byte("data: [DONE]\n\n"))
+	w.syntheticDone = synthetic
+	if !w.writeDownstream([]byte("data: [DONE]\n\n")) {
+		return false
+	}
 	w.Flush()
 	w.doneSent = true
+	return w.downstreamErr == nil
 }
 
 func (w *compatGeminiStreamWriter) finalize() {
+	if w.downstreamErr != nil {
+		return
+	}
 	if w.status != 0 && w.status != http.StatusOK {
 		writeCompatOpenAIUpstreamError(w.dst, w.status, compatExtractErrorBody(w.rawErrorBody.Bytes()))
 		return
@@ -403,8 +510,49 @@ func (w *compatGeminiStreamWriter) finalize() {
 		line := strings.TrimRight(w.lineBuf.String(), "\r\n")
 		w.lineBuf.Reset()
 		if line != "" {
-			w.handleGeminiStreamLine(line)
+			if !w.handleGeminiStreamLine(line) {
+				return
+			}
 		}
 	}
-	w.emitDone()
+	_ = w.emitDone(!w.terminalSignalSeen)
+}
+
+func (w *compatGeminiStreamWriter) writeDownstream(p []byte) bool {
+	n, err := w.dst.Write(p)
+	w.downstreamBytes += n
+	if err != nil && w.downstreamErr == nil {
+		w.downstreamErr = err
+	}
+	return err == nil
+}
+
+func (w *compatGeminiStreamWriter) completed() bool {
+	return (w.status == 0 || w.status == http.StatusOK) && w.downstreamErr == nil && w.terminalSignalSeen && w.doneSent
+}
+
+func (w *compatGeminiStreamWriter) ClientResponseObservation() map[string]any {
+	meta := map[string]any{
+		"http_status":          w.statusOrOK(),
+		"headers_written":      w.headersWritten,
+		"chunks_emitted":       w.chunksEmitted,
+		"content_chunks":       w.contentChunks,
+		"role_sent":            w.roleSent,
+		"done_sent":            w.doneSent,
+		"terminal_signal_seen": w.terminalSignalSeen,
+		"synthetic_done":       w.syntheticDone,
+		"downstream_bytes":     w.downstreamBytes,
+		"delivery_completed":   w.completed(),
+	}
+	if w.downstreamErr != nil {
+		meta["downstream_error"] = w.downstreamErr.Error()
+	}
+	return meta
+}
+
+func (w *compatGeminiStreamWriter) statusOrOK() int {
+	if w.status == 0 {
+		return http.StatusOK
+	}
+	return w.status
 }
