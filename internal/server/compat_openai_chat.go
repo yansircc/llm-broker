@@ -14,6 +14,7 @@ import (
 	"github.com/yansircc/llm-broker/internal/config"
 	"github.com/yansircc/llm-broker/internal/domain"
 	relaypkg "github.com/yansircc/llm-broker/internal/relay"
+	"github.com/yansircc/llm-broker/internal/requestid"
 )
 
 func (s *Server) handleCompatListModels(w http.ResponseWriter, r *http.Request) {
@@ -45,44 +46,86 @@ func (s *Server) handleCompatListModels(w http.ResponseWriter, r *http.Request) 
 }
 
 func (s *Server) handleCompatOpenAIChatCompletions(w http.ResponseWriter, r *http.Request) {
-	r.Body = http.MaxBytesReader(w, r.Body, compatRequestBodyLimitBytes(s.cfg))
+	startedAt := time.Now()
+	ow := newObservedResponseWriter(w)
+	r = requestid.Ensure(r, ow)
+	r.Body = http.MaxBytesReader(ow, r.Body, compatRequestBodyLimitBytes(s.cfg))
+
+	var rawBody []byte
+	var req compatOpenAIChatRequest
+	var target *compatTarget
+	reqRef := func() *compatOpenAIChatRequest {
+		if strings.TrimSpace(req.Model) == "" && len(req.Messages) == 0 && !req.Stream {
+			return nil
+		}
+		return &req
+	}
+	logFailure := func(phase, status, effectKind, message string, extra map[string]any) {
+		s.logCompatFailureRequest(r, rawBody, reqRef(), target, phase, ow, status, effectKind, time.Since(startedAt), message, extra)
+		s.logCompatCompletion(r, reqRef(), target, ow, time.Since(startedAt), "error", extra)
+	}
 
 	releaseCompatSlot := func() {}
 	if ki := auth.GetKeyInfo(r.Context()); ki != nil && !ki.IsAdmin {
 		release, err := s.compatLimiter.Acquire(ki.ID, time.Now())
 		if err != nil {
-			writeCompatOpenAIError(w, http.StatusTooManyRequests, "rate_limit_error", err.Error())
+			writeCompatOpenAIError(ow, http.StatusTooManyRequests, "rate_limit_error", err.Error())
+			logFailure("compat_preflight", compatFailureStatusCode(ow.statusCode()), "overload", err.Error(), map[string]any{
+				"error_type": "rate_limit_error",
+			})
 			return
 		}
 		releaseCompatSlot = release
 	}
 	defer releaseCompatSlot()
 
-	rawBody, err := io.ReadAll(r.Body)
+	var err error
+	rawBody, err = io.ReadAll(r.Body)
 	if err != nil {
-		writeCompatOpenAIError(w, http.StatusBadRequest, "invalid_request_error", "invalid JSON body")
+		writeCompatOpenAIError(ow, http.StatusBadRequest, "invalid_request_error", "invalid JSON body")
+		logFailure("compat_preflight", compatFailureStatusCode(ow.statusCode()), "reject", "invalid JSON body", map[string]any{
+			"error_type": "invalid_request_error",
+		})
 		return
 	}
 
-	var req compatOpenAIChatRequest
 	if err := json.NewDecoder(bytes.NewReader(rawBody)).Decode(&req); err != nil {
-		writeCompatOpenAIError(w, http.StatusBadRequest, "invalid_request_error", "invalid JSON body")
+		writeCompatOpenAIError(ow, http.StatusBadRequest, "invalid_request_error", "invalid JSON body")
+		logFailure("compat_preflight", compatFailureStatusCode(ow.statusCode()), "reject", "invalid JSON body", map[string]any{
+			"error_type": "invalid_request_error",
+		})
 		return
 	}
 
-	target, err := buildCompatTarget(&req)
+	target, err = buildCompatTarget(&req)
 	if err != nil {
-		writeCompatOpenAIError(w, http.StatusBadRequest, "invalid_request_error", err.Error())
+		writeCompatOpenAIError(ow, http.StatusBadRequest, "invalid_request_error", err.Error())
+		logFailure("compat_preflight", compatFailureStatusCode(ow.statusCode()), "reject", err.Error(), map[string]any{
+			"error_type": "invalid_request_error",
+		})
 		return
 	}
 	if s.catalogDrivers[target.provider] == nil {
-		writeCompatOpenAIError(w, http.StatusServiceUnavailable, "server_error", "provider compat surface is unavailable")
+		writeCompatOpenAIError(ow, http.StatusServiceUnavailable, "server_error", "provider compat surface is unavailable")
+		logFailure("compat_preflight", compatFailureStatusCode(ow.statusCode()), "server_error", "provider compat surface is unavailable", map[string]any{
+			"error_type": "server_error",
+		})
 		return
 	}
 
+	slog.Info("compat request translated",
+		"requestId", requestid.FromRequest(r),
+		"path", r.URL.Path,
+		"provider", target.provider,
+		"requestedModel", strings.TrimSpace(req.Model),
+		"translatedModel", target.requestedModel,
+		"relayPath", target.relayPath,
+		"stream", req.Stream,
+	)
+
 	traceID := ""
 	if s.cfg != nil && s.cfg.TraceCompat {
-		traceID = s.nextCompatTraceID()
+		traceID = requestid.FromRequest(r)
 		s.logCompatTranslationTrace(traceID, rawBody, r.URL.Path, target.relayPath, target.upstreamBody)
 	}
 
@@ -121,9 +164,19 @@ func (s *Server) handleCompatOpenAIChatCompletions(w http.ResponseWriter, r *htt
 	}
 
 	if target.stream {
-		streamWriter := target.newStreamWriter(w, target.requestedModel)
+		streamWriter := target.newStreamWriter(ow, target.requestedModel)
 		s.relay.HandleProviderSurface(target.provider, domain.SurfaceCompat).ServeHTTP(streamWriter, relayReq)
 		streamWriter.finalize()
+		streamMeta := streamWriter.ClientResponseObservation()
+		if !streamWriter.completed() && ow.statusCode() == http.StatusOK {
+			logFailure("compat_final", "compat_stream_incomplete", "stream_incomplete", "stream response did not complete cleanly", map[string]any{
+				"stream_writer": streamMeta,
+			})
+			return
+		}
+		s.logCompatCompletion(r, &req, target, ow, time.Since(startedAt), "ok", map[string]any{
+			"stream_writer": streamMeta,
+		})
 		return
 	}
 
@@ -135,16 +188,26 @@ func (s *Server) handleCompatOpenAIChatCompletions(w http.ResponseWriter, r *htt
 		status = http.StatusOK
 	}
 	if status != http.StatusOK {
-		writeCompatOpenAIUpstreamError(w, status, capture.body.Bytes())
+		writeCompatOpenAIUpstreamError(ow, status, capture.body.Bytes())
+		s.logCompatCompletion(r, &req, target, ow, time.Since(startedAt), "error", map[string]any{
+			"relay_status": status,
+		})
 		return
 	}
 
 	openAIResp, err := target.convertResponse(capture.body.Bytes(), target.requestedModel)
 	if err != nil {
-		writeCompatOpenAIError(w, http.StatusBadGateway, "server_error", "failed to convert compat response")
+		writeCompatOpenAIError(ow, http.StatusBadGateway, "server_error", "failed to convert compat response")
+		logFailure("compat_final", compatFailureStatusCode(ow.statusCode()), "server_error", "failed to convert compat response", map[string]any{
+			"relay_status":  status,
+			"convert_error": err.Error(),
+		})
 		return
 	}
-	writeJSON(w, http.StatusOK, openAIResp)
+	writeJSON(ow, http.StatusOK, openAIResp)
+	s.logCompatCompletion(r, &req, target, ow, time.Since(startedAt), "ok", map[string]any{
+		"relay_status": status,
+	})
 }
 
 func buildCompatTarget(req *compatOpenAIChatRequest) (*compatTarget, error) {
@@ -222,6 +285,32 @@ func compatClaudeUpstreamHeaders(model string) http.Header {
 	return headers
 }
 
+var compatClaudeModelAliases = map[string]string{
+	"claude-haiku-4.5":           "claude-haiku-4-5",
+	"claude-opus-4.0":            "claude-opus-4",
+	"claude-opus-4-0":            "claude-opus-4",
+	"claude-opus-4.1":            "claude-opus-4-1",
+	"claude-opus-4-1-20250805":   "claude-opus-4-1",
+	"claude-opus-4.5":            "claude-opus-4-5",
+	"claude-opus-4-5-20251101":   "claude-opus-4-5",
+	"claude-opus-4.6":            "claude-opus-4-6",
+	"claude-opus-4-20250514":     "claude-opus-4",
+	"claude-sonnet-4.0":          "claude-sonnet-4",
+	"claude-sonnet-4-0":          "claude-sonnet-4",
+	"claude-sonnet-4.5":          "claude-sonnet-4-5",
+	"claude-sonnet-4-5-20250929": "claude-sonnet-4-5",
+	"claude-sonnet-4.6":          "claude-sonnet-4-6",
+	"claude-sonnet-4-20250514":   "claude-sonnet-4-6",
+}
+
+func compatCanonicalClaudeModel(model string) string {
+	trimmed := strings.ToLower(strings.TrimSpace(model))
+	if canonical, ok := compatClaudeModelAliases[trimmed]; ok {
+		return canonical
+	}
+	return trimmed
+}
+
 func resolveCompatModel(model string) (domain.Provider, string, string, error) {
 	trimmed := strings.TrimSpace(model)
 	if trimmed == "" {
@@ -237,6 +326,7 @@ func resolveCompatModel(model string) (domain.Provider, string, string, error) {
 
 	switch {
 	case providerPrefix == "claude" || providerPrefix == "anthropic" || (providerPrefix == "" && strings.HasPrefix(baseModel, "claude-")):
+		baseModel = compatCanonicalClaudeModel(baseModel)
 		if !strings.HasPrefix(baseModel, "claude-") {
 			return "", "", "", errCompat("model must be a claude model, e.g. claude/claude-sonnet-4-5")
 		}

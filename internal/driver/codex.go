@@ -195,9 +195,13 @@ func (d *CodexDriver) ParseNonRetriable(statusCode int, body []byte) bool {
 }
 
 func (d *CodexDriver) WriteError(w http.ResponseWriter, status int, msg string) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(status)
-	fmt.Fprintf(w, `{"error":{"message":"%s","type":"error","code":%d}}`, msg, status)
+	writeDriverJSON(w, status, map[string]any{
+		"error": map[string]any{
+			"message": msg,
+			"type":    "error",
+			"code":    status,
+		},
+	})
 }
 
 func (d *CodexDriver) WriteUpstreamError(w http.ResponseWriter, statusCode int, body []byte, _ bool) {

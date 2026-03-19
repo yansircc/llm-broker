@@ -214,9 +214,12 @@ func (d *GeminiDriver) RetrySameAccount(_ int, _ []byte, _ int) bool { return fa
 func (d *GeminiDriver) ParseNonRetriable(_ int, _ []byte) bool { return false }
 
 func (d *GeminiDriver) WriteError(w http.ResponseWriter, status int, msg string) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(status)
-	fmt.Fprintf(w, `{"error":{"message":"%s","code":%d}}`, msg, status)
+	writeDriverJSON(w, status, map[string]any{
+		"error": map[string]any{
+			"message": msg,
+			"code":    status,
+		},
+	})
 }
 
 func (d *GeminiDriver) WriteUpstreamError(w http.ResponseWriter, statusCode int, body []byte, _ bool) {

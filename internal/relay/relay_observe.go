@@ -9,6 +9,8 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+
+	"github.com/yansircc/llm-broker/internal/requestid"
 )
 
 const compatClientMetaHeader = "X-Broker-Compat-Client-Meta"
@@ -110,6 +112,10 @@ func requestMeta(prepared *preparedRelayRequest) json.RawMessage {
 	rawBody := requestLogClientBody(prepared)
 	meta := map[string]any{
 		"stream": prepared.input.IsStream,
+		"phase":  "relay_attempt",
+	}
+	if id := strings.TrimSpace(requestLogClientHeaders(prepared).Get(requestid.Header)); id != "" {
+		meta["request_id"] = id
 	}
 	if keys := observationKeys(body); len(keys) > 0 {
 		meta["top_level_keys"] = keys

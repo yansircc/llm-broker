@@ -17,6 +17,7 @@ import (
 	"github.com/yansircc/llm-broker/internal/domain"
 	"github.com/yansircc/llm-broker/internal/driver"
 	"github.com/yansircc/llm-broker/internal/neterr"
+	"github.com/yansircc/llm-broker/internal/requestid"
 )
 
 // Run starts the server and blocks until shutdown.
@@ -156,6 +157,7 @@ func (s *Server) runLeaderBackgroundJobs(ctx context.Context) {
 
 func (s *Server) requestLogger(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		r = requestid.Ensure(r, w)
 		reqID := s.requestSeq.Add(1)
 		s.activeRequests.Store(reqID, activeRequest{
 			ID:        reqID,
