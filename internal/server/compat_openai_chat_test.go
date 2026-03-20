@@ -893,6 +893,91 @@ func TestHandleCompatOpenAIChatCompletions_StreamLoop(t *testing.T) {
 	}
 }
 
+func TestHandleCompatOpenAIChatCompletions_StreamLoopForwardsClaudePing(t *testing.T) {
+	upstreamClient := &http.Client{
+		Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+			respBody := strings.Join([]string{
+				`event: message_start`,
+				`data: {"type":"message_start","message":{"id":"msg_stream_ping","type":"message","role":"assistant","content":[],"model":"claude-sonnet-4-5","stop_reason":null,"stop_sequence":null}}`,
+				``,
+				`event: ping`,
+				`data: {"type":"ping"}`,
+				``,
+				`event: ping`,
+				`data: {"type":"ping"}`,
+				``,
+				`event: content_block_delta`,
+				`data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"hello after ping"}}`,
+				``,
+				`event: message_delta`,
+				`data: {"type":"message_delta","delta":{"stop_reason":"end_turn"}}`,
+				``,
+				`event: message_stop`,
+				`data: {"type":"message_stop"}`,
+				``,
+			}, "\n")
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Header:     make(http.Header),
+				Body:       io.NopCloser(strings.NewReader(respBody)),
+			}, nil
+		}),
+	}
+	srv := newCompatTestServer(t, upstreamClient)
+
+	reqBody := `{
+		"model":"claude/claude-sonnet-4-5",
+		"stream": true,
+		"messages":[{"role":"user","content":"hello"}]
+	}`
+	req := httptest.NewRequest(http.MethodPost, "/compat/v1/chat/completions", strings.NewReader(reqBody))
+	req.Header.Set("Content-Type", "application/json")
+	ctx := context.WithValue(req.Context(), auth.KeyInfoKey, &auth.KeyInfo{ID: "user-1", Name: "test"})
+	req = req.WithContext(ctx)
+
+	w := httptest.NewRecorder()
+	srv.handleCompatOpenAIChatCompletions(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", w.Code, w.Body.String())
+	}
+
+	lines := strings.Split(w.Body.String(), "\n")
+	var comments []string
+	var payloads []string
+	for _, line := range lines {
+		switch {
+		case strings.HasPrefix(line, ": "):
+			comments = append(comments, strings.TrimPrefix(line, ": "))
+		case strings.HasPrefix(line, "data: "):
+			payloads = append(payloads, strings.TrimPrefix(line, "data: "))
+		}
+	}
+	if len(comments) != 2 {
+		t.Fatalf("comments = %#v, want 2 ping heartbeats", comments)
+	}
+	for _, comment := range comments {
+		if comment != "ping" {
+			t.Fatalf("comment = %q, want ping", comment)
+		}
+	}
+	if len(payloads) != 4 {
+		t.Fatalf("payloads = %#v, want 4 SSE payloads", payloads)
+	}
+	if payloads[len(payloads)-1] != "[DONE]" {
+		t.Fatalf("last payload = %q, want [DONE]", payloads[len(payloads)-1])
+	}
+
+	var contentChunk compatOpenAIChatStreamChunk
+	if err := json.Unmarshal([]byte(payloads[1]), &contentChunk); err != nil {
+		t.Fatalf("json.Unmarshal(content chunk) error = %v; payload = %s", err, payloads[1])
+	}
+	if contentChunk.Choices[0].Delta.Content != "hello after ping" {
+		t.Fatalf("content = %q, want hello after ping", contentChunk.Choices[0].Delta.Content)
+	}
+
+}
+
 func TestHandleCompatOpenAIChatCompletions_GeminiLoop(t *testing.T) {
 	upstreamClient := &http.Client{
 		Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {

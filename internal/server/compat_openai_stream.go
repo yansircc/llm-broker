@@ -182,6 +182,10 @@ func (w *compatOpenAIStreamWriter) handleClaudeStreamLine(line string) bool {
 	case "message_stop":
 		w.terminalSignalSeen = true
 		return w.emitDone(false)
+
+	case "ping":
+		// Preserve upstream liveness on the downstream SSE hop.
+		return w.emitComment("ping")
 	}
 	return true
 }
@@ -251,6 +255,23 @@ func (w *compatOpenAIStreamWriter) emitDone(synthetic bool) bool {
 	}
 	w.Flush()
 	w.doneSent = true
+	return w.downstreamErr == nil
+}
+
+func (w *compatOpenAIStreamWriter) emitComment(comment string) bool {
+	w.ensureSuccessHeaders()
+	if comment != "" {
+		if !w.writeDownstream([]byte(": ")) {
+			return false
+		}
+		if !w.writeDownstream([]byte(comment)) {
+			return false
+		}
+	}
+	if !w.writeDownstream([]byte("\n\n")) {
+		return false
+	}
+	w.Flush()
 	return w.downstreamErr == nil
 }
 
