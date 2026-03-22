@@ -1368,3 +1368,145 @@ func TestCleanup_SharedBucket_BlockedStaysBlocked(t *testing.T) {
 		t.Fatal("missing 'cooldown expired' event")
 	}
 }
+
+// priorityDriver is a mockDriver that computes AutoPriority from a "remaining"
+// field in the state JSON, mirroring the real Codex driver's behaviour.
+type priorityDriver struct {
+	mockDriver
+}
+
+func (d *priorityDriver) AutoPriority(state json.RawMessage) int {
+	var s struct {
+		Remaining int `json:"remaining"`
+	}
+	if json.Unmarshal(state, &s) != nil || s.Remaining == 0 {
+		return 50 // default for empty/unparseable state
+	}
+	return s.Remaining
+}
+
+func TestShouldKeepRouteBinding_RebalancesWhenBetterAlternative(t *testing.T) {
+	drv := &priorityDriver{mockDriver{provider: domain.ProviderClaude}}
+
+	// acctA: low remaining capacity (priority 10)
+	acctA := activeAccount("a", "a@x")
+	acctA.PriorityMode = "auto"
+	acctA.ProviderStateJSON = `{"remaining":10}`
+
+	// acctB: high remaining capacity (priority 90)
+	acctB := activeAccount("b", "b@x")
+	acctB.PriorityMode = "auto"
+	acctB.ProviderStateJSON = `{"remaining":90}`
+
+	p := newTestPool(t, acctA, acctB)
+
+	// Gap is 80 (90-10) > rebalanceGap(30) → should NOT keep binding to A
+	if p.ShouldKeepRouteBinding("a", drv, "", domain.SurfaceNative) {
+		t.Fatal("expected rebalance: gap 80 > 30, but binding was kept")
+	}
+}
+
+func TestShouldKeepRouteBinding_SticksWhenGapSmall(t *testing.T) {
+	drv := &priorityDriver{mockDriver{provider: domain.ProviderClaude}}
+
+	acctA := activeAccount("a", "a@x")
+	acctA.PriorityMode = "auto"
+	acctA.ProviderStateJSON = `{"remaining":60}`
+
+	acctB := activeAccount("b", "b@x")
+	acctB.PriorityMode = "auto"
+	acctB.ProviderStateJSON = `{"remaining":70}`
+
+	p := newTestPool(t, acctA, acctB)
+
+	// Gap is 10 (70-60) <= rebalanceGap(30) → should keep binding
+	if !p.ShouldKeepRouteBinding("a", drv, "", domain.SurfaceNative) {
+		t.Fatal("expected sticky: gap 10 <= 30, but binding was released")
+	}
+}
+
+func TestShouldKeepRouteBinding_UnavailableReturnsFalse(t *testing.T) {
+	drv := &priorityDriver{mockDriver{provider: domain.ProviderClaude}}
+
+	acctA := activeAccount("a", "a@x")
+	future := time.Now().Add(time.Hour)
+	acctA.CooldownUntil = &future
+
+	acctB := activeAccount("b", "b@x")
+
+	p := newTestPool(t, acctA, acctB)
+
+	// A is in cooldown → should not keep
+	if p.ShouldKeepRouteBinding("a", drv, "", domain.SurfaceNative) {
+		t.Fatal("expected false for unavailable account in cooldown")
+	}
+}
+
+func TestShouldKeepRouteBinding_NoAlternativeSticks(t *testing.T) {
+	drv := &priorityDriver{mockDriver{provider: domain.ProviderClaude}}
+
+	acctA := activeAccount("a", "a@x")
+	acctA.PriorityMode = "auto"
+	acctA.ProviderStateJSON = `{"remaining":5}`
+
+	p := newTestPool(t, acctA)
+
+	// Only account → bestPri=0, currentPri=5, gap=-5 ≤ 30 → stick
+	if !p.ShouldKeepRouteBinding("a", drv, "", domain.SurfaceNative) {
+		t.Fatal("expected sticky when no alternatives exist")
+	}
+}
+
+func TestBestAvailablePriorityLocked(t *testing.T) {
+	drv := &priorityDriver{mockDriver{provider: domain.ProviderClaude}}
+
+	acctA := activeAccount("a", "a@x")
+	acctA.PriorityMode = "auto"
+	acctA.ProviderStateJSON = `{"remaining":10}`
+
+	acctB := activeAccount("b", "b@x")
+	acctB.PriorityMode = "auto"
+	acctB.ProviderStateJSON = `{"remaining":90}`
+
+	acctC := activeAccount("c", "c@x")
+	acctC.PriorityMode = "auto"
+	acctC.ProviderStateJSON = `{"remaining":60}`
+
+	p := newTestPool(t, acctA, acctB, acctC)
+
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+
+	// Best excluding A → B with 90
+	best := p.bestAvailablePriorityLocked(drv, "", domain.SurfaceNative, "a")
+	if best != 90 {
+		t.Fatalf("bestAvailablePriority excluding a = %d, want 90", best)
+	}
+
+	// Best excluding B → C with 60
+	best = p.bestAvailablePriorityLocked(drv, "", domain.SurfaceNative, "b")
+	if best != 60 {
+		t.Fatalf("bestAvailablePriority excluding b = %d, want 60", best)
+	}
+}
+
+func TestShouldKeepRouteBinding_ManualModeAlwaysSticks(t *testing.T) {
+	drv := &priorityDriver{mockDriver{provider: domain.ProviderClaude}}
+
+	// acctA: manual mode with low priority
+	acctA := activeAccount("a", "a@x")
+	acctA.PriorityMode = "manual"
+	acctA.Priority = 5
+
+	// acctB: auto mode with high remaining capacity
+	acctB := activeAccount("b", "b@x")
+	acctB.PriorityMode = "auto"
+	acctB.ProviderStateJSON = `{"remaining":95}`
+
+	p := newTestPool(t, acctA, acctB)
+
+	// Even though gap is huge, manual mode account always sticks
+	if !p.ShouldKeepRouteBinding("a", drv, "", domain.SurfaceNative) {
+		t.Fatal("expected manual-mode account to always stick, but binding was released")
+	}
+}

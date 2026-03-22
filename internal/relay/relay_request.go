@@ -149,7 +149,7 @@ func (r *Relay) resolveUserRouteAccount(ctx context.Context, drv driver.Executio
 	if !ok {
 		return ""
 	}
-	if r.pool.IsAvailableForSurface(accountID, drv, model, surface) {
+	if r.pool.ShouldKeepRouteBinding(accountID, drv, model, surface) {
 		return accountID
 	}
 	return ""

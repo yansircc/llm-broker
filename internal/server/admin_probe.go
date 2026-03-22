@@ -32,6 +32,9 @@ func (s *Server) refreshStaleAccounts(ctx context.Context) {
 		if acct.Status != domain.StatusActive {
 			continue
 		}
+		if acct.CooldownUntil != nil && acct.CooldownUntil.Sub(now) > 30*time.Minute {
+			continue
+		}
 
 		drv, ok := s.adminDrivers[acct.Provider]
 		if !ok {

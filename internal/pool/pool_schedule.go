@@ -104,6 +104,64 @@ func (p *Pool) IsAvailableForSurface(accountID string, drv driver.SchedulerDrive
 	return p.isAvailable(acct, drv, model, time.Now())
 }
 
+// rebalanceGap is the minimum priority difference that triggers rebinding
+// to a better alternative. A value of 30 means: only rebalance when the best
+// alternative has ≥30 more remaining-capacity points than the current account.
+const rebalanceGap = 30
+
+// ShouldKeepRouteBinding returns true if the sticky route binding should be
+// honoured. It returns false if the account is unavailable OR a significantly
+// better alternative exists (priority gap > rebalanceGap).
+// Manual-priority accounts always stick — rebalance only applies to auto mode.
+func (p *Pool) ShouldKeepRouteBinding(accountID string, drv driver.SchedulerDriver, model string, surface domain.Surface) bool {
+	if !p.IsAvailableForSurface(accountID, drv, model, surface) {
+		return false
+	}
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+	acct, ok := p.accounts[accountID]
+	if !ok {
+		return false
+	}
+	if acct.PriorityMode != "auto" {
+		return true
+	}
+	currentPri := p.accountPriorityLocked(acct, drv)
+	bestPri := p.bestAvailablePriorityLocked(drv, model, surface, accountID)
+	return bestPri-currentPri <= rebalanceGap
+}
+
+func (p *Pool) accountPriorityLocked(acct *domain.Account, drv driver.SchedulerDriver) int {
+	if acct.PriorityMode == "auto" {
+		return drv.AutoPriority(json.RawMessage(p.bucketStateLocked(acct)))
+	}
+	return acct.Priority
+}
+
+func (p *Pool) bestAvailablePriorityLocked(drv driver.SchedulerDriver, model string, surface domain.Surface, excludeAccountID string) int {
+	now := time.Now()
+	best := 0
+	for _, acct := range p.accounts {
+		if acct.ID == excludeAccountID {
+			continue
+		}
+		if acct.Provider != drv.Provider() {
+			continue
+		}
+		if !p.allowedOnSurfaceLocked(acct, surface) {
+			continue
+		}
+		if !p.isAvailable(acct, drv, model, now) {
+			continue
+		}
+		pri := p.accountPriorityLocked(acct, drv)
+		if pri > best {
+			best = pri
+		}
+	}
+	return best
+}
+
 func (p *Pool) SurfaceAvailabilityMap() map[string]SurfaceAvailability {
 	if err := p.refreshState(context.Background()); err != nil {
 		slog.Warn("pool refresh failed", "op", "surface_availability_map", "error", err)
@@ -189,10 +247,7 @@ func (p *Pool) PickForSurface(drv driver.SchedulerDriver, exclusions []Exclusion
 			continue
 		}
 		bucket := buckets[bucketKey]
-		pri := acct.Priority
-		if acct.PriorityMode == "auto" {
-			pri = drv.AutoPriority(json.RawMessage(p.bucketStateLocked(acct)))
-		}
+		pri := p.accountPriorityLocked(acct, drv)
 		if bucket == nil {
 			bucket = &bucketCandidate{key: bucketKey, priority: pri}
 			buckets[bucketKey] = bucket
