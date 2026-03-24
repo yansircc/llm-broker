@@ -28,9 +28,12 @@ type HealthInfo struct {
 }
 
 type UtilizationWindowResponse struct {
-	Label string `json:"label"`
-	Pct   int    `json:"pct"`
-	Reset int64  `json:"reset,omitempty"`
+	Label    string `json:"label"`
+	Pct      int    `json:"pct"`
+	Reset    int64  `json:"reset,omitempty"`
+	SubLabel string `json:"sub_label,omitempty"`
+	SubPct   *int   `json:"sub_pct,omitempty"`
+	SubReset int64  `json:"sub_reset,omitempty"`
 }
 
 type AccountFieldResponse struct {

@@ -13,6 +13,9 @@ export interface UtilWindow {
 	label: string;
 	pct: number;
 	reset?: number;
+	sub_label?: string;
+	sub_pct?: number;
+	sub_reset?: number;
 }
 
 export interface HealthInfo {

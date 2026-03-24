@@ -19,7 +19,7 @@ func (d *CodexDriver) Probe(ctx context.Context, acct *domain.Account, token str
 		return ProbeResult{}, fmt.Errorf("codex account missing subject")
 	}
 
-	body := `{"model":"gpt-5.1-codex","messages":[{"role":"user","content":"Reply with OK only."}],"stream":true}`
+	body := `{"model":"gpt-5.1-codex","instructions":"Reply with OK only.","input":[{"role":"user","content":"test"}],"stream":true,"store":false}`
 	req, err := http.NewRequestWithContext(ctx, "POST", d.cfg.APIURL, strings.NewReader(body))
 	if err != nil {
 		return ProbeResult{}, err
@@ -82,19 +82,30 @@ func (d *CodexDriver) AutoPriority(state json.RawMessage) int {
 	if json.Unmarshal(state, &s) != nil {
 		return 50
 	}
-	primaryRemain := 100.0
-	if s.PrimaryUtil > 0 {
-		primaryRemain = (1.0 - s.PrimaryUtil) * 100
+	// Return the best remaining capacity across all families.
+	best := 0
+	for _, prefix := range s.allFamilies() {
+		f := s.family(prefix)
+		primaryRemain := 100.0
+		if f.PrimaryUtil > 0 {
+			primaryRemain = (1.0 - f.PrimaryUtil) * 100
+		}
+		secondaryRemain := 100.0
+		if f.SecondaryUtil > 0 {
+			secondaryRemain = (1.0 - f.SecondaryUtil) * 100
+		}
+		worst := primaryRemain
+		if secondaryRemain < worst {
+			worst = secondaryRemain
+		}
+		if int(worst) > best {
+			best = int(worst)
+		}
 	}
-	secondaryRemain := 100.0
-	if s.SecondaryUtil > 0 {
-		secondaryRemain = (1.0 - s.SecondaryUtil) * 100
+	if best == 0 && len(s.allFamilies()) == 0 {
+		return 50
 	}
-	pri := primaryRemain
-	if secondaryRemain < pri {
-		pri = secondaryRemain
-	}
-	return int(pri)
+	return best
 }
 
 func (d *CodexDriver) IsStale(state json.RawMessage, now time.Time) bool {
@@ -103,10 +114,29 @@ func (d *CodexDriver) IsStale(state json.RawMessage, now time.Time) bool {
 		return false
 	}
 	nowUnix := now.Unix()
-	return (s.PrimaryReset > 0 && s.PrimaryReset < nowUnix) ||
-		(s.SecondaryReset > 0 && s.SecondaryReset < nowUnix) ||
-		(s.PrimaryUtil > 0 && s.PrimaryReset == 0) ||
-		(s.SecondaryUtil > 0 && s.SecondaryReset == 0)
+	for _, prefix := range s.allFamilies() {
+		f := s.family(prefix)
+		if (f.PrimaryReset > 0 && f.PrimaryReset < nowUnix) ||
+			(f.SecondaryReset > 0 && f.SecondaryReset < nowUnix) ||
+			(f.PrimaryUtil > 0 && f.PrimaryReset == 0) ||
+			(f.SecondaryUtil > 0 && f.SecondaryReset == 0) {
+			return true
+		}
+	}
+	return false
+}
+
+// computeFamilyCooldown returns a cooldown time for a single family,
+// or zero if the family is not exhausted.
+func computeFamilyCooldown(f CodexFamilyLimits, nowUnix int64) int64 {
+	var cd int64
+	if f.PrimaryUtil >= 0.99 && f.PrimaryReset > nowUnix {
+		cd = f.PrimaryReset
+	}
+	if f.SecondaryUtil >= 0.99 && f.SecondaryReset > nowUnix && f.SecondaryReset > cd {
+		cd = f.SecondaryReset
+	}
+	return cd
 }
 
 func (d *CodexDriver) ComputeExhaustedCooldown(state json.RawMessage, now time.Time) time.Time {
@@ -114,16 +144,26 @@ func (d *CodexDriver) ComputeExhaustedCooldown(state json.RawMessage, now time.T
 	if json.Unmarshal(state, &s) != nil {
 		return time.Time{}
 	}
+	families := s.allFamilies()
+	if len(families) == 0 {
+		return time.Time{}
+	}
 	nowUnix := now.Unix()
-	var cooldownUntil int64
-	if s.PrimaryUtil >= 0.99 && s.PrimaryReset > nowUnix {
-		cooldownUntil = s.PrimaryReset
+
+	// Only set bucket-level cooldown if ALL families are exhausted.
+	var earliest int64
+	for _, prefix := range families {
+		f := s.family(prefix)
+		cd := computeFamilyCooldown(f, nowUnix)
+		if cd == 0 {
+			return time.Time{} // this family still has capacity
+		}
+		if earliest == 0 || cd < earliest {
+			earliest = cd
+		}
 	}
-	if s.SecondaryUtil >= 0.99 && s.SecondaryReset > nowUnix && s.SecondaryReset > cooldownUntil {
-		cooldownUntil = s.SecondaryReset
-	}
-	if cooldownUntil > 0 {
-		return time.Unix(cooldownUntil, 0).UTC()
+	if earliest > 0 {
+		return time.Unix(earliest, 0).UTC()
 	}
 	return time.Time{}
 }
@@ -159,24 +199,73 @@ func (d *CodexDriver) GetUtilization(state json.RawMessage) []UtilWindow {
 	if json.Unmarshal(state, &s) != nil {
 		return nil
 	}
+	families := s.allFamilies()
+	if len(families) == 0 {
+		return nil
+	}
+
+	// Single family: return flat windows as before.
+	if len(families) == 1 {
+		f := s.family(families[0])
+		var windows []UtilWindow
+		if f.PrimaryUtil > 0 || f.PrimaryReset > 0 {
+			windows = append(windows, UtilWindow{
+				Label: "primary", Pct: int(f.PrimaryUtil * 100), Reset: f.PrimaryReset, SubPct: -1,
+			})
+		}
+		if f.SecondaryUtil > 0 || f.SecondaryReset > 0 {
+			windows = append(windows, UtilWindow{
+				Label: "secondary", Pct: int(f.SecondaryUtil * 100), Reset: f.SecondaryReset, SubPct: -1,
+			})
+		}
+		return windows
+	}
+
+	// Multiple families: merge into primary/secondary with sub-family data.
+	// Standard ("") is the main value; first non-standard family is the sub.
+	std := s.family("")
+	var subPrefix string
+	for _, p := range families {
+		if p != "" {
+			subPrefix = p
+			break
+		}
+	}
+	sub := s.family(subPrefix)
+	subName := codexFamilyDisplayName(subPrefix, sub)
+	if subName == "" {
+		subName = "spark"
+	}
+
 	var windows []UtilWindow
-	if s.PrimaryUtil > 0 || s.PrimaryReset > 0 {
+	if std.PrimaryUtil > 0 || std.PrimaryReset > 0 || sub.PrimaryUtil > 0 || sub.PrimaryReset > 0 {
 		windows = append(windows, UtilWindow{
-			Label: "primary",
-			Pct:   int(s.PrimaryUtil * 100),
-			Reset: s.PrimaryReset,
+			Label: "primary", Pct: int(std.PrimaryUtil * 100), Reset: std.PrimaryReset,
+			SubLabel: subName, SubPct: int(sub.PrimaryUtil * 100), SubReset: sub.PrimaryReset,
 		})
 	}
-	if s.SecondaryUtil > 0 || s.SecondaryReset > 0 {
+	if std.SecondaryUtil > 0 || std.SecondaryReset > 0 || sub.SecondaryUtil > 0 || sub.SecondaryReset > 0 {
 		windows = append(windows, UtilWindow{
-			Label: "secondary",
-			Pct:   int(s.SecondaryUtil * 100),
-			Reset: s.SecondaryReset,
+			Label: "secondary", Pct: int(std.SecondaryUtil * 100), Reset: std.SecondaryReset,
+			SubLabel: subName, SubPct: int(sub.SecondaryUtil * 100), SubReset: sub.SecondaryReset,
 		})
 	}
 	return windows
 }
 
-func (d *CodexDriver) CanServe(_ json.RawMessage, _ string, _ time.Time) bool {
+func (d *CodexDriver) CanServe(state json.RawMessage, model string, now time.Time) bool {
+	var s CodexState
+	if json.Unmarshal(state, &s) != nil {
+		return true
+	}
+	family := codexModelFamily(model)
+	f := s.family(family)
+	nowUnix := now.Unix()
+	if f.PrimaryUtil >= 0.99 && f.PrimaryReset > nowUnix {
+		return false
+	}
+	if f.SecondaryUtil >= 0.99 && f.SecondaryReset > nowUnix {
+		return false
+	}
 	return true
 }

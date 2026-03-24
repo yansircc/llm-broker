@@ -55,11 +55,11 @@ func (d *CodexDriver) BuildRequest(ctx context.Context, input *RelayInput, acct 
 	return req, nil
 }
 
-func (d *CodexDriver) Interpret(statusCode int, headers http.Header, body []byte, model string, _ json.RawMessage) Effect {
+func (d *CodexDriver) Interpret(statusCode int, headers http.Header, body []byte, model string, prevState json.RawMessage) Effect {
 	upstreamErrorType, upstreamErrorMessage := parseCodexErrorInfo(body)
 	switch statusCode {
 	case http.StatusOK:
-		state := d.captureHeaders(headers)
+		state := d.captureHeaders(headers, prevState)
 		return Effect{Kind: EffectSuccess, Scope: EffectScopeBucket, UpdatedState: state}
 
 	case 529:
@@ -73,7 +73,7 @@ func (d *CodexDriver) Interpret(statusCode int, headers http.Header, body []byte
 		}
 
 	case 429:
-		state := d.captureHeaders(headers)
+		state := d.captureHeaders(headers, prevState)
 
 		until := time.Now().Add(d.cfg.Pauses.Pause429)
 		if retryAfter := parseRetryAfter(headers.Get("Retry-After")); retryAfter > 0 {
