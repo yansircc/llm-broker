@@ -105,9 +105,12 @@ type OAuthSession struct {
 
 // UtilWindow represents a rate-limit utilization window.
 type UtilWindow struct {
-	Label string // provider-defined display label
-	Pct   int    // 0-100
-	Reset int64  // unix seconds
+	Label    string // provider-defined display label
+	Pct      int    // 0-100
+	Reset    int64  // unix seconds
+	SubLabel string // optional: second family name (e.g. "spark")
+	SubPct   int    // optional: second family pct (-1 = absent)
+	SubReset int64  // optional: second family reset
 }
 
 type AccountField struct {

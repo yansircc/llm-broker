@@ -43,11 +43,18 @@ func (d *CodexDriver) Info() ProviderInfo {
 func (d *CodexDriver) Models() []Model {
 	return []Model{
 		{ID: "gpt-5.4", Object: "model", Created: 1709164800, OwnedBy: "openai", ContextWindow: 1050000},
+		{ID: "gpt-5.4-mini", Object: "model", Created: 1709164800, OwnedBy: "openai", ContextWindow: 1050000},
 		{ID: "gpt-5.3-codex", Object: "model", Created: 1709164800, OwnedBy: "openai", ContextWindow: 400000},
+		{ID: "gpt-5.3-codex-spark", Object: "model", Created: 1709164800, OwnedBy: "openai", ContextWindow: 128000},
 		{ID: "gpt-5.2-codex", Object: "model", Created: 1709164800, OwnedBy: "openai", ContextWindow: 400000},
+		{ID: "gpt-5.2", Object: "model", Created: 1709164800, OwnedBy: "openai", ContextWindow: 400000},
 		{ID: "gpt-5.1-codex-max", Object: "model", Created: 1709164800, OwnedBy: "openai", ContextWindow: 400000},
 		{ID: "gpt-5.1-codex", Object: "model", Created: 1709164800, OwnedBy: "openai", ContextWindow: 400000},
 		{ID: "gpt-5.1-codex-mini", Object: "model", Created: 1709164800, OwnedBy: "openai", ContextWindow: 400000},
+		{ID: "gpt-5.1", Object: "model", Created: 1709164800, OwnedBy: "openai", ContextWindow: 400000},
+		{ID: "gpt-5-codex", Object: "model", Created: 1709164800, OwnedBy: "openai", ContextWindow: 192000},
+		{ID: "gpt-5-codex-mini", Object: "model", Created: 1709164800, OwnedBy: "openai", ContextWindow: 192000},
+		{ID: "gpt-5", Object: "model", Created: 1709164800, OwnedBy: "openai", ContextWindow: 192000},
 		{ID: "codex-1", Object: "model", Created: 1709164800, OwnedBy: "openai", ContextWindow: 192000},
 	}
 }

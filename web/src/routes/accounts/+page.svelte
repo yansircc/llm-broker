@@ -214,7 +214,11 @@
 			}
 			group.accounts.push(account);
 			account.windows.forEach((window, index) => {
-				if (!group!.window_labels[index]) group!.window_labels[index] = window.label;
+				if (!group!.window_labels[index]) {
+					let lbl = window.label;
+					if (window.sub_label) lbl += ` codex/spark`;
+					group!.window_labels[index] = lbl;
+				}
 			});
 		}
 		return [...groups.values()].sort((a, b) => a.provider.localeCompare(b.provider));
@@ -342,7 +346,7 @@
 											<span class="muted">&ndash;</span>
 										{:else if window}
 											{@const remain = 100 - window.pct}
-											<span class={remainClass(remain)}>{remain}%</span> <span class="muted">{remainTime(window.reset ?? null)}</span>
+											<span class={remainClass(remain)}>{remain}%</span>{#if window.sub_pct != null}{@const subRemain = 100 - window.sub_pct}/<span class={remainClass(subRemain)}>{subRemain}%</span>{/if} <span class="muted">{remainTime(window.reset ?? null)}</span>
 										{:else}
 											<span class="muted">&ndash;</span>
 										{/if}

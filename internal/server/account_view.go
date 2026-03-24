@@ -47,11 +47,17 @@ func toWindowResponses(windows []driver.UtilWindow) []UtilizationWindowResponse 
 	}
 	resp := make([]UtilizationWindowResponse, 0, len(windows))
 	for _, window := range windows {
-		resp = append(resp, UtilizationWindowResponse{
+		w := UtilizationWindowResponse{
 			Label: window.Label,
 			Pct:   window.Pct,
 			Reset: window.Reset,
-		})
+		}
+		if window.SubPct >= 0 {
+			w.SubLabel = window.SubLabel
+			w.SubPct = &window.SubPct
+			w.SubReset = window.SubReset
+		}
+		resp = append(resp, w)
 	}
 	return resp
 }
