@@ -1,7 +1,6 @@
 <script lang="ts">
 	import '$lib/global.css';
 	import { base } from '$app/paths';
-	import { goto } from '$app/navigation';
 	import { page } from '$app/stores';
 
 	interface Props {
@@ -23,13 +22,6 @@
 		const full = `${base}${href}`;
 		return path === full || path.startsWith(full + '/');
 	}
-
-	$effect(() => {
-		if ($page.url.pathname.endsWith('/login')) return;
-		fetch('/admin/health', { credentials: 'same-origin', cache: 'no-store' }).then((r) => {
-			if (r.status === 401) goto(`${base}/login`, { replaceState: true });
-		}).catch(() => {});
-	});
 </script>
 
 {#if !$page.url.pathname.endsWith('/login')}
