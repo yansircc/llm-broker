@@ -61,7 +61,10 @@
 	}
 
 	function cellAvailable(cell: EgressCellView): boolean {
-		return cellSelectable(cell) && cellAccounts(cell).length === 0;
+		const selectedAcct = accounts.find((a) => a.id === selectedAccountID);
+		const providerID = selectedAcct?.provider ?? '';
+		const sameProvider = cellAccounts(cell).filter((a) => a.provider === providerID);
+		return cellSelectable(cell) && sameProvider.length === 0;
 	}
 
 	function availableCells(): EgressCellView[] {

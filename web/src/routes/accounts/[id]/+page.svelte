@@ -154,7 +154,8 @@
 
 	function cellAvailableForAccount(cell: EgressCellView): boolean {
 		if (cell.id === acct?.cell_id) return true;
-		return cellSelectable(cell) && cellAccounts(cell).length === 0;
+		const sameProvider = cellAccounts(cell).filter((a) => a.provider === acct?.provider);
+		return cellSelectable(cell) && sameProvider.length === 0;
 	}
 
 	function bindableCells(): EgressCellView[] {

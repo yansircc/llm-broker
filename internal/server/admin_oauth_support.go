@@ -133,7 +133,7 @@ func (s *Server) hydrateExchangeCodeRequest(ctx context.Context, req *exchangeCo
 	return nil
 }
 
-func (s *Server) validateExchangeCellSelection(existing *domain.Account, requestedCellID string) error {
+func (s *Server) validateExchangeCellSelection(existing *domain.Account, requestedCellID string, provider domain.Provider) error {
 	requestedCellID = strings.TrimSpace(requestedCellID)
 	if requestedCellID == "" {
 		return fmt.Errorf("cell_id is required")
@@ -153,8 +153,8 @@ func (s *Server) validateExchangeCellSelection(existing *domain.Account, request
 	if reason := accountCellBindError(cell, time.Now().UTC()); reason != "" {
 		return fmt.Errorf("%s", reason)
 	}
-	if accountOwnsCell(s.pool.List(), currentAccountID, requestedCellID) {
-		return fmt.Errorf("cell is already bound to another account")
+	if accountOwnsCell(s.pool.List(), currentAccountID, requestedCellID, provider) {
+		return fmt.Errorf("cell is already bound to another account of the same provider")
 	}
 	return nil
 }

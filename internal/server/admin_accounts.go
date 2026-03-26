@@ -222,8 +222,8 @@ func (s *Server) handleBindAccountCell(w http.ResponseWriter, r *http.Request) {
 				writeAdminError(w, http.StatusBadRequest, "invalid_request", reason)
 				return
 			}
-			if accountOwnsCell(s.pool.List(), acct.ID, req.CellID) {
-				writeAdminError(w, http.StatusBadRequest, "invalid_request", "cell is already bound to another account")
+			if accountOwnsCell(s.pool.List(), acct.ID, req.CellID, acct.Provider) {
+				writeAdminError(w, http.StatusBadRequest, "invalid_request", "cell is already bound to another account of the same provider")
 				return
 			}
 		}
@@ -258,12 +258,12 @@ func accountCellBindError(cell *domain.EgressCell, now time.Time) string {
 	return ""
 }
 
-func accountOwnsCell(accounts []*domain.Account, accountID, cellID string) bool {
+func accountOwnsCell(accounts []*domain.Account, accountID, cellID string, provider domain.Provider) bool {
 	for _, acct := range accounts {
 		if acct == nil || acct.ID == accountID {
 			continue
 		}
-		if acct.CellID == cellID {
+		if acct.CellID == cellID && acct.Provider == provider {
 			return true
 		}
 	}

@@ -47,7 +47,7 @@ func (s *Server) handleGenerateAuthURL(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := s.validateExchangeCellSelection(nil, req.CellID); err != nil {
+	if err := s.validateExchangeCellSelection(nil, req.CellID, drv.Provider()); err != nil {
 		writeAdminError(w, http.StatusBadRequest, "invalid_request", err.Error())
 		return
 	}
@@ -127,7 +127,7 @@ func (s *Server) handleExchangeCode(w http.ResponseWriter, r *http.Request) {
 	}
 
 	existing := s.pool.FindBySubject(drv.Provider(), result.Subject)
-	if err := s.validateExchangeCellSelection(existing, req.CellID); err != nil {
+	if err := s.validateExchangeCellSelection(existing, req.CellID, drv.Provider()); err != nil {
 		writeAdminError(w, http.StatusBadRequest, "invalid_request", err.Error())
 		return
 	}
