@@ -31,3 +31,4 @@ web/node_modules
 
 
 sub2api/
+.playwright-mcp/

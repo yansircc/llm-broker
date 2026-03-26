@@ -143,6 +143,18 @@ func (s *Server) dashboardRecentFailures(ctx context.Context, limit int) []*doma
 	if logs == nil {
 		return []*domain.RequestLog{}
 	}
+	// Strip heavy fields — dashboard only needs summary columns.
+	for _, l := range logs {
+		l.ClientBodyExcerpt = ""
+		l.ClientHeaders = nil
+		l.RequestMeta = nil
+		l.UpstreamRequestHeaders = nil
+		l.UpstreamRequestMeta = nil
+		l.UpstreamRequestBodyExcerpt = ""
+		l.UpstreamHeaders = nil
+		l.UpstreamResponseMeta = nil
+		l.UpstreamResponseBodyExcerpt = ""
+	}
 	return logs
 }
 
