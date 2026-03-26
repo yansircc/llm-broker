@@ -52,7 +52,7 @@ func toWindowResponses(windows []driver.UtilWindow) []UtilizationWindowResponse 
 			Pct:   window.Pct,
 			Reset: window.Reset,
 		}
-		if window.SubPct >= 0 {
+		if window.SubLabel != "" {
 			w.SubLabel = window.SubLabel
 			w.SubPct = &window.SubPct
 			w.SubReset = window.SubReset

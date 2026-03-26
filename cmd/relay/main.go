@@ -161,13 +161,17 @@ func main() {
 	})
 
 	// Initialize relay
+	blobDir := ""
+	if cfg.LogBlobs {
+		blobDir = filepath.Join(filepath.Dir(cfg.DBPath), "request-log-blobs")
+	}
 	r := relay.New(p, tokMgr, s, relay.Config{
 		MaxRequestBodyMB:  cfg.MaxRequestBodyMB,
 		MaxRetryAccounts:  cfg.MaxRetryAccounts,
 		SessionBindingTTL: cfg.SessionBindingTTL,
 		CellErrorPause:    cfg.CellErrorPause,
 		TraceCompat:       cfg.TraceCompat,
-		RequestLogBlobDir: filepath.Join(filepath.Dir(cfg.DBPath), "request-log-blobs"),
+		RequestLogBlobDir: blobDir,
 	}, transportPool, bus, executionDrivers)
 
 	// Start server

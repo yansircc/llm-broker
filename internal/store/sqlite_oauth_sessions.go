@@ -50,6 +50,24 @@ func (s *SQLiteStore) SaveOAuthSession(ctx context.Context, session *domain.OAut
 	return err
 }
 
+func (s *SQLiteStore) GetOAuthSession(ctx context.Context, sessionID string) (*domain.OAuthSessionState, error) {
+	row := s.db.QueryRowContext(ctx,
+		"SELECT "+oauthSessionCols+" FROM oauth_sessions WHERE session_id = ? AND expires_at > ?",
+		sessionID,
+		time.Now().UTC().Unix(),
+	)
+	session, err := scanOAuthSession(row)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	return session, err
+}
+
+func (s *SQLiteStore) DeleteOAuthSession(ctx context.Context, sessionID string) error {
+	_, err := s.db.ExecContext(ctx, "DELETE FROM oauth_sessions WHERE session_id = ?", sessionID)
+	return err
+}
+
 func (s *SQLiteStore) GetAndDeleteOAuthSession(ctx context.Context, sessionID string) (*domain.OAuthSessionState, error) {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {

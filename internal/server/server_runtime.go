@@ -180,15 +180,66 @@ func (s *Server) runLogPurge(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			before := time.Now().Add(-30 * 24 * time.Hour)
+			retention := time.Duration(s.cfg.LogRetentionDays) * 24 * time.Hour
+			if retention <= 0 {
+				retention = 3 * 24 * time.Hour
+			}
+			before := time.Now().Add(-retention)
+
 			n, err := s.store.PurgeOldLogs(ctx, before)
 			if err != nil {
 				slog.Error("purge old logs failed", "error", err)
 			} else if n > 0 {
-				slog.Info("purged old request logs", "count", n)
+				slog.Info("purged old request logs", "count", n, "retention_days", s.cfg.LogRetentionDays)
+			}
+
+			blobDir := filepath.Join(filepath.Dir(s.cfg.DBPath), "request-log-blobs")
+			if removed, err := pruneBlobDir(blobDir, before); err != nil {
+				slog.Error("prune blobs failed", "error", err)
+			} else if removed > 0 {
+				slog.Info("pruned old request log blobs", "removed", removed)
 			}
 		}
 	}
+}
+
+// pruneBlobDir removes blob files older than cutoff and empty subdirectories.
+func pruneBlobDir(dir string, cutoff time.Time) (int, error) {
+	info, err := os.Stat(dir)
+	if err != nil || !info.IsDir() {
+		return 0, nil // dir doesn't exist, nothing to prune
+	}
+
+	removed := 0
+	err = filepath.Walk(dir, func(path string, fi os.FileInfo, err error) error {
+		if err != nil {
+			return nil // skip unreadable entries
+		}
+		if fi.IsDir() {
+			return nil
+		}
+		if fi.ModTime().Before(cutoff) {
+			if os.Remove(path) == nil {
+				removed++
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		return removed, err
+	}
+
+	// Remove empty subdirectories (walk again, bottom-up not needed —
+	// just try removing and let it fail if non-empty).
+	filepath.Walk(dir, func(path string, fi os.FileInfo, err error) error {
+		if err != nil || !fi.IsDir() || path == dir {
+			return nil
+		}
+		os.Remove(path) // fails silently if non-empty
+		return nil
+	})
+
+	return removed, nil
 }
 
 func (s *Server) probeAccount(ctx context.Context, acct *domain.Account) (driver.ProbeResult, error) {

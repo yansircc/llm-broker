@@ -43,6 +43,8 @@ type Store interface {
 	DeleteStainlessBinding(ctx context.Context, accountID string) error
 	PurgeExpiredStainlessBindings(ctx context.Context, before time.Time) (int64, error)
 	SaveOAuthSession(ctx context.Context, session *domain.OAuthSessionState) error
+	GetOAuthSession(ctx context.Context, sessionID string) (*domain.OAuthSessionState, error)
+	DeleteOAuthSession(ctx context.Context, sessionID string) error
 	GetAndDeleteOAuthSession(ctx context.Context, sessionID string) (*domain.OAuthSessionState, error)
 	PurgeExpiredOAuthSessions(ctx context.Context, before time.Time) (int64, error)
 	AcquireRefreshLock(ctx context.Context, lock *domain.RefreshLock) (bool, error)

@@ -96,7 +96,7 @@ func decodeExchangeCodeRequest(r *http.Request) (*exchangeCodeRequest, error) {
 
 func (s *Server) hydrateExchangeCodeRequest(ctx context.Context, req *exchangeCodeRequest) error {
 	if req.SessionID != "" {
-		sessionJSON, ok, err := s.pool.GetDelOAuthSession(ctx, req.SessionID)
+		sessionJSON, ok, err := s.pool.GetOAuthSession(ctx, req.SessionID)
 		if err != nil {
 			return err
 		}

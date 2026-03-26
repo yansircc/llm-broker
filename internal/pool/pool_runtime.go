@@ -112,6 +112,21 @@ func (p *Pool) SetOAuthSession(ctx context.Context, state, data string, ttl time
 	})
 }
 
+func (p *Pool) GetOAuthSession(ctx context.Context, state string) (string, bool, error) {
+	session, err := p.store.GetOAuthSession(ctx, state)
+	if err != nil {
+		return "", false, err
+	}
+	if session == nil {
+		return "", false, nil
+	}
+	return session.DataJSON, true, nil
+}
+
+func (p *Pool) DelOAuthSession(ctx context.Context, state string) error {
+	return p.store.DeleteOAuthSession(ctx, state)
+}
+
 func (p *Pool) GetDelOAuthSession(ctx context.Context, state string) (string, bool, error) {
 	session, err := p.store.GetAndDeleteOAuthSession(ctx, state)
 	if err != nil {

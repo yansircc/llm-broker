@@ -309,6 +309,24 @@ func (m *MockStore) SaveOAuthSession(_ context.Context, session *domain.OAuthSes
 	return nil
 }
 
+func (m *MockStore) GetOAuthSession(_ context.Context, sessionID string) (*domain.OAuthSessionState, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	session, ok := m.oauthSessions[sessionID]
+	if !ok || !session.ExpiresAt.After(time.Now()) {
+		return nil, nil
+	}
+	copy := *session
+	return &copy, nil
+}
+
+func (m *MockStore) DeleteOAuthSession(_ context.Context, sessionID string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	delete(m.oauthSessions, sessionID)
+	return nil
+}
+
 func (m *MockStore) GetAndDeleteOAuthSession(_ context.Context, sessionID string) (*domain.OAuthSessionState, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()

@@ -138,5 +138,13 @@ func (s *Server) handleExchangeCode(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	slog.Info("account persisted via code exchange", "id", resp.ID, "email", resp.Email, "provider", req.Provider, "cellId", req.CellID)
+
+	// Delete the session only after successful exchange so retries are safe.
+	if req.SessionID != "" {
+		if err := s.pool.DelOAuthSession(r.Context(), req.SessionID); err != nil {
+			slog.Warn("failed to delete oauth session after exchange", "sessionId", req.SessionID, "error", err)
+		}
+	}
+
 	writeJSON(w, http.StatusOK, resp)
 }

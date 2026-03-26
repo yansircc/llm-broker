@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/yansircc/llm-broker/internal/domain"
 )
@@ -57,6 +58,8 @@ func (r *Relay) writeBodyArtifact(kind string, body []byte) (string, string, err
 		return "", sha, err
 	}
 	if _, err := os.Stat(absPath); err == nil {
+		now := time.Now()
+		_ = os.Chtimes(absPath, now, now) // refresh mtime so purge won't delete a still-referenced blob
 		return absPath, sha, nil
 	} else if !os.IsNotExist(err) {
 		return "", sha, err

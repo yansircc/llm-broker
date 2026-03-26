@@ -79,6 +79,7 @@
 	}
 
 	async function exchangeCode() {
+		if (exchanging) return;
 		if (!provider || !callbackInput.trim()) return;
 		exchanging = true;
 		exchangeError = '';
