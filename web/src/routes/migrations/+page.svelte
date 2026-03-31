@@ -61,6 +61,7 @@
 	}
 
 	function cellAvailable(cell: EgressCellView): boolean {
+		if (cell.proxy?.type === 'socks5') return cellSelectable(cell);
 		const selectedAcct = accounts.find((a) => a.id === selectedAccountID);
 		const providerID = selectedAcct?.provider ?? '';
 		const sameProvider = cellAccounts(cell).filter((a) => a.provider === providerID);

@@ -57,7 +57,9 @@ func (s *Server) registerAdminRoutes(mux *http.ServeMux) {
 	mux.Handle("POST /admin/accounts/{id}/test", admin(s.handleTestAccount))
 	mux.Handle("GET /admin/egress/cells", admin(s.handleListEgressCells))
 	mux.Handle("POST /admin/egress/cells", admin(s.handleUpsertEgressCell))
+	mux.Handle("POST /admin/egress/cells/test-proxy", admin(s.handleTestProxy))
 	mux.Handle("POST /admin/egress/cells/{id}/clear-cooldown", admin(s.handleClearEgressCellCooldown))
+	mux.Handle("POST /admin/egress/cells/{id}/test", admin(s.handleTestEgressCell))
 
 	mux.Handle("DELETE /admin/events", admin(s.handleClearEvents))
 	mux.HandleFunc("POST /admin/login", s.handleLogin)

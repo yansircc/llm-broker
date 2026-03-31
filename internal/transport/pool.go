@@ -120,11 +120,19 @@ func transportKey(acct *domain.Account) string {
 
 func buildRoundTripper(acct *domain.Account) http.RoundTripper {
 	if proxy := acct.TransportProxy(); proxy != nil {
-		return &http.Transport{
-			ForceAttemptHTTP2:   true,
-			MaxIdleConnsPerHost: 2,
-			IdleConnTimeout:     5 * time.Minute,
-			DialContext:         rawProxyDialer(proxy),
+		dialRaw := rawProxyDialer(proxy)
+		return &http2.Transport{
+			DialTLSContext: func(ctx context.Context, network, addr string, _ *tls.Config) (net.Conn, error) {
+				rawConn, err := dialRaw(ctx, network, addr)
+				if err != nil {
+					return nil, err
+				}
+				host, _, err := net.SplitHostPort(addr)
+				if err != nil {
+					host = addr
+				}
+				return uTLSHandshake(ctx, rawConn, host)
+			},
 		}
 	}
 	return &http2.Transport{

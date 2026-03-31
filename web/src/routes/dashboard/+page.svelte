@@ -9,6 +9,72 @@
 	let error = $state('');
 	let lastRefresh = $state('');
 
+	// add-cell form
+	let showAddCell = $state(false);
+	let addCellName = $state('');
+	let addCellHost = $state('');
+	let addCellPort = $state('');
+	let addCellUser = $state('');
+	let addCellPass = $state('');
+	let addCellSaving = $state(false);
+	let addCellError = $state('');
+
+	function resetAddCellForm() {
+		addCellName = '';
+		addCellHost = '';
+		addCellPort = '';
+		addCellUser = '';
+		addCellPass = '';
+		addCellError = '';
+		addCellSaving = false;
+	}
+
+	async function saveNewCell() {
+		addCellError = '';
+		const name = addCellName.trim();
+		const host = addCellHost.trim();
+		const port = parseInt(addCellPort, 10);
+		if (!name || !host || !port || port <= 0) {
+			addCellError = 'name, host, and valid port are required';
+			return;
+		}
+		const id = name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+		if (cells.some((c) => c.id === id)) {
+			addCellError = `cell "${id}" already exists`;
+			return;
+		}
+		const proxyConfig = {
+			type: 'socks5',
+			host,
+			port,
+			username: addCellUser.trim() || undefined,
+			password: addCellPass.trim() || undefined
+		};
+		addCellSaving = true;
+		addCellError = '';
+		try {
+			const test = await api<{ ok: boolean; latency_ms?: number; error?: string }>('/egress/cells/test-proxy', {
+				method: 'POST',
+				body: JSON.stringify({ proxy: proxyConfig })
+			});
+			if (!test.ok) {
+				addCellError = `proxy test failed: ${test.error || 'unknown error'}`;
+				return;
+			}
+			await api('/egress/cells', {
+				method: 'POST',
+				body: JSON.stringify({ id, name, status: 'active', proxy: proxyConfig, create_only: true })
+			});
+			resetAddCellForm();
+			showAddCell = false;
+			await loadAll();
+		} catch (e: any) {
+			addCellError = e.message || 'failed to create cell';
+		} finally {
+			addCellSaving = false;
+		}
+	}
+
 	$effect(() => {
 		loadAll();
 	});
@@ -161,6 +227,30 @@
 	</div>
 
 	<h2>egress cells</h2>
+	<div class="bar" style="margin-bottom:8px">
+		{#if !showAddCell}
+			<button class="link" onclick={() => { resetAddCellForm(); showAddCell = true; }}>[+ add socks5 cell]</button>
+		{:else}
+			<div class="add-cell-form">
+				<div class="add-cell-row">
+					<input type="text" bind:value={addCellName} placeholder="name" class="add-cell-input" disabled={addCellSaving}>
+					<input type="text" bind:value={addCellHost} placeholder="host" class="add-cell-input" disabled={addCellSaving}>
+					<input type="text" bind:value={addCellPort} placeholder="port" class="add-cell-input add-cell-short" disabled={addCellSaving}>
+				</div>
+				<div class="add-cell-row">
+					<input type="text" bind:value={addCellUser} placeholder="username (optional)" class="add-cell-input" disabled={addCellSaving}>
+					<input type="password" bind:value={addCellPass} placeholder="password (optional)" class="add-cell-input" disabled={addCellSaving}>
+					<span>
+						<button class="link" onclick={saveNewCell} disabled={addCellSaving}>{addCellSaving ? '[saving...]' : '[save]'}</button>
+						<button class="link" onclick={() => { showAddCell = false; }} disabled={addCellSaving}>[cancel]</button>
+					</span>
+				</div>
+				{#if addCellError}
+					<p class="error-msg" style="margin:4px 0 0">{addCellError}</p>
+				{/if}
+			</div>
+		{/if}
+	</div>
 	{#if cells.length === 0}
 		<p class="muted">no cells</p>
 	{:else}
@@ -356,5 +446,22 @@
 		margin: 4px 0 0;
 		white-space: pre-wrap;
 		word-break: break-word;
+	}
+	.add-cell-form {
+		display: flex;
+		flex-direction: column;
+		gap: 6px;
+	}
+	.add-cell-row {
+		display: flex;
+		gap: 6px;
+		align-items: center;
+		flex-wrap: wrap;
+	}
+	.add-cell-input {
+		width: 160px;
+	}
+	.add-cell-short {
+		width: 80px;
 	}
 </style>

@@ -10,6 +10,8 @@
 	let loading = $state(true);
 	let actionError = $state('');
 	let clearing = $state(false);
+	let testing = $state(false);
+	let testResult = $state<{ ok: boolean; latency_ms?: number; error?: string } | null>(null);
 
 	$effect(() => {
 		loadCell();
@@ -65,6 +67,20 @@
 			clearing = false;
 		}
 	}
+
+	async function testCell() {
+		if (!cell) return;
+		testing = true;
+		testResult = null;
+		actionError = '';
+		try {
+			testResult = await api<{ ok: boolean; latency_ms?: number; error?: string }>(`/egress/cells/${cell.id}/test`, { method: 'POST' });
+		} catch (e: any) {
+			actionError = e.message;
+		} finally {
+			testing = false;
+		}
+	}
 </script>
 
 {#if error}
@@ -77,8 +93,16 @@
 
 	<div class="actions">
 		<button class="link" onclick={loadCell}>[refresh]</button>
+		<button class="link" onclick={testCell} disabled={testing}>{testing ? '[testing...]' : '[test proxy]'}</button>
 		{#if cooldownActive(cell)}
 			<button class="link o" onclick={clearCooldown} disabled={clearing}>{clearing ? '[clearing...]' : '[clear cooldown]'}</button>
+		{/if}
+		{#if testResult}
+			{#if testResult.ok}
+				<span class="g">ok {testResult.latency_ms}ms</span>
+			{:else}
+				<span class="r">{testResult.error}</span>
+			{/if}
 		{/if}
 	</div>
 

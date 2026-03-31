@@ -222,9 +222,11 @@ func (s *Server) handleBindAccountCell(w http.ResponseWriter, r *http.Request) {
 				writeAdminError(w, http.StatusBadRequest, "invalid_request", reason)
 				return
 			}
-			if accountOwnsCell(s.pool.List(), acct.ID, req.CellID, acct.Provider) {
-				writeAdminError(w, http.StatusBadRequest, "invalid_request", "cell is already bound to another account of the same provider")
-				return
+			if cell.Proxy == nil || cell.Proxy.Type != "socks5" {
+				if accountOwnsCell(s.pool.List(), acct.ID, req.CellID, acct.Provider) {
+					writeAdminError(w, http.StatusBadRequest, "invalid_request", "cell is already bound to another account of the same provider")
+					return
+				}
 			}
 		}
 	}

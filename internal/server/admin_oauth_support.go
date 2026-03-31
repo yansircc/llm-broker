@@ -153,8 +153,10 @@ func (s *Server) validateExchangeCellSelection(existing *domain.Account, request
 	if reason := accountCellBindError(cell, time.Now().UTC()); reason != "" {
 		return fmt.Errorf("%s", reason)
 	}
-	if accountOwnsCell(s.pool.List(), currentAccountID, requestedCellID, provider) {
-		return fmt.Errorf("cell is already bound to another account of the same provider")
+	if cell.Proxy == nil || cell.Proxy.Type != "socks5" {
+		if accountOwnsCell(s.pool.List(), currentAccountID, requestedCellID, provider) {
+			return fmt.Errorf("cell is already bound to another account of the same provider")
+		}
 	}
 	return nil
 }

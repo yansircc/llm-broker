@@ -206,3 +206,13 @@ Ask:
 5. Am I making core understand something it should merely consume as `Effect`?
 
 If the answer to 2 is "no" or to 3-5 is "yes", rethink the change.
+
+## Operational Safety — Account Binding
+
+**NEVER unbind, rebind, or change an account's cell_id without explicit user confirmation.**
+
+Account-to-cell binding determines the egress IP. Changing it can expose the account to a different IP, triggering provider bans. This is an irreversible, destructive operation.
+
+- Do not unbind a cell "to fix" a routing issue — ask first.
+- Do not assume "no cell" (direct connect) is a safe fallback.
+- If an account's cell is misconfigured, disable the cell or cooldown — do not touch the binding.

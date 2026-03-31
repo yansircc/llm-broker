@@ -6,9 +6,10 @@ class ApiError extends Error {
 	}
 }
 
-export async function api<T = unknown>(path: string, opts: RequestInit = {}): Promise<T> {
+export async function api<T = unknown>(path: string, opts: RequestInit & { timeout?: number } = {}): Promise<T> {
+	const { timeout: customTimeout, ...fetchOpts } = opts;
 	const controller = new AbortController();
-	const timeout = setTimeout(() => controller.abort(), 15000);
+	const timeout = setTimeout(() => controller.abort(), customTimeout ?? 15000);
 
 	// Append browser timezone for accurate "today"/"yesterday" stats
 	const sep = path.includes('?') ? '&' : '?';
@@ -21,9 +22,9 @@ export async function api<T = unknown>(path: string, opts: RequestInit = {}): Pr
 			signal: controller.signal,
 			headers: {
 				'Content-Type': 'application/json',
-				...opts.headers
+				...fetchOpts.headers
 			},
-			...opts
+			...fetchOpts
 		});
 
 		if (res.status === 401) {

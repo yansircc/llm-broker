@@ -86,6 +86,7 @@
 		try {
 			const data = await api<{ id: string; email: string; status: string }>('/accounts/exchange-code', {
 				method: 'POST',
+				timeout: 120000,
 				body: JSON.stringify({
 					provider: provider.id,
 					session_id: sessionId,
@@ -127,6 +128,7 @@
 	}
 
 	function cellAvailable(cell: EgressCellView): boolean {
+		if (cell.proxy?.type === 'socks5') return cellSelectable(cell);
 		const sameProvider = cellAccounts(cell).filter((a) => a.provider === provider?.id);
 		return cellSelectable(cell) && sameProvider.length === 0;
 	}

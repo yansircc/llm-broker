@@ -154,6 +154,7 @@
 
 	function cellAvailableForAccount(cell: EgressCellView): boolean {
 		if (cell.id === acct?.cell_id) return true;
+		if (cell.proxy?.type === 'socks5') return cellSelectable(cell);
 		const sameProvider = cellAccounts(cell).filter((a) => a.provider === acct?.provider);
 		return cellSelectable(cell) && sameProvider.length === 0;
 	}

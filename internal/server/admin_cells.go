@@ -1,11 +1,16 @@
 package server
 
 import (
+	"context"
 	"encoding/json"
+	"fmt"
+	"net"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/yansircc/llm-broker/internal/domain"
+	"golang.org/x/net/proxy"
 )
 
 func (s *Server) handleListEgressCells(w http.ResponseWriter, r *http.Request) {
@@ -45,11 +50,12 @@ func (s *Server) handleListEgressCells(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleUpsertEgressCell(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		ID     string              `json:"id"`
-		Name   string              `json:"name"`
-		Status string              `json:"status"`
-		Proxy  *domain.ProxyConfig `json:"proxy"`
-		Labels map[string]string   `json:"labels"`
+		ID         string              `json:"id"`
+		Name       string              `json:"name"`
+		Status     string              `json:"status"`
+		Proxy      *domain.ProxyConfig `json:"proxy"`
+		Labels     map[string]string   `json:"labels"`
+		CreateOnly bool                `json:"create_only"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeAdminError(w, http.StatusBadRequest, "invalid_request", "invalid JSON body")
@@ -83,6 +89,10 @@ func (s *Server) handleUpsertEgressCell(w http.ResponseWriter, r *http.Request) 
 		Labels: req.Labels,
 	}
 	if existing := s.pool.GetCell(req.ID); existing != nil {
+		if req.CreateOnly {
+			writeAdminError(w, http.StatusConflict, "conflict", "cell already exists")
+			return
+		}
 		cell.CreatedAt = existing.CreatedAt
 		cell.CooldownUntil = existing.CooldownUntil
 		cell.StateJSON = existing.StateJSON
@@ -137,4 +147,90 @@ func (s *Server) handleClearEgressCellCooldown(w http.ResponseWriter, r *http.Re
 		UpdatedAt:     cell.UpdatedAt,
 		Accounts:      []EgressCellAccountRef{},
 	})
+}
+
+func (s *Server) handleTestProxy(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Proxy *domain.ProxyConfig `json:"proxy"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeAdminError(w, http.StatusBadRequest, "invalid_request", "invalid JSON body")
+		return
+	}
+	if req.Proxy == nil || req.Proxy.Host == "" || req.Proxy.Port <= 0 {
+		writeAdminError(w, http.StatusBadRequest, "invalid_request", "proxy host and port are required")
+		return
+	}
+	result := dialTestProxy(req.Proxy)
+	writeJSON(w, http.StatusOK, result)
+}
+
+func (s *Server) handleTestEgressCell(w http.ResponseWriter, r *http.Request) {
+	id := strings.TrimSpace(r.PathValue("id"))
+	if id == "" {
+		writeAdminError(w, http.StatusBadRequest, "invalid_request", "cell id is required")
+		return
+	}
+	cell := s.pool.GetCell(id)
+	if cell == nil {
+		writeAdminError(w, http.StatusNotFound, "not_found", "cell not found")
+		return
+	}
+	if cell.Proxy == nil || cell.Proxy.Host == "" || cell.Proxy.Port <= 0 {
+		writeJSON(w, http.StatusOK, TestAccountResult{OK: false, Error: "cell has no usable proxy"})
+		return
+	}
+	result := dialTestProxy(cell.Proxy)
+	writeJSON(w, http.StatusOK, result)
+}
+
+func dialTestProxy(pcfg *domain.ProxyConfig) TestAccountResult {
+	start := time.Now()
+	proxyAddr := fmt.Sprintf("%s:%d", pcfg.Host, pcfg.Port)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+
+	switch pcfg.Type {
+	case "socks5":
+		return dialTestSocks5(ctx, proxyAddr, pcfg, start)
+	default:
+		// HTTP CONNECT: plain TCP dial to proxy, then CONNECT handshake
+		dialer := &net.Dialer{}
+		conn, err := dialer.DialContext(ctx, "tcp", proxyAddr)
+		if err != nil {
+			return TestAccountResult{OK: false, Error: fmt.Sprintf("tcp dial: %v", err)}
+		}
+		conn.Close()
+		return TestAccountResult{OK: true, LatencyMs: time.Since(start).Milliseconds()}
+	}
+}
+
+func dialTestSocks5(ctx context.Context, proxyAddr string, pcfg *domain.ProxyConfig, start time.Time) TestAccountResult {
+	const testTarget = "www.gstatic.com:443"
+
+	var auth *proxy.Auth
+	if pcfg.Username != "" {
+		auth = &proxy.Auth{User: pcfg.Username, Password: pcfg.Password}
+	}
+
+	dialer, err := proxy.SOCKS5("tcp", proxyAddr, auth, proxy.Direct)
+	if err != nil {
+		return TestAccountResult{OK: false, Error: fmt.Sprintf("socks5 dialer: %v", err)}
+	}
+
+	if ctxDialer, ok := dialer.(proxy.ContextDialer); ok {
+		conn, err := ctxDialer.DialContext(ctx, "tcp", testTarget)
+		if err != nil {
+			return TestAccountResult{OK: false, Error: fmt.Sprintf("dial: %v", err)}
+		}
+		conn.Close()
+	} else {
+		conn, err := dialer.Dial("tcp", testTarget)
+		if err != nil {
+			return TestAccountResult{OK: false, Error: fmt.Sprintf("dial: %v", err)}
+		}
+		conn.Close()
+	}
+	return TestAccountResult{OK: true, LatencyMs: time.Since(start).Milliseconds()}
 }
