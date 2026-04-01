@@ -7,17 +7,31 @@ type Surface string
 
 const (
 	SurfaceNative Surface = "native"
+	SurfaceCompat Surface = "compat"
+	SurfaceAll    Surface = "all"
 )
 
 func NormalizeSurface(value string) Surface {
 	switch strings.ToLower(strings.TrimSpace(value)) {
-	case string(SurfaceNative), "all", "compat":
+	case string(SurfaceNative):
 		return SurfaceNative
+	case string(SurfaceCompat):
+		return SurfaceCompat
+	case string(SurfaceAll):
+		return SurfaceAll
 	default:
 		return ""
 	}
 }
 
 func AllowsSurface(allowed, requested Surface) bool {
-	return true
+	if allowed == "" {
+		allowed = SurfaceNative
+	}
+	switch allowed {
+	case SurfaceAll:
+		return true
+	default:
+		return requested != "" && allowed == requested
+	}
 }

@@ -275,6 +275,8 @@
 			{#if editingPolicy}
 				<select bind:value={selectedSurface} disabled={savingPolicy}>
 					<option value="native">native</option>
+					<option value="compat">compat</option>
+					<option value="all">all</option>
 				</select>
 			{:else}
 				{user.allowed_surface}

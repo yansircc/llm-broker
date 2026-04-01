@@ -40,11 +40,14 @@ type Config struct {
 	MaxRequestBodyMB           int
 	MaxRetryAccounts           int
 	MaxCacheControls           int
+	CompatMaxRequestsPerMinute int
+	CompatMaxConcurrent        int
 
 	// Logging
-	LogLevel       string
-	LogBlobs       bool
+	LogLevel         string
+	LogBlobs         bool
 	LogRetentionDays int
+	TraceCompat      bool
 
 	// Runtime
 	BackgroundJobsMode       string
@@ -79,10 +82,13 @@ func Load() *Config {
 		MaxRequestBodyMB:           envInt("REQUEST_MAX_SIZE_MB", 60),
 		MaxRetryAccounts:           envInt("MAX_RETRY_ACCOUNTS", 2),
 		MaxCacheControls:           envInt("MAX_CACHE_CONTROLS", 4),
+		CompatMaxRequestsPerMinute: envInt("COMPAT_MAX_REQUESTS_PER_MINUTE", 0),
+		CompatMaxConcurrent:        envInt("COMPAT_MAX_CONCURRENT", 4),
 
 		LogLevel:         envOr("LOG_LEVEL", "info"),
 		LogBlobs:         envBool("LOG_BLOBS", false),
 		LogRetentionDays: envInt("LOG_RETENTION_DAYS", 3),
+		TraceCompat:      envBool("TRACE_COMPAT", false),
 
 		BackgroundJobsMode:       envOr("BACKGROUND_JOBS_MODE", "all"),
 		BackgroundLeaderLockPath: envOr("BACKGROUND_LEADER_LOCK_PATH", "/var/run/llm-broker/background.lock"),

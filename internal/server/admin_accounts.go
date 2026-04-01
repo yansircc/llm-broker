@@ -31,6 +31,7 @@ func (s *Server) handleListAccounts(w http.ResponseWriter, r *http.Request) {
 			CooldownUntil:   a.CooldownUntil,
 			CellID:          a.CellID,
 			AvailableNative: avail.Native,
+			AvailableCompat: avail.Compat,
 			Cell:            toCellSummary(a.Cell, cellCounts[a.CellID]),
 			Windows:         proj.windows,
 		})

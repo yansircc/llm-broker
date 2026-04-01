@@ -14,7 +14,7 @@ import (
 const compatTraceBodyLimit = 64 << 10
 
 func (r *Relay) shouldTraceCompat(prepared *preparedRelayRequest) bool {
-	return false
+	return r != nil && r.cfg.TraceCompat && prepared != nil && prepared.surface == domain.SurfaceCompat
 }
 
 func snapshotRequestBody(req *http.Request) ([]byte, error) {

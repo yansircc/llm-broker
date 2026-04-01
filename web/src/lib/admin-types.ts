@@ -1,4 +1,4 @@
-export type UserSurface = 'native';
+export type UserSurface = 'native' | 'compat' | 'all';
 
 export interface UsagePeriod {
 	label: string;
@@ -137,6 +137,7 @@ export interface AccountListItem {
 	cooldown_until: string | null;
 	cell_id?: string;
 	available_native: boolean;
+	available_compat: boolean;
 	cell?: EgressCellSummary | null;
 	windows: UtilWindow[];
 }

@@ -38,6 +38,7 @@ type bucketCandidate struct {
 
 type SurfaceAvailability struct {
 	Native bool
+	Compat bool
 }
 
 func cellLane(cell *domain.EgressCell) domain.Surface {
@@ -48,12 +49,28 @@ func cellLane(cell *domain.EgressCell) domain.Surface {
 }
 
 func (p *Pool) allowedOnSurfaceLocked(acct *domain.Account, surface domain.Surface) bool {
-	cell := p.cellForAccountLocked(acct)
-	if cell == nil {
+	surface = domain.NormalizeSurface(string(surface))
+	if surface == "" || surface == domain.SurfaceAll {
 		return true
 	}
+
+	cell := p.cellForAccountLocked(acct)
 	lane := cellLane(cell)
-	return lane == "" || lane == domain.SurfaceNative
+
+	switch surface {
+	case domain.SurfaceCompat:
+		if cell == nil {
+			return false
+		}
+		return lane == domain.SurfaceCompat || lane == domain.SurfaceAll
+	case domain.SurfaceNative:
+		if cell == nil {
+			return true
+		}
+		return lane == "" || lane == domain.SurfaceNative || lane == domain.SurfaceAll
+	default:
+		return false
+	}
 }
 
 func (p *Pool) matchesProvider(acct *domain.Account, provider domain.Provider) bool {
@@ -163,6 +180,7 @@ func (p *Pool) SurfaceAvailabilityMap() map[string]SurfaceAvailability {
 		}
 		result[acct.ID] = SurfaceAvailability{
 			Native: p.allowedOnSurfaceLocked(acct, domain.SurfaceNative) && p.isAvailable(acct, drv, "", now),
+			Compat: p.allowedOnSurfaceLocked(acct, domain.SurfaceCompat) && p.isAvailable(acct, drv, "", now),
 		}
 	}
 	return result

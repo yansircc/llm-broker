@@ -202,7 +202,7 @@ func TestAttachRequestLogArtifactsSpillsSmallBodiesToFiles(t *testing.T) {
 }
 
 func TestRequestMetaUsesObservedClientRequest(t *testing.T) {
-	rawClientBody := []byte(`{"model":"claude-sonnet-4-6","messages":[{"role":"user","content":"hello"}],"temperature":0.2}`)
+	rawClientBody := []byte(`{"model":"claude/claude-sonnet-4-6","messages":[{"role":"user","content":"hello"}],"temperature":0.2}`)
 	translatedBody := []byte(`{"model":"claude-sonnet-4-6","messages":[{"role":"user","content":"hello"}],"thinking":{"type":"adaptive"},"stream":false}`)
 
 	var translated map[string]any
@@ -212,14 +212,16 @@ func TestRequestMetaUsesObservedClientRequest(t *testing.T) {
 
 	metaRaw := requestMeta(&preparedRelayRequest{
 		input: &driver.RelayInput{
-			Headers: http.Header{},
+			Headers: http.Header{
+				"X-Broker-Compat-Client-Meta": []string{`{"requested_model":"claude/claude-sonnet-4-6","message_count":1}`},
+			},
 			RawBody: translatedBody,
 			Body:    translated,
 			Path:    "/v1/messages",
 			Model:   "claude-sonnet-4-6",
 		},
 		clientObservation: &ClientRequestObservation{
-			Path:    "/v1/messages",
+			Path:    "/compat/v1/chat/completions",
 			Headers: http.Header{"Content-Type": []string{"application/json"}},
 			Body:    rawClientBody,
 		},
@@ -230,12 +232,19 @@ func TestRequestMetaUsesObservedClientRequest(t *testing.T) {
 		t.Fatalf("Unmarshal requestMeta: %v", err)
 	}
 	if meta["body_sha256"] != observationRawBodyHash(rawClientBody) {
-		t.Fatalf("body_sha256 = %#v, want hash of raw client body", meta["body_sha256"])
+		t.Fatalf("body_sha256 = %#v, want hash of raw compat body", meta["body_sha256"])
 	}
 	if _, ok := meta["temperature"].(float64); !ok {
-		t.Fatalf("temperature = %#v, want from raw client body", meta["temperature"])
+		t.Fatalf("temperature = %#v, want from raw compat body", meta["temperature"])
 	}
 	if _, ok := meta["has_thinking"]; ok {
-		t.Fatalf("has_thinking = %#v, want absent for raw client body", meta["has_thinking"])
+		t.Fatalf("has_thinking = %#v, want absent for raw compat body", meta["has_thinking"])
+	}
+	compatClient, ok := meta["compat_client"].(map[string]any)
+	if !ok {
+		t.Fatalf("compat_client = %#v, want object", meta["compat_client"])
+	}
+	if compatClient["requested_model"] != "claude/claude-sonnet-4-6" {
+		t.Fatalf("compat_client.requested_model = %#v", compatClient["requested_model"])
 	}
 }

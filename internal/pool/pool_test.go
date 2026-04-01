@@ -222,22 +222,39 @@ func TestPick_SkipsUnavailableCell(t *testing.T) {
 	}
 }
 
-func TestPickForSurface_NativeLane(t *testing.T) {
+func TestPickForSurface_SeparatesNativeAndCompatLanes(t *testing.T) {
 	native := activeAccount("native", "native@x")
 	native.Priority = 80
 	native.CellID = "cell-native"
 
-	p := newTestPool(t, native)
-	if err := p.SaveCell(&domain.EgressCell{
-		ID:        "cell-native",
-		Name:      "native",
-		Status:    domain.EgressCellActive,
-		Proxy:     &domain.ProxyConfig{Type: "socks5", Host: "10.0.0.2", Port: 11081},
-		Labels:    map[string]string{"lane": "native"},
-		CreatedAt: time.Now().UTC(),
-		UpdatedAt: time.Now().UTC(),
-	}); err != nil {
-		t.Fatalf("SaveCell: %v", err)
+	compat := activeAccount("compat", "compat@x")
+	compat.Priority = 90
+	compat.CellID = "cell-compat"
+
+	p := newTestPool(t, native, compat)
+	for _, cell := range []*domain.EgressCell{
+		{
+			ID:        "cell-native",
+			Name:      "native",
+			Status:    domain.EgressCellActive,
+			Proxy:     &domain.ProxyConfig{Type: "socks5", Host: "10.0.0.2", Port: 11081},
+			Labels:    map[string]string{"lane": "native"},
+			CreatedAt: time.Now().UTC(),
+			UpdatedAt: time.Now().UTC(),
+		},
+		{
+			ID:        "cell-compat",
+			Name:      "compat",
+			Status:    domain.EgressCellActive,
+			Proxy:     &domain.ProxyConfig{Type: "socks5", Host: "10.0.0.3", Port: 11082},
+			Labels:    map[string]string{"lane": "compat"},
+			CreatedAt: time.Now().UTC(),
+			UpdatedAt: time.Now().UTC(),
+		},
+	} {
+		if err := p.SaveCell(cell); err != nil {
+			t.Fatalf("SaveCell(%s): %v", cell.ID, err)
+		}
 	}
 
 	gotNative, err := p.PickForSurface(testDriver, nil, "claude-haiku", "", domain.SurfaceNative)
@@ -247,20 +264,50 @@ func TestPickForSurface_NativeLane(t *testing.T) {
 	if gotNative.ID != "native" {
 		t.Fatalf("PickForSurface(native) = %s, want native", gotNative.ID)
 	}
+
+	gotCompat, err := p.PickForSurface(testDriver, nil, "claude-haiku", "", domain.SurfaceCompat)
+	if err != nil {
+		t.Fatalf("PickForSurface(compat): %v", err)
+	}
+	if gotCompat.ID != "compat" {
+		t.Fatalf("PickForSurface(compat) = %s, want compat", gotCompat.ID)
+	}
 }
 
-func TestSurfaceAvailabilityMap_NativeOnly(t *testing.T) {
+func TestSurfaceAvailabilityMap_RespectsSurfaceLanes(t *testing.T) {
 	native := activeAccount("native-avail", "native@x")
+	compat := activeAccount("compat-avail", "compat@x")
+	compat.CellID = "cell-compat"
 
-	p := newTestPool(t, native)
+	p := newTestPool(t, native, compat)
 	p.SetDrivers(map[domain.Provider]driver.SchedulerDriver{
 		domain.ProviderClaude: testDriver,
 	})
+	if err := p.SaveCell(&domain.EgressCell{
+		ID:        "cell-compat",
+		Name:      "compat",
+		Status:    domain.EgressCellActive,
+		Proxy:     &domain.ProxyConfig{Type: "socks5", Host: "10.0.0.3", Port: 11082},
+		Labels:    map[string]string{"lane": "compat"},
+		CreatedAt: time.Now().UTC(),
+		UpdatedAt: time.Now().UTC(),
+	}); err != nil {
+		t.Fatalf("SaveCell(cell-compat): %v", err)
+	}
 
 	availability := p.SurfaceAvailabilityMap()
 
 	if !availability[native.ID].Native {
-		t.Fatal("native account should be native-available")
+		t.Fatal("native legacy-direct account should be native-available")
+	}
+	if availability[native.ID].Compat {
+		t.Fatal("native legacy-direct account should not be compat-available")
+	}
+	if availability[compat.ID].Native {
+		t.Fatal("compat lane account should not be native-available")
+	}
+	if !availability[compat.ID].Compat {
+		t.Fatal("compat lane account should be compat-available")
 	}
 }
 
@@ -638,7 +685,7 @@ func TestPick_ExcludeBucketSkipsSiblingAccounts(t *testing.T) {
 	p := newTestPool(t, g1, g2)
 	geminiDriver := &mockDriver{provider: domain.ProviderClaude}
 
-	_, err := p.Pick(geminiDriver, []Exclusion{ExcludeBucket("gemini:google-sub:proj-1")}, "claude-haiku", "")
+	_, err := p.Pick(geminiDriver, []Exclusion{ExcludeBucket("gemini:google-sub:proj-1")}, "gemini-2.5-flash", "")
 	if err == nil {
 		t.Fatal("expected no available accounts when bucket is excluded")
 	}
@@ -668,7 +715,7 @@ func TestPick_ReturnsBucketProjectedAccount(t *testing.T) {
 		domain.ProviderClaude: &mockDriver{provider: domain.ProviderClaude},
 	})
 
-	acct, err := p.Pick(&mockDriver{provider: domain.ProviderClaude}, nil, "claude-haiku", "")
+	acct, err := p.Pick(&mockDriver{provider: domain.ProviderClaude}, nil, "gemini-2.5-flash", "")
 	if err != nil {
 		t.Fatalf("Pick() error = %v", err)
 	}

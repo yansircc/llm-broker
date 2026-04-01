@@ -21,8 +21,13 @@ func (s *Server) registerRelayRoutes(mux *http.ServeMux) {
 	native := func(handler http.Handler) http.Handler {
 		return auth(requireSurfaceHandler(domain.SurfaceNative, handler))
 	}
+	compat := func(handler http.Handler) http.Handler {
+		return auth(requireSurfaceHandler(domain.SurfaceCompat, handler))
+	}
 
 	mux.Handle("GET /v1/models", native(http.HandlerFunc(s.handleListModels)))
+	mux.Handle("GET /compat/v1/models", compat(http.HandlerFunc(s.handleCompatListModels)))
+	mux.Handle("POST /compat/v1/chat/completions", compat(http.HandlerFunc(s.handleCompatOpenAIChatCompletions)))
 
 	for _, provider := range sortedProviders(s.catalogDrivers) {
 		drv := s.catalogDrivers[provider]
