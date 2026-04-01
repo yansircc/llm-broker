@@ -213,12 +213,10 @@ func parseUserAllowedSurface(raw string) (domain.Surface, error) {
 		return domain.SurfaceNative, nil
 	}
 	allowedSurface := domain.NormalizeSurface(raw)
-	switch allowedSurface {
-	case domain.SurfaceNative, domain.SurfaceCompat, domain.SurfaceAll:
+	if allowedSurface == domain.SurfaceNative {
 		return allowedSurface, nil
-	default:
-		return "", fmt.Errorf("allowed_surface must be 'native', 'compat', or 'all'")
 	}
+	return "", fmt.Errorf("allowed_surface must be 'native'")
 }
 
 func (s *Server) validateUserBoundAccount(accountID string) error {

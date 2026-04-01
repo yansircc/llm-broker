@@ -106,19 +106,6 @@ func main() {
 			BetaHeader: cfg.ClaudeBetaHeader,
 			Pauses:     pauses,
 		}, trans),
-		domain.ProviderCodex: driver.NewCodexDriver(driver.CodexConfig{
-			APIURL: cfg.CodexAPIURL,
-			Pauses: pauses,
-		}),
-	}
-	if cfg.GeminiEnabled() {
-		drivers[domain.ProviderGemini] = driver.NewGeminiDriver(driver.GeminiConfig{
-			APIURL:            cfg.GeminiAPIURL,
-			OAuthClientID:     cfg.GeminiOAuthClientID,
-			OAuthClientSecret: cfg.GeminiOAuthClientSecret,
-			OAuthRedirectURI:  cfg.GeminiOAuthRedirectURI,
-			Pauses:            pauses,
-		})
 	}
 
 	executionDrivers := make(map[domain.Provider]driver.ExecutionDriver, len(drivers))
@@ -170,7 +157,6 @@ func main() {
 		MaxRetryAccounts:  cfg.MaxRetryAccounts,
 		SessionBindingTTL: cfg.SessionBindingTTL,
 		CellErrorPause:    cfg.CellErrorPause,
-		TraceCompat:       cfg.TraceCompat,
 		RequestLogBlobDir: blobDir,
 	}, transportPool, bus, executionDrivers)
 

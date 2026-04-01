@@ -152,8 +152,6 @@ curl -fsS "$BASE_URL/v1/models" \\
 			/>
 			<select bind:value={newAllowedSurface} disabled={creatingUser} style="margin-right:6px;">
 				<option value="native">native</option>
-				<option value="compat">compat</option>
-				<option value="all">all</option>
 			</select>
 			<select bind:value={newBoundAccountID} disabled={creatingUser} style="max-width:320px;margin-right:6px;">
 				<option value="">[no bound account]</option>

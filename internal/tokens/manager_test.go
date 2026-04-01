@@ -18,7 +18,7 @@ type refreshStubDriver struct {
 	err  error
 }
 
-func (d *refreshStubDriver) Provider() domain.Provider { return domain.ProviderGemini }
+func (d *refreshStubDriver) Provider() domain.Provider { return domain.ProviderClaude }
 func (d *refreshStubDriver) BucketKey(acct *domain.Account) string {
 	if acct == nil {
 		return ""
@@ -26,7 +26,7 @@ func (d *refreshStubDriver) BucketKey(acct *domain.Account) string {
 	if acct.BucketKey != "" {
 		return acct.BucketKey
 	}
-	return string(domain.ProviderGemini) + ":" + acct.ID
+	return string(domain.ProviderClaude) + ":" + acct.ID
 }
 func (d *refreshStubDriver) Info() driver.ProviderInfo                { return driver.ProviderInfo{} }
 func (d *refreshStubDriver) Models() []driver.Model                   { return nil }
@@ -115,7 +115,7 @@ func TestForceRefreshPreservesExistingRefreshTokenWhenProviderReturnsEmpty(t *te
 	pool := &refreshStubPool{
 		acct: &domain.Account{
 			ID:              "acct-1",
-			Provider:        domain.ProviderGemini,
+			Provider:        domain.ProviderClaude,
 			AccessTokenEnc:  oldAccessEnc,
 			RefreshTokenEnc: oldRefreshEnc,
 		},
@@ -127,7 +127,7 @@ func TestForceRefreshPreservesExistingRefreshTokenWhenProviderReturnsEmpty(t *te
 		},
 	}
 	mgr := NewManager(pool, c, nil, time.Minute, 0, map[domain.Provider]driver.RefreshDriver{
-		domain.ProviderGemini: drv,
+		domain.ProviderClaude: drv,
 	})
 
 	token, err := mgr.ForceRefresh(context.Background(), "acct-1")
@@ -166,14 +166,14 @@ func TestForceRefreshCooldownsCellOnTransportError(t *testing.T) {
 		acct: &domain.Account{
 			ID:              "acct-1",
 			Email:           "mark@example.com",
-			Provider:        domain.ProviderGemini,
+			Provider:        domain.ProviderClaude,
 			RefreshTokenEnc: refreshEnc,
 			CellID:          "cell-fr-par-mark",
 		},
 	}
 	drv := &refreshStubDriver{err: errors.New("proxy connect tcp: connection refused")}
 	mgr := NewManager(pool, c, nil, time.Minute, time.Minute, map[domain.Provider]driver.RefreshDriver{
-		domain.ProviderGemini: drv,
+		domain.ProviderClaude: drv,
 	})
 
 	_, err = mgr.ForceRefresh(context.Background(), "acct-1")

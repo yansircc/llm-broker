@@ -13,7 +13,6 @@ import (
 	"github.com/yansircc/llm-broker/internal/requestid"
 )
 
-const compatClientMetaHeader = "X-Broker-Compat-Client-Meta"
 const requestLogBodyExcerptLimit = 8 << 10
 
 func requestBindingSource(prepared *preparedRelayRequest) string {
@@ -136,9 +135,6 @@ func requestMeta(prepared *preparedRelayRequest) json.RawMessage {
 		} else {
 			meta["client_retry_count"] = retryCount
 		}
-	}
-	if compatClient := compatClientMeta(prepared.input.Headers); len(compatClient) > 0 {
-		meta["compat_client"] = compatClient
 	}
 
 	summarizeRequestBody(body, meta)
@@ -678,21 +674,6 @@ func countToolResultErrors(items []interface{}) int {
 		}
 	}
 	return count
-}
-
-func compatClientMeta(headers http.Header) map[string]any {
-	if headers == nil {
-		return nil
-	}
-	raw := strings.TrimSpace(headers.Get(compatClientMetaHeader))
-	if raw == "" {
-		return nil
-	}
-	var meta map[string]any
-	if err := json.Unmarshal([]byte(raw), &meta); err != nil || len(meta) == 0 {
-		return nil
-	}
-	return meta
 }
 
 func requestChoiceType(value any) string {

@@ -23,16 +23,6 @@ type Config struct {
 	ClaudeAPIVersion string
 	ClaudeBetaHeader string
 
-	// Codex API
-	CodexAPIURL         string
-	CodexRequestTimeout time.Duration
-
-	// Gemini API / OAuth
-	GeminiAPIURL            string
-	GeminiOAuthClientID     string
-	GeminiOAuthClientSecret string
-	GeminiOAuthRedirectURI  string
-
 	// Scheduling
 	SessionBindingTTL   time.Duration
 	TokenRefreshAdvance time.Duration
@@ -50,14 +40,11 @@ type Config struct {
 	MaxRequestBodyMB           int
 	MaxRetryAccounts           int
 	MaxCacheControls           int
-	CompatMaxRequestsPerMinute int // 0 disables the per-minute compat limiter
-	CompatMaxConcurrent        int // 0 disables the compat concurrency limiter
 
 	// Logging
 	LogLevel       string
 	LogBlobs       bool
 	LogRetentionDays int
-	TraceCompat    bool
 
 	// Runtime
 	BackgroundJobsMode       string
@@ -78,14 +65,6 @@ func Load() *Config {
 		ClaudeAPIVersion: envOr("CLAUDE_API_VERSION", "2023-06-01"),
 		ClaudeBetaHeader: envOr("CLAUDE_BETA_HEADER", "claude-code-20250219,oauth-2025-04-20,interleaved-thinking-2025-05-14,fine-grained-tool-streaming-2025-05-14"),
 
-		CodexAPIURL:         envOr("CODEX_API_URL", "https://chatgpt.com/backend-api/codex/responses"),
-		CodexRequestTimeout: envDuration("CODEX_REQUEST_TIMEOUT", 10*time.Minute),
-
-		GeminiAPIURL:            envOr("GEMINI_API_URL", "https://cloudcode-pa.googleapis.com"),
-		GeminiOAuthClientID:     os.Getenv("GEMINI_OAUTH_CLIENT_ID"),
-		GeminiOAuthClientSecret: os.Getenv("GEMINI_OAUTH_CLIENT_SECRET"),
-		GeminiOAuthRedirectURI:  envOr("GEMINI_OAUTH_REDIRECT_URI", "https://codeassist.google.com/authcode"),
-
 		SessionBindingTTL:   envDuration("SESSION_BINDING_TTL", 24*time.Hour),
 		TokenRefreshAdvance: envDuration("TOKEN_REFRESH_ADVANCE", 60*time.Second),
 
@@ -100,13 +79,10 @@ func Load() *Config {
 		MaxRequestBodyMB:           envInt("REQUEST_MAX_SIZE_MB", 60),
 		MaxRetryAccounts:           envInt("MAX_RETRY_ACCOUNTS", 2),
 		MaxCacheControls:           envInt("MAX_CACHE_CONTROLS", 4),
-		CompatMaxRequestsPerMinute: envInt("COMPAT_MAX_REQUESTS_PER_MINUTE", 0),
-		CompatMaxConcurrent:        envInt("COMPAT_MAX_CONCURRENT", 4),
 
 		LogLevel:         envOr("LOG_LEVEL", "info"),
 		LogBlobs:         envBool("LOG_BLOBS", false),
 		LogRetentionDays: envInt("LOG_RETENTION_DAYS", 3),
-		TraceCompat:      envBool("TRACE_COMPAT", false),
 
 		BackgroundJobsMode:       envOr("BACKGROUND_JOBS_MODE", "all"),
 		BackgroundLeaderLockPath: envOr("BACKGROUND_LEADER_LOCK_PATH", "/var/run/llm-broker/background.lock"),
@@ -120,22 +96,12 @@ func (c *Config) Validate() error {
 	if c.StaticToken == "" {
 		return errMissing("API_TOKEN")
 	}
-	if (c.GeminiOAuthClientID == "") != (c.GeminiOAuthClientSecret == "") {
-		if c.GeminiOAuthClientID == "" {
-			return errMissing("GEMINI_OAUTH_CLIENT_ID")
-		}
-		return errMissing("GEMINI_OAUTH_CLIENT_SECRET")
-	}
 	switch c.BackgroundJobsMode {
 	case "all", "leader", "off":
 	default:
 		return &configError{field: "BACKGROUND_JOBS_MODE (must be all, leader, or off)"}
 	}
 	return nil
-}
-
-func (c *Config) GeminiEnabled() bool {
-	return c.GeminiOAuthClientID != "" && c.GeminiOAuthClientSecret != ""
 }
 
 type configError struct{ field string }

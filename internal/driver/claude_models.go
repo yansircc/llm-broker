@@ -58,9 +58,9 @@ func normalizeClaudeModelID(model string) (string, error) {
 
 	switch {
 	case strings.HasPrefix(lower, "gpt-"), strings.HasPrefix(lower, "codex-"), strings.HasPrefix(lower, "o1"), strings.HasPrefix(lower, "o3"), strings.HasPrefix(lower, "o4"):
-		return "", NewRequestValidationError(http.StatusBadRequest, fmt.Sprintf("model %q does not belong to Claude; use the OpenAI/Codex relay instead", trimmed))
+		return "", NewRequestValidationError(http.StatusBadRequest, fmt.Sprintf("model %q is not a Claude model", trimmed))
 	case strings.HasPrefix(lower, "gemini-"):
-		return "", NewRequestValidationError(http.StatusBadRequest, fmt.Sprintf("model %q does not belong to Claude; use the Gemini relay instead", trimmed))
+		return "", NewRequestValidationError(http.StatusBadRequest, fmt.Sprintf("model %q is not a Claude model", trimmed))
 	case strings.HasPrefix(lower, "claude-"):
 		return "", NewRequestValidationError(http.StatusBadRequest, fmt.Sprintf("unsupported Claude model %q", trimmed))
 	default:

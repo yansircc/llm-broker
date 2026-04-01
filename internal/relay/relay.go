@@ -24,7 +24,6 @@ type Config struct {
 	MaxRetryAccounts  int
 	SessionBindingTTL time.Duration
 	CellErrorPause    time.Duration
-	TraceCompat       bool
 	RequestLogBlobDir string
 }
 

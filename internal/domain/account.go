@@ -10,8 +10,6 @@ type Provider string
 
 const (
 	ProviderClaude Provider = "claude"
-	ProviderCodex  Provider = "codex"
-	ProviderGemini Provider = "gemini"
 )
 
 // Status represents the lifecycle state of an account.

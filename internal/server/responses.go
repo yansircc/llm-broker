@@ -61,7 +61,6 @@ type DashboardAccount struct {
 	LastUsedAt      *time.Time                  `json:"last_used_at,omitempty"`
 	CellID          string                      `json:"cell_id,omitempty"`
 	AvailableNative bool                        `json:"available_native"`
-	AvailableCompat bool                        `json:"available_compat"`
 	Windows         []UtilizationWindowResponse `json:"windows"`
 }
 
@@ -169,7 +168,6 @@ type AccountListItem struct {
 	CooldownUntil   *time.Time                  `json:"cooldown_until,omitempty"`
 	CellID          string                      `json:"cell_id,omitempty"`
 	AvailableNative bool                        `json:"available_native"`
-	AvailableCompat bool                        `json:"available_compat"`
 	Cell            *EgressCellSummaryResponse  `json:"cell,omitempty"`
 	Windows         []UtilizationWindowResponse `json:"windows"`
 }

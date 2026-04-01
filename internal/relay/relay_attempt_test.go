@@ -654,7 +654,7 @@ func TestExecuteRelayAttemptReturnsDriverValidationError(t *testing.T) {
 
 	driverStub := &relayTestDriver{
 		provider:        domain.ProviderClaude,
-		buildRequestErr: driver.NewRequestValidationError(http.StatusBadRequest, `model "gpt-5.4" does not belong to Claude; use the OpenAI/Codex relay instead`),
+		buildRequestErr: driver.NewRequestValidationError(http.StatusBadRequest, `model "gpt-5.4" is not a Claude model`),
 	}
 	transport := relayTestTransport{
 		client: &http.Client{
@@ -698,7 +698,7 @@ func TestExecuteRelayAttemptReturnsDriverValidationError(t *testing.T) {
 	if recorder.Code != http.StatusBadRequest {
 		t.Fatalf("response status = %d, want %d", recorder.Code, http.StatusBadRequest)
 	}
-	if !strings.Contains(recorder.Body.String(), "does not belong to Claude") {
+	if !strings.Contains(recorder.Body.String(), "is not a Claude model") {
 		t.Fatalf("response body = %q, want local validation message", recorder.Body.String())
 	}
 	if len(driverStub.interpretCalls) != 0 {
@@ -717,7 +717,7 @@ func TestExecuteRelayAttemptReturnsDriverValidationError(t *testing.T) {
 	if logs[0].UpstreamErrorType != "request_validation_error" {
 		t.Fatalf("request log upstream error type = %q, want request_validation_error", logs[0].UpstreamErrorType)
 	}
-	if !strings.Contains(logs[0].UpstreamErrorMessage, "does not belong to Claude") {
+	if !strings.Contains(logs[0].UpstreamErrorMessage, "is not a Claude model") {
 		t.Fatalf("request log upstream error message = %q", logs[0].UpstreamErrorMessage)
 	}
 }
@@ -996,193 +996,5 @@ func TestRelayStoresUserRouteBindingOnReject(t *testing.T) {
 	}
 	if !ok || accountID != account.ID {
 		t.Fatalf("sticky binding after reject = (%q, %v), want %q", accountID, ok, account.ID)
-	}
-}
-
-func TestExecuteRelayAttemptLogsCompatTraceEnvelope(t *testing.T) {
-	mockStore := store.NewMockStore()
-	account := &domain.Account{
-		ID:        "acct-trace",
-		Email:     "trace@example.com",
-		Provider:  domain.ProviderClaude,
-		Status:    domain.StatusActive,
-		Subject:   "subject-trace",
-		CellID:    "cell-compat",
-		CreatedAt: time.Now().UTC(),
-	}
-	if err := mockStore.SaveAccount(context.Background(), account); err != nil {
-		t.Fatalf("SaveAccount: %v", err)
-	}
-	if err := mockStore.SaveEgressCell(context.Background(), &domain.EgressCell{
-		ID:        "cell-compat",
-		Name:      "compat",
-		Status:    domain.EgressCellActive,
-		Proxy:     &domain.ProxyConfig{Type: "socks5", Host: "10.0.0.3", Port: 11082},
-		Labels:    map[string]string{"lane": "compat"},
-		CreatedAt: time.Now().UTC(),
-		UpdatedAt: time.Now().UTC(),
-	}); err != nil {
-		t.Fatalf("SaveEgressCell: %v", err)
-	}
-	if err := mockStore.SaveQuotaBucket(context.Background(), &domain.QuotaBucket{
-		BucketKey: "claude:subject-trace",
-		Provider:  domain.ProviderClaude,
-		StateJSON: "{}",
-		UpdatedAt: time.Now().UTC(),
-	}); err != nil {
-		t.Fatalf("SaveQuotaBucket: %v", err)
-	}
-
-	bus := events.NewBus(16)
-	p, err := pool.New(mockStore, bus)
-	if err != nil {
-		t.Fatalf("pool.New: %v", err)
-	}
-
-	driverStub := &relayTestDriver{
-		provider:         domain.ProviderClaude,
-		buildRequestURL:  "https://api.anthropic.com/v1/messages",
-		buildRequestBody: `{"model":"claude-sonnet-4-6","messages":[{"role":"user","content":"hello"}]}`,
-		buildRequestHeaders: http.Header{
-			"Content-Type":  []string{"application/json"},
-			"Authorization": []string{"Bearer secret-upstream"},
-			"User-Agent":    []string{"claude-cli/2.2.0"},
-		},
-		interpretFn: func(statusCode int, _ []byte) driver.Effect {
-			if statusCode == http.StatusBadRequest {
-				return driver.Effect{
-					Kind:                 driver.EffectCooldown,
-					Scope:                driver.EffectScopeBucket,
-					CooldownUntil:        time.Now().Add(5 * time.Minute),
-					UpstreamErrorType:    "invalid_request_error",
-					UpstreamErrorMessage: "Error",
-				}
-			}
-			return driver.Effect{Kind: driver.EffectSuccess, Scope: driver.EffectScopeBucket}
-		},
-	}
-	transport := relayTestTransport{
-		client: &http.Client{
-			Transport: roundTripFunc(func(_ *http.Request) (*http.Response, error) {
-				headers := make(http.Header)
-				headers.Set("request-id", "req_trace")
-				headers.Set("Content-Type", "application/json")
-				return &http.Response{
-					StatusCode: http.StatusBadRequest,
-					Header:     headers,
-					Body: io.NopCloser(strings.NewReader(
-						`{"type":"error","error":{"type":"invalid_request_error","message":"Error"}}`,
-					)),
-				}, nil
-			}),
-		},
-	}
-	relaySvc := New(
-		p,
-		relayTestTokenProvider{},
-		mockStore,
-		Config{
-			MaxRetryAccounts: 1,
-			TraceCompat:      true,
-		},
-		transport,
-		bus,
-		map[domain.Provider]driver.ExecutionDriver{domain.ProviderClaude: driverStub},
-	)
-
-	capture := &captureHandler{}
-	oldLogger := slog.Default()
-	slog.SetDefault(slog.New(capture))
-	defer slog.SetDefault(oldLogger)
-
-	headers := make(http.Header)
-	headers.Set("Content-Type", "application/json")
-	headers.Set("Authorization", "Bearer secret-client")
-	headers.Set("X-Broker-Compat-Trace-Id", "compat-42")
-	headers.Set("X-Broker-Compat-Client-Meta", `{"requested_model":"claude/claude-sonnet-4-6","message_count":1}`)
-	prepared := &preparedRelayRequest{
-		keyInfo: &auth.KeyInfo{ID: "user-trace", Name: "trace"},
-		surface: domain.SurfaceCompat,
-		input: &driver.RelayInput{
-			Headers: headers,
-			Path:    "/compat/v1/chat/completions",
-			Model:   "claude-sonnet-4-6",
-			RawBody: []byte(`{"model":"claude/claude-sonnet-4-6","messages":[{"role":"user","content":"hello"}]}`),
-		},
-	}
-
-	outcome := relaySvc.executeRelayAttempt(
-		context.Background(),
-		httptest.NewRecorder(),
-		driverStub,
-		prepared,
-		newRelayAttemptState(),
-		0,
-	)
-	if outcome != relayAttemptDone {
-		t.Fatalf("executeRelayAttempt outcome = %v, want %v", outcome, relayAttemptDone)
-	}
-
-	reqRecord := capture.find("compat upstream request")
-	if reqRecord == nil {
-		t.Fatal("missing compat upstream request log record")
-	}
-	if reqRecord.attrs["traceId"] != "compat-42" {
-		t.Fatalf("traceId = %#v, want compat-42", reqRecord.attrs["traceId"])
-	}
-	if reqRecord.attrs["upstreamBody"] != `{"model":"claude-sonnet-4-6","messages":[{"role":"user","content":"hello"}]}` {
-		t.Fatalf("upstreamBody = %#v", reqRecord.attrs["upstreamBody"])
-	}
-	headersAny, ok := reqRecord.attrs["upstreamHeaders"].(map[string]string)
-	if !ok {
-		t.Fatalf("upstreamHeaders type = %T, want map[string]string", reqRecord.attrs["upstreamHeaders"])
-	}
-	if _, exists := headersAny["Authorization"]; exists {
-		t.Fatalf("authorization header should not be logged: %#v", headersAny)
-	}
-
-	respRecord := capture.find("compat upstream response")
-	if respRecord == nil {
-		t.Fatal("missing compat upstream response log record")
-	}
-	if respRecord.attrs["traceId"] != "compat-42" {
-		t.Fatalf("response traceId = %#v, want compat-42", respRecord.attrs["traceId"])
-	}
-	if respRecord.attrs["responseBody"] != `{"type":"error","error":{"type":"invalid_request_error","message":"Error"}}` {
-		t.Fatalf("responseBody = %#v", respRecord.attrs["responseBody"])
-	}
-
-	var logs []*domain.RequestLog
-	deadline := time.Now().Add(2 * time.Second)
-	for time.Now().Before(deadline) {
-		var total int
-		logs, total, err = mockStore.QueryRequestLogs(context.Background(), domain.RequestLogQuery{})
-		if err != nil {
-			t.Fatalf("QueryRequestLogs: %v", err)
-		}
-		if total == 1 {
-			break
-		}
-		time.Sleep(10 * time.Millisecond)
-	}
-	if len(logs) != 1 {
-		t.Fatalf("len(logs) = %d, want 1", len(logs))
-	}
-	if logs[0].UpstreamErrorType != "invalid_request_error" {
-		t.Fatalf("UpstreamErrorType = %q, want invalid_request_error", logs[0].UpstreamErrorType)
-	}
-	if logs[0].UpstreamErrorMessage != "Error" {
-		t.Fatalf("UpstreamErrorMessage = %q, want Error", logs[0].UpstreamErrorMessage)
-	}
-	if !strings.Contains(string(logs[0].RequestMeta), `"compat_trace_id":"compat-42"`) {
-		t.Fatalf("RequestMeta = %s, want compat trace id", logs[0].RequestMeta)
-	}
-	if !strings.Contains(string(logs[0].RequestMeta), `"compat_client":{"message_count":1,"requested_model":"claude/claude-sonnet-4-6"}`) &&
-		!strings.Contains(string(logs[0].RequestMeta), `"compat_client":{"requested_model":"claude/claude-sonnet-4-6","message_count":1}`) {
-		t.Fatalf("RequestMeta = %s, want compat client meta", logs[0].RequestMeta)
-	}
-	if !strings.Contains(string(logs[0].UpstreamHeaders), `"Request-Id":"req_trace"`) &&
-		!strings.Contains(string(logs[0].UpstreamHeaders), `"request-id":"req_trace"`) {
-		t.Fatalf("UpstreamHeaders = %s, want request-id", logs[0].UpstreamHeaders)
 	}
 }

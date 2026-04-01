@@ -334,8 +334,8 @@ func TestHandleExchangeCodePreservesExistingRefreshTokenOnRebind(t *testing.T) {
 	existing := &domain.Account{
 		ID:              "acct-1",
 		Email:           "old@example.com",
-		Provider:        domain.ProviderGemini,
-		Subject:         "google-sub",
+		Provider:        domain.ProviderClaude,
+		Subject:         "claude-sub",
 		Status:          domain.StatusActive,
 		Priority:        50,
 		PriorityMode:    "auto",
@@ -359,19 +359,19 @@ func TestHandleExchangeCodePreservesExistingRefreshTokenOnRebind(t *testing.T) {
 	}
 
 	stub := &exchangeStubDriver{
-		provider: domain.ProviderGemini,
+		provider: domain.ProviderClaude,
 		result: &driver.ExchangeResult{
 			AccessToken:   "new-access",
 			RefreshToken:  "",
 			ExpiresIn:     3600,
-			Subject:       "google-sub",
+			Subject:       "claude-sub",
 			Email:         "new@example.com",
-			Identity:      map[string]string{"sub": "google-sub"},
+			Identity:      map[string]string{"sub": "claude-sub"},
 			ProviderState: json.RawMessage(`{"project_id":"proj-123"}`),
 		},
 	}
 	p.SetDrivers(map[domain.Provider]driver.SchedulerDriver{
-		domain.ProviderGemini: stub,
+		domain.ProviderClaude: stub,
 	})
 	srv := &Server{
 		cfg:           &config.Config{},
@@ -380,10 +380,10 @@ func TestHandleExchangeCodePreservesExistingRefreshTokenOnRebind(t *testing.T) {
 		tokens:        tm,
 		transportPool: tp,
 		bus:           bus,
-		oauthDrivers:  map[domain.Provider]driver.OAuthDriver{domain.ProviderGemini: stub},
+		oauthDrivers:  map[domain.Provider]driver.OAuthDriver{domain.ProviderClaude: stub},
 	}
 
-	body := []byte(`{"provider":"gemini","cell_id":"cell-uk-linode-02","code":"auth-code","code_verifier":"verifier","state":"state"}`)
+	body := []byte(`{"provider":"claude","cell_id":"cell-uk-linode-02","code":"auth-code","code_verifier":"verifier","state":"state"}`)
 	req := adminRequest("POST", "/admin/accounts/exchange-code")
 	req.Body = io.NopCloser(bytes.NewReader(body))
 	w := httptest.NewRecorder()

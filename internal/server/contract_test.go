@@ -172,8 +172,8 @@ func TestDashboard_UsersIncludePolicy(t *testing.T) {
 	srv := newTestServer(t)
 
 	if err := srv.store.SaveAccount(context.Background(), &domain.Account{
-		ID:       "acct-compat-1",
-		Email:    "compat@example.com",
+		ID:       "acct-bound-1",
+		Email:    "bound@example.com",
 		Provider: domain.ProviderClaude,
 		Status:   domain.StatusActive,
 	}); err != nil {
@@ -181,10 +181,10 @@ func TestDashboard_UsersIncludePolicy(t *testing.T) {
 	}
 	if err := srv.store.CreateUser(context.Background(), &domain.User{
 		ID:             "u-1",
-		Name:           "compat-user",
+		Name:           "test-user",
 		Status:         "active",
-		AllowedSurface: domain.SurfaceCompat,
-		BoundAccountID: "acct-compat-1",
+		AllowedSurface: domain.SurfaceNative,
+		BoundAccountID: "acct-bound-1",
 		CreatedAt:      time.Now().UTC(),
 	}); err != nil {
 		t.Fatal(err)
@@ -207,14 +207,14 @@ func TestDashboard_UsersIncludePolicy(t *testing.T) {
 	if len(result.Users) != 1 {
 		t.Fatalf("len(users) = %d, want 1", len(result.Users))
 	}
-	if got := result.Users[0]["allowed_surface"]; got != "compat" {
-		t.Fatalf("allowed_surface = %#v, want %q", got, "compat")
+	if got := result.Users[0]["allowed_surface"]; got != "native" {
+		t.Fatalf("allowed_surface = %#v, want %q", got, "native")
 	}
-	if got := result.Users[0]["bound_account_id"]; got != "acct-compat-1" {
-		t.Fatalf("bound_account_id = %#v, want %q", got, "acct-compat-1")
+	if got := result.Users[0]["bound_account_id"]; got != "acct-bound-1" {
+		t.Fatalf("bound_account_id = %#v, want %q", got, "acct-bound-1")
 	}
-	if got := result.Users[0]["bound_account_email"]; got != "compat@example.com" {
-		t.Fatalf("bound_account_email = %#v, want %q", got, "compat@example.com")
+	if got := result.Users[0]["bound_account_email"]; got != "bound@example.com" {
+		t.Fatalf("bound_account_email = %#v, want %q", got, "bound@example.com")
 	}
 }
 
@@ -293,26 +293,6 @@ func TestListAccounts_IncludesSurfaceAvailability(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if err := srv.store.SaveAccount(context.Background(), &domain.Account{
-		ID:       "acct-compat",
-		Email:    "compat@example.com",
-		Provider: domain.ProviderClaude,
-		Status:   domain.StatusActive,
-		CellID:   "cell-compat-1",
-	}); err != nil {
-		t.Fatal(err)
-	}
-	if err := srv.store.SaveEgressCell(context.Background(), &domain.EgressCell{
-		ID:        "cell-compat-1",
-		Name:      "compat lane",
-		Status:    domain.EgressCellActive,
-		Proxy:     &domain.ProxyConfig{Type: "socks5", Host: "127.0.0.1", Port: 11082},
-		Labels:    map[string]string{"lane": "compat"},
-		CreatedAt: time.Now().UTC(),
-		UpdatedAt: time.Now().UTC(),
-	}); err != nil {
-		t.Fatal(err)
-	}
 	srv.pool, _ = pool.New(srv.store, srv.bus)
 	srv.pool.SetDrivers(map[domain.Provider]driver.SchedulerDriver{
 		domain.ProviderClaude: driver.NewClaudeDriver(driver.ClaudeConfig{}, nil),
@@ -329,27 +309,12 @@ func TestListAccounts_IncludesSurfaceAvailability(t *testing.T) {
 	if err := json.Unmarshal(w.Body.Bytes(), &result); err != nil {
 		t.Fatalf("json.Unmarshal: %v", err)
 	}
-	if len(result) != 2 {
-		t.Fatalf("len(accounts) = %d, want 2", len(result))
+	if len(result) != 1 {
+		t.Fatalf("len(accounts) = %d, want 1", len(result))
 	}
 
-	byID := make(map[string]map[string]any, len(result))
-	for _, item := range result {
-		id, _ := item["id"].(string)
-		byID[id] = item
-	}
-
-	if got := byID["acct-native"]["available_native"]; got != true {
+	if got := result[0]["available_native"]; got != true {
 		t.Fatalf("acct-native available_native = %#v, want true", got)
-	}
-	if got := byID["acct-native"]["available_compat"]; got != false {
-		t.Fatalf("acct-native available_compat = %#v, want false", got)
-	}
-	if got := byID["acct-compat"]["available_native"]; got != false {
-		t.Fatalf("acct-compat available_native = %#v, want false", got)
-	}
-	if got := byID["acct-compat"]["available_compat"]; got != true {
-		t.Fatalf("acct-compat available_compat = %#v, want true", got)
 	}
 }
 
@@ -620,8 +585,8 @@ func TestGetUser_IncludesBoundAccountEmail(t *testing.T) {
 	srv := newTestServer(t)
 
 	if err := srv.store.SaveAccount(context.Background(), &domain.Account{
-		ID:       "acct-compat-1",
-		Email:    "compat@example.com",
+		ID:       "acct-bound-1",
+		Email:    "bound@example.com",
 		Provider: domain.ProviderClaude,
 		Status:   domain.StatusActive,
 	}); err != nil {
@@ -629,10 +594,10 @@ func TestGetUser_IncludesBoundAccountEmail(t *testing.T) {
 	}
 	if err := srv.store.CreateUser(context.Background(), &domain.User{
 		ID:             "u-1",
-		Name:           "compat-user",
+		Name:           "test-user",
 		Status:         "active",
-		AllowedSurface: domain.SurfaceCompat,
-		BoundAccountID: "acct-compat-1",
+		AllowedSurface: domain.SurfaceNative,
+		BoundAccountID: "acct-bound-1",
 		CreatedAt:      time.Now().UTC(),
 	}); err != nil {
 		t.Fatal(err)
@@ -648,11 +613,11 @@ func TestGetUser_IncludesBoundAccountEmail(t *testing.T) {
 		t.Fatalf("status %d, body: %s", w.Code, w.Body.String())
 	}
 
-	if got := jsonPath(t, w.Body.Bytes(), "allowed_surface"); got != "compat" {
-		t.Fatalf("allowed_surface = %#v, want %q", got, "compat")
+	if got := jsonPath(t, w.Body.Bytes(), "allowed_surface"); got != "native" {
+		t.Fatalf("allowed_surface = %#v, want %q", got, "native")
 	}
-	if got := jsonPath(t, w.Body.Bytes(), "bound_account_email"); got != "compat@example.com" {
-		t.Fatalf("bound_account_email = %#v, want %q", got, "compat@example.com")
+	if got := jsonPath(t, w.Body.Bytes(), "bound_account_email"); got != "bound@example.com" {
+		t.Fatalf("bound_account_email = %#v, want %q", got, "bound@example.com")
 	}
 }
 
@@ -714,69 +679,6 @@ func TestAdminAccountsRoute_RequiresAdmin(t *testing.T) {
 	}
 }
 
-func TestCompatRoute_RejectsNativeOnlyUser(t *testing.T) {
-	srv := newTestServer(t)
-	srv.authMw = auth.NewMiddleware("admin-secret", srv.store)
-	srv.catalogDrivers = map[domain.Provider]driver.Descriptor{
-		domain.ProviderClaude: driver.NewClaudeDriver(driver.ClaudeConfig{}, nil),
-	}
-
-	user := &domain.User{
-		ID:             "u-native",
-		Name:           "native-user",
-		TokenHash:      tokenHash("native-token"),
-		TokenPrefix:    "tk_native_abcd...",
-		Status:         "active",
-		AllowedSurface: domain.SurfaceNative,
-		CreatedAt:      time.Now().UTC(),
-	}
-	if err := srv.store.CreateUser(context.Background(), user); err != nil {
-		t.Fatal(err)
-	}
-
-	mux := http.NewServeMux()
-	srv.registerRelayRoutes(mux)
-
-	req := httptest.NewRequest(http.MethodGet, "/compat/v1/models", nil)
-	req.Header.Set("Authorization", "Bearer native-token")
-	w := httptest.NewRecorder()
-	mux.ServeHTTP(w, req)
-
-	if w.Code != http.StatusForbidden {
-		t.Fatalf("status %d, want %d, body: %s", w.Code, http.StatusForbidden, w.Body.String())
-	}
-}
-
-func TestNativeRoute_RejectsCompatOnlyUser(t *testing.T) {
-	srv := newTestServer(t)
-	srv.authMw = auth.NewMiddleware("admin-secret", srv.store)
-
-	user := &domain.User{
-		ID:             "u-compat",
-		Name:           "compat-user",
-		TokenHash:      tokenHash("compat-token"),
-		TokenPrefix:    "tk_compat_abcd...",
-		Status:         "active",
-		AllowedSurface: domain.SurfaceCompat,
-		CreatedAt:      time.Now().UTC(),
-	}
-	if err := srv.store.CreateUser(context.Background(), user); err != nil {
-		t.Fatal(err)
-	}
-
-	mux := http.NewServeMux()
-	srv.registerRelayRoutes(mux)
-
-	req := httptest.NewRequest(http.MethodGet, "/v1/models", nil)
-	req.Header.Set("Authorization", "Bearer compat-token")
-	w := httptest.NewRecorder()
-	mux.ServeHTTP(w, req)
-
-	if w.Code != http.StatusForbidden {
-		t.Fatalf("status %d, want %d, body: %s", w.Code, http.StatusForbidden, w.Body.String())
-	}
-}
-
 func TestDeleteUser_NotFound(t *testing.T) {
 	srv := newTestServer(t)
 
@@ -808,8 +710,8 @@ func TestUpdateUserPolicy_RoundTrip(t *testing.T) {
 	srv := newTestServer(t)
 
 	if err := srv.store.SaveAccount(context.Background(), &domain.Account{
-		ID:       "acct-compat-1",
-		Email:    "compat@example.com",
+		ID:       "acct-bound-1",
+		Email:    "bound@example.com",
 		Provider: domain.ProviderClaude,
 		Status:   domain.StatusActive,
 	}); err != nil {
@@ -827,7 +729,7 @@ func TestUpdateUserPolicy_RoundTrip(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	req := httptest.NewRequest(http.MethodPost, "/admin/users/u-1/policy", strings.NewReader(`{"allowed_surface":"compat","bound_account_id":"acct-compat-1"}`))
+	req := httptest.NewRequest(http.MethodPost, "/admin/users/u-1/policy", strings.NewReader(`{"allowed_surface":"native","bound_account_id":"acct-bound-1"}`))
 	req = req.WithContext(adminRequest(http.MethodPost, "/admin/users/u-1/policy").Context())
 	req.SetPathValue("id", "u-1")
 	w := httptest.NewRecorder()
@@ -844,10 +746,10 @@ func TestUpdateUserPolicy_RoundTrip(t *testing.T) {
 	if len(users) != 1 {
 		t.Fatalf("len(users) = %d, want 1", len(users))
 	}
-	if users[0].AllowedSurface != domain.SurfaceCompat {
-		t.Fatalf("AllowedSurface = %q, want compat", users[0].AllowedSurface)
+	if users[0].AllowedSurface != domain.SurfaceNative {
+		t.Fatalf("AllowedSurface = %q, want native", users[0].AllowedSurface)
 	}
-	if users[0].BoundAccountID != "acct-compat-1" {
-		t.Fatalf("BoundAccountID = %q, want acct-compat-1", users[0].BoundAccountID)
+	if users[0].BoundAccountID != "acct-bound-1" {
+		t.Fatalf("BoundAccountID = %q, want acct-bound-1", users[0].BoundAccountID)
 	}
 }

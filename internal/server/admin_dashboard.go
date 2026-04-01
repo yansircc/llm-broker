@@ -54,7 +54,6 @@ func (s *Server) dashboardAccounts() []DashboardAccount {
 			LastUsedAt:      acct.LastUsedAt,
 			CellID:          acct.CellID,
 			AvailableNative: avail.Native,
-			AvailableCompat: avail.Compat,
 			Windows:         proj.windows,
 		})
 	}

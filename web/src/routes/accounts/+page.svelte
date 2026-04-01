@@ -216,7 +216,7 @@
 			account.windows.forEach((window, index) => {
 				if (!group!.window_labels[index]) {
 					let lbl = window.label;
-					if (window.sub_label) lbl += ` codex/spark`;
+					if (window.sub_label) lbl += ` ${window.sub_label}`;
 					group!.window_labels[index] = lbl;
 				}
 			});

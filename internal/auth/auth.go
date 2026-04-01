@@ -69,7 +69,7 @@ func (m *Middleware) validateToken(ctx context.Context, token string) (*KeyInfo,
 		return &KeyInfo{
 			ID:             "admin",
 			Name:           "admin",
-			AllowedSurface: domain.SurfaceAll,
+			AllowedSurface: domain.SurfaceNative,
 			IsAdmin:        true,
 		}, nil
 	}

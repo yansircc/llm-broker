@@ -153,7 +153,7 @@ func TestClaudeBuildRequestRejectsUnsupportedModelsLocally(t *testing.T) {
 		if requestErr.StatusCode != http.StatusBadRequest {
 			t.Fatalf("StatusCode = %d, want 400", requestErr.StatusCode)
 		}
-		if !strings.Contains(requestErr.Message, "does not belong to Claude") {
+		if !strings.Contains(requestErr.Message, "is not a Claude model") {
 			t.Fatalf("Message = %q", requestErr.Message)
 		}
 	})
