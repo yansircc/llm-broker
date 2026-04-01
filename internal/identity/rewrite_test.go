@@ -46,6 +46,47 @@ func TestExtractSessionUUID(t *testing.T) {
 	}
 }
 
+func TestExtractSessionUUID_JSONFormat(t *testing.T) {
+	jsonUserID := `{"device_id":"abcdef0123456789","account_uuid":"org-123","session_id":"aabbccdd-1122-3344-5566-778899aabbcc"}`
+	got := ExtractSessionUUID(jsonUserID)
+	if got != "aabbccdd-1122-3344-5566-778899aabbcc" {
+		t.Errorf("expected session_id from JSON, got %q", got)
+	}
+
+	// JSON without device_id should NOT match
+	partialJSON := `{"session_id":"aabbccdd-1122-3344-5566-778899aabbcc"}`
+	got = ExtractSessionUUID(partialJSON)
+	if got != "" {
+		t.Errorf("JSON without device_id should not match, got %q", got)
+	}
+}
+
+func TestRewriteUserID_JSONFormat(t *testing.T) {
+	jsonUserID := `{"device_id":"abcdef0123456789","account_uuid":"org-123","session_id":"aabbccdd-1122-3344-5566-778899aabbcc"}`
+	result := RewriteUserID(jsonUserID, "acct-1", "org-uuid-1")
+	if result == "" {
+		t.Error("should return non-empty user_id")
+	}
+	if result == jsonUserID {
+		t.Error("should rewrite JSON user_id, not pass through")
+	}
+	if !sessionUUIDPattern.MatchString(result) {
+		t.Error("result should contain a derived session UUID")
+	}
+	// Should use session_id from JSON as tail, not "default"
+	defaultResult := RewriteUserID("totally-invalid", "acct-1", "org-uuid-1")
+	if result == defaultResult {
+		t.Error("JSON session_id should produce different result than default fallback")
+	}
+
+	// JSON without device_id should fall through to default
+	partialJSON := `{"session_id":"aabbccdd-1122-3344-5566-778899aabbcc"}`
+	partialResult := RewriteUserID(partialJSON, "acct-1", "org-uuid-1")
+	if partialResult != defaultResult {
+		t.Error("JSON without device_id should use default fallback")
+	}
+}
+
 func TestDeterministicHash(t *testing.T) {
 	r1 := RewriteUserID("invalid", "acct-1", "org-1")
 	r2 := RewriteUserID("invalid", "acct-1", "org-1")

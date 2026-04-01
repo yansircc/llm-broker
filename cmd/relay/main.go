@@ -90,6 +90,10 @@ func main() {
 
 	// Initialize identity transformer
 	trans := identity.NewTransformer(p, cfg.MaxCacheControls)
+	trans.SetProfileSeed(cfg.EncryptionKey)
+
+	// Set OAuth UA version to match configured CLI version
+	driver.OAuthCLIVersion = cfg.ClaudeCLIVersion
 
 	// Initialize drivers
 	pauses := driver.ErrorPauses{
@@ -104,6 +108,7 @@ func main() {
 			APIURL:     cfg.ClaudeAPIURL,
 			APIVersion: cfg.ClaudeAPIVersion,
 			BetaHeader: cfg.ClaudeBetaHeader,
+			CLIVersion: cfg.ClaudeCLIVersion,
 			Pauses:     pauses,
 		}, trans),
 	}

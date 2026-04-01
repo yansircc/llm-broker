@@ -25,7 +25,7 @@ func (d *ClaudeDriver) ExchangeCode(ctx context.Context, client *http.Client, co
 
 	orgUUID, email, orgName, err := fetchClaudeOrgWithToken(ctx, client, result.AccessToken)
 	if err != nil {
-		orgUUID = fetchOrgUUIDFromAPIHeader(ctx, client, d.cfg.APIURL, result.AccessToken, d.cfg.APIVersion, d.cfg.BetaHeader)
+		orgUUID = fetchOrgUUIDFromAPIHeader(ctx, client, d.cfg.APIURL, result.AccessToken, d.cfg.APIVersion, d.cfg.BetaHeader, d.cfg.CLIVersion)
 		email = "account-" + time.Now().Format("0102-1504")
 	}
 
@@ -51,14 +51,14 @@ func (d *ClaudeDriver) RefreshToken(ctx context.Context, client *http.Client, re
 	return refreshClaudeToken(ctx, client, refreshToken)
 }
 
-func fetchOrgUUIDFromAPIHeader(ctx context.Context, client *http.Client, apiURL, accessToken, apiVersion, betaHeader string) string {
+func fetchOrgUUIDFromAPIHeader(ctx context.Context, client *http.Client, apiURL, accessToken, apiVersion, betaHeader, cliVersion string) string {
 	body := `{"model":"claude-haiku-4-5-20251001","max_tokens":1,"messages":[{"role":"user","content":"hi"}]}`
 	req, err := http.NewRequestWithContext(ctx, "POST", apiURL, strings.NewReader(body))
 	if err != nil {
 		return ""
 	}
 	req.Header.Set("Content-Type", "application/json")
-	identity.SetRequiredHeaders(req.Header, accessToken, apiVersion, betaHeader)
+	identity.SetRequiredHeaders(req.Header, accessToken, apiVersion, betaHeader, cliVersion)
 
 	resp, err := httpClientOrDefault(client, 15*time.Second).Do(req)
 	if err != nil {

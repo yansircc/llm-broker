@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"math/rand/v2"
 	"net/http"
 	"time"
 
@@ -249,6 +250,14 @@ func (r *Relay) executeRelayAttempt(
 		} else {
 			r.logCompatTraceRequest(prepared, acct, attempt, upReq, upstreamReqBody)
 		}
+	}
+
+	// Anti-fingerprint jitter: small random delay before upstream request.
+	// Respects context cancellation to avoid blocking cancelled requests.
+	select {
+	case <-time.After(time.Duration(rand.IntN(300)) * time.Millisecond):
+	case <-ctx.Done():
+		return relayAttemptDone
 	}
 
 	resp, err := r.transport.ClientForAccount(acct).Do(upReq)

@@ -37,7 +37,7 @@ func FilterHeaders(original http.Header) http.Header {
 }
 
 // SetRequiredHeaders sets the required headers for the upstream request.
-func SetRequiredHeaders(h http.Header, accessToken, apiVersion, betaHeader string) {
+func SetRequiredHeaders(h http.Header, accessToken, apiVersion, betaHeader, cliVersion string) {
 	// Strip client auth headers — the relay's static token must never reach upstream.
 	h.Del("x-api-key")
 	h.Del("Authorization")
@@ -50,7 +50,10 @@ func SetRequiredHeaders(h http.Header, accessToken, apiVersion, betaHeader strin
 		h.Set("anthropic-beta", mergedBeta)
 	}
 	h.Set("Content-Type", "application/json")
-	h.Set("User-Agent", "claude-cli/2.2.0 (external, cli)")
+	if cliVersion == "" {
+		cliVersion = "2.2.0"
+	}
+	h.Set("User-Agent", "claude-cli/"+cliVersion+" (external, cli)")
 }
 
 func mergeBetaHeaders(clientBeta, relayBeta string) string {

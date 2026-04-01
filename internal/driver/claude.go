@@ -79,7 +79,7 @@ func (d *ClaudeDriver) BuildRequest(ctx context.Context, input *RelayInput, acct
 			req.Header.Add(k, v)
 		}
 	}
-	identity.SetRequiredHeaders(req.Header, token, d.cfg.APIVersion, d.cfg.BetaHeader)
+	identity.SetRequiredHeaders(req.Header, token, d.cfg.APIVersion, d.cfg.BetaHeader, d.cfg.CLIVersion)
 	if input.IsStream {
 		req.Header.Set("Accept", "text/event-stream")
 	}

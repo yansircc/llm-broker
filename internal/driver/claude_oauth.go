@@ -18,7 +18,19 @@ const (
 	claudeOAuthScope        = "org:create_api_key user:profile user:inference user:sessions:claude_code"
 	claudeOAuthAuthorizeURL = "https://claude.ai/oauth/authorize"
 	claudeAIBaseURL         = "https://claude.ai"
+	defaultOAuthUA          = "claude-cli/2.2.0 (external, cli)"
 )
+
+// OAuthCLIVersion is set by main to match the configured CLI version.
+// OAuth/refresh requests use this UA. Defaults to defaultOAuthUA.
+var OAuthCLIVersion string
+
+func oauthUA() string {
+	if OAuthCLIVersion != "" {
+		return "claude-cli/" + OAuthCLIVersion + " (external, cli)"
+	}
+	return defaultOAuthUA
+}
 
 type claudeOrgResponse struct {
 	UUID         string   `json:"uuid"`
@@ -67,7 +79,7 @@ func exchangeClaudeCode(ctx context.Context, client *http.Client, code, verifier
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json")
-	req.Header.Set("User-Agent", "claude-cli/1.0.69 (external, cli)")
+	req.Header.Set("User-Agent", oauthUA())
 	req.Header.Set("Referer", "https://claude.ai/")
 	req.Header.Set("Origin", "https://claude.ai")
 
@@ -163,7 +175,7 @@ func refreshClaudeToken(ctx context.Context, client *http.Client, refreshToken s
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json")
-	req.Header.Set("User-Agent", "claude-cli/1.0.69 (external, cli)")
+	req.Header.Set("User-Agent", oauthUA())
 	req.Header.Set("Referer", "https://claude.ai/")
 	req.Header.Set("Origin", "https://claude.ai")
 

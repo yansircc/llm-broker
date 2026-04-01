@@ -22,6 +22,7 @@ type Config struct {
 	ClaudeAPIURL     string
 	ClaudeAPIVersion string
 	ClaudeBetaHeader string
+	ClaudeCLIVersion string
 
 	// Scheduling
 	SessionBindingTTL   time.Duration
@@ -67,6 +68,7 @@ func Load() *Config {
 		ClaudeAPIURL:     envOr("CLAUDE_API_URL", "https://api.anthropic.com/v1/messages"),
 		ClaudeAPIVersion: envOr("CLAUDE_API_VERSION", "2023-06-01"),
 		ClaudeBetaHeader: envOr("CLAUDE_BETA_HEADER", "claude-code-20250219,oauth-2025-04-20,interleaved-thinking-2025-05-14,fine-grained-tool-streaming-2025-05-14"),
+		ClaudeCLIVersion: envOr("CLAUDE_CLI_VERSION", "2.2.0"),
 
 		SessionBindingTTL:   envDuration("SESSION_BINDING_TTL", 24*time.Hour),
 		TokenRefreshAdvance: envDuration("TOKEN_REFRESH_ADVANCE", 60*time.Second),

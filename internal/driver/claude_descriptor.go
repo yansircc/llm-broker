@@ -10,6 +10,7 @@ type ClaudeConfig struct {
 	APIURL     string
 	APIVersion string
 	BetaHeader string
+	CLIVersion string
 	Pauses     ErrorPauses
 }
 
