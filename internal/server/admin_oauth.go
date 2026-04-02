@@ -31,10 +31,6 @@ func (s *Server) handleGenerateAuthURL(w http.ResponseWriter, r *http.Request) {
 		writeAdminError(w, http.StatusBadRequest, "invalid_request", "provider is required")
 		return
 	}
-	if req.CellID == "" {
-		writeAdminError(w, http.StatusBadRequest, "invalid_request", "cell_id is required")
-		return
-	}
 
 	drv, ok := s.oauthDriverByID(req.Provider)
 	if !ok {
@@ -47,9 +43,11 @@ func (s *Server) handleGenerateAuthURL(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := s.validateExchangeCellSelection(nil, req.CellID, drv.Provider()); err != nil {
-		writeAdminError(w, http.StatusBadRequest, "invalid_request", err.Error())
-		return
+	if req.CellID != "" {
+		if err := s.validateExchangeCellSelection(nil, req.CellID, drv.Provider()); err != nil {
+			writeAdminError(w, http.StatusBadRequest, "invalid_request", err.Error())
+			return
+		}
 	}
 
 	sessionID, err := s.storeOAuthSession(r.Context(), req.Provider, req.CellID, session)
@@ -92,10 +90,6 @@ func (s *Server) handleExchangeCode(w http.ResponseWriter, r *http.Request) {
 
 	if req.Provider == "" {
 		writeAdminError(w, http.StatusBadRequest, "invalid_request", "provider is required")
-		return
-	}
-	if req.CellID == "" {
-		writeAdminError(w, http.StatusBadRequest, "invalid_request", "cell_id is required")
 		return
 	}
 

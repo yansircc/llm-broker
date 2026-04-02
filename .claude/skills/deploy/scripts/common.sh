@@ -5,8 +5,12 @@ SCRIPT_DIR="$(cd -- "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(git -C "$SCRIPT_DIR" rev-parse --show-toplevel)"
 
 # Load .env from repo root (gitignored, holds REMOTE/SITE)
-if [[ -f "$REPO_ROOT/.env" ]]; then
-    set -a; source "$REPO_ROOT/.env"; set +a
+# Override with ENV_FILE=.env.ccsg to target a different server.
+_env_file="${ENV_FILE:-$REPO_ROOT/.env}"
+if [[ -f "$_env_file" ]]; then
+    set -a; source "$_env_file"; set +a
+elif [[ -f "$REPO_ROOT/$_env_file" ]]; then
+    set -a; source "$REPO_ROOT/$_env_file"; set +a
 fi
 
 REMOTE="${REMOTE:?Set REMOTE in .env or environment (e.g. user@host)}"

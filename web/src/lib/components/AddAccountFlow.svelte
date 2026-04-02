@@ -58,16 +58,17 @@
 	}
 
 	async function generateAuthUrl() {
-		if (!provider || !selectedCellID) return;
+		if (!provider) return;
 		generating = true;
 		genError = '';
 		try {
+			const payload: Record<string, string> = { provider: provider.id };
+			if (selectedCellID) {
+				payload.cell_id = selectedCellID;
+			}
 			const data = await api<{ session_id: string; auth_url: string }>('/accounts/generate-auth-url', {
 				method: 'POST',
-				body: JSON.stringify({
-					provider: provider.id,
-					cell_id: selectedCellID
-				})
+				body: JSON.stringify(payload)
 			});
 			sessionId = data.session_id;
 			authUrl = data.auth_url;
@@ -174,10 +175,10 @@
 		provider: <b>{provider.label}</b>
 	</div>
 
-	<h2>egress cell {#if selectedCellID}<span class="g">&#10003;</span>{/if}</h2>
+	<h2>egress cell {#if selectedCellID}<span class="g">&#10003;</span>{:else}<span class="muted">(direct)</span>{/if}</h2>
 	<div class="bar">
 		<select bind:value={selectedCellID} disabled={generating || exchanging || !!sessionId || !!result}>
-			<option value="">select cell</option>
+			<option value="">direct (no proxy)</option>
 			{#each availableCells() as cell (cell.id)}
 				<option value={cell.id}>{optionLabel(cell)}</option>
 			{/each}
@@ -195,16 +196,16 @@
 			cell: <b>{selectedCell()?.name}</b><br>
 			region: <b>{region(selectedCell())}</b><br>
 			proxy: <b>{selectedCell()?.proxy?.type}://{selectedCell()?.proxy?.host}:{selectedCell()?.proxy?.port}</b>
-		{:else if availableCells().length === 0}
+		{:else if !selectedCellID}
 			<br><br>
-			<span class="error-msg">no available cells</span>
+			<span class="muted">direct connect (server egress IP)</span>
 		{/if}
 	</div>
 
 	<h2>authorize {#if sessionId}<span class="g">&#10003;</span>{/if}</h2>
 	{#if !sessionId}
 		<p class="hint">generate an OAuth URL, open it in browser, login and authorize.</p>
-		<button class="link" onclick={generateAuthUrl} disabled={generating || !selectedCellID}>
+		<button class="link" onclick={generateAuthUrl} disabled={generating}>
 			{generating ? '[generating...]' : '[generate auth url]'}
 		</button>
 		{#if genError}
@@ -239,7 +240,7 @@
 				<br><br>
 				email: <b>{result.email}</b><br>
 				status: <b class="g">{result.status}</b><br>
-				cell: <b>{selectedCell()?.name ?? selectedCellID}</b><br>
+				cell: <b>{selectedCell()?.name ?? (selectedCellID || 'direct')}</b><br>
 				<br>
 				<a href="{base}/accounts/{result.id}">view account &rarr;</a>
 			</div>

@@ -261,7 +261,7 @@ func TestHandleExchangeCodeCreatesAccountBoundToCell(t *testing.T) {
 	}
 }
 
-func TestHandleExchangeCodeRejectsMissingCellIDForNewAccount(t *testing.T) {
+func TestHandleExchangeCodeAllowsDirectForNewAccount(t *testing.T) {
 	ms := store.NewMockStore()
 	bus := events.NewBus(100)
 	p, err := pool.New(ms, bus)
@@ -303,11 +303,28 @@ func TestHandleExchangeCodeRejectsMissingCellIDForNewAccount(t *testing.T) {
 
 	srv.handleExchangeCode(w, req)
 
-	if w.Code != http.StatusBadRequest {
+	if w.Code != http.StatusOK {
 		t.Fatalf("status = %d, body = %s", w.Code, w.Body.String())
 	}
-	if !bytes.Contains(w.Body.Bytes(), []byte("cell_id is required")) {
-		t.Fatalf("body = %s", w.Body.String())
+
+	var resp exchangeAccountResponse
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("json.Unmarshal() error = %v", err)
+	}
+	acct := p.Get(resp.ID)
+	if acct == nil {
+		t.Fatal("account not found after exchange")
+	}
+	if acct.CellID != "" {
+		t.Fatalf("CellID = %q, want empty for direct", acct.CellID)
+	}
+
+	expectedTransport := tp.ClientForAccount(&domain.Account{}).Transport
+	if stub.lastExchangeClient == nil {
+		t.Fatal("expected exchange client to be passed to driver")
+	}
+	if stub.lastExchangeClient.Transport != expectedTransport {
+		t.Fatalf("exchange transport = %#v, want %#v", stub.lastExchangeClient.Transport, expectedTransport)
 	}
 }
 
