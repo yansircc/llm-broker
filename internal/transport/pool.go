@@ -113,9 +113,9 @@ func (m *Pool) cleanup(idleTimeout time.Duration) {
 func transportKey(acct *domain.Account) string {
 	proxy := acct.TransportProxy()
 	if proxy == nil {
-		return "direct"
+		return "direct:" + acct.ID
 	}
-	return fmt.Sprintf("%s://%s:%d", proxy.Type, proxy.Host, proxy.Port)
+	return fmt.Sprintf("%s://%s:%d/%s", proxy.Type, proxy.Host, proxy.Port, acct.ID)
 }
 
 func buildRoundTripper(acct *domain.Account) http.RoundTripper {
