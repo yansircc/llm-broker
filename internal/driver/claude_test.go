@@ -10,7 +10,7 @@ import (
 )
 
 func TestClaudeCalcCost(t *testing.T) {
-	d := NewClaudeDriver(ClaudeConfig{}, nil)
+	d := NewClaudeDriver(ClaudeConfig{}, NoopStainlessStore{}, 4)
 
 	tests := []struct {
 		name  string
@@ -62,7 +62,7 @@ func TestClaudeCalcCost(t *testing.T) {
 func TestClaudeInterpret_400DisabledOrganizationBlocks(t *testing.T) {
 	d := NewClaudeDriver(ClaudeConfig{
 		Pauses: ErrorPauses{Pause401: time.Minute},
-	}, nil)
+	}, NoopStainlessStore{}, 4)
 
 	before := time.Now()
 	body := []byte(`{"type":"error","error":{"type":"invalid_request_error","message":"This organization has been disabled."}}`)

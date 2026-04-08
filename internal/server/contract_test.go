@@ -718,7 +718,7 @@ func TestCompatRoute_RejectsNativeOnlyUser(t *testing.T) {
 	srv := newTestServer(t)
 	srv.authMw = auth.NewMiddleware("admin-secret", srv.store)
 	srv.catalogDrivers = map[domain.Provider]driver.Descriptor{
-		domain.ProviderClaude: driver.NewClaudeDriver(driver.ClaudeConfig{}, nil),
+		domain.ProviderClaude: driver.NewClaudeDriver(driver.ClaudeConfig{}, driver.NoopStainlessStore{}, 4),
 	}
 
 	user := &domain.User{

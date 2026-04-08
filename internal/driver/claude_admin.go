@@ -10,7 +10,6 @@ import (
 	"time"
 
 	"github.com/yansircc/llm-broker/internal/domain"
-	"github.com/yansircc/llm-broker/internal/identity"
 )
 
 func (d *ClaudeDriver) Probe(ctx context.Context, acct *domain.Account, token string, client *http.Client) (ProbeResult, error) {
@@ -20,7 +19,7 @@ func (d *ClaudeDriver) Probe(ctx context.Context, acct *domain.Account, token st
 		return ProbeResult{}, err
 	}
 	req.Header.Set("Content-Type", "application/json")
-	identity.SetRequiredHeaders(req.Header, token, d.cfg.APIVersion, d.cfg.BetaHeader)
+	setClaudeRequiredHeaders(req.Header, token, d.cfg.APIVersion, d.cfg.BetaHeader)
 	resp, err := client.Do(req)
 	if err != nil {
 		return ProbeResult{}, err

@@ -2,7 +2,6 @@ package driver
 
 import (
 	"github.com/yansircc/llm-broker/internal/domain"
-	"github.com/yansircc/llm-broker/internal/identity"
 )
 
 // ClaudeConfig holds the configuration needed by the Claude driver.
@@ -16,11 +15,17 @@ type ClaudeConfig struct {
 // ClaudeDriver implements Driver for Claude.
 type ClaudeDriver struct {
 	cfg         ClaudeConfig
-	transformer *identity.Transformer
+	transformer claudeTransformer
 }
 
-func NewClaudeDriver(cfg ClaudeConfig, transformer *identity.Transformer) *ClaudeDriver {
-	return &ClaudeDriver{cfg: cfg, transformer: transformer}
+func NewClaudeDriver(cfg ClaudeConfig, stainless StainlessStore, maxCacheControls int) *ClaudeDriver {
+	return &ClaudeDriver{
+		cfg: cfg,
+		transformer: claudeTransformer{
+			stainless:        stainless,
+			maxCacheControls: maxCacheControls,
+		},
+	}
 }
 
 func (d *ClaudeDriver) Provider() domain.Provider { return domain.ProviderClaude }

@@ -13,7 +13,6 @@ import (
 	"time"
 
 	"github.com/yansircc/llm-broker/internal/domain"
-	"github.com/yansircc/llm-broker/internal/identity"
 )
 
 var banSignalPattern = regexp.MustCompile(`(?i)(organization has been disabled|account has been disabled|Too many active sessions|only authorized for use with claude code|OAuth authentication is currently not allowed)`)
@@ -50,7 +49,7 @@ func (d *ClaudeDriver) BuildRequest(ctx context.Context, input *RelayInput, acct
 		normalizeClaudeMessageEnvelope(body)
 	}
 
-	result, err := d.transformer.Transform(ctx, body, input.Headers, acct, input.UserID)
+	result, err := d.transformer.transform(ctx, body, input.Headers, acct, input.UserID)
 	if err != nil {
 		return nil, fmt.Errorf("transform identity: %w", err)
 	}
@@ -79,7 +78,7 @@ func (d *ClaudeDriver) BuildRequest(ctx context.Context, input *RelayInput, acct
 			req.Header.Add(k, v)
 		}
 	}
-	identity.SetRequiredHeaders(req.Header, token, d.cfg.APIVersion, d.cfg.BetaHeader)
+	setClaudeRequiredHeaders(req.Header, token, d.cfg.APIVersion, d.cfg.BetaHeader)
 	if input.IsStream {
 		req.Header.Set("Accept", "text/event-stream")
 	}
@@ -330,14 +329,14 @@ func (d *ClaudeDriver) WriteUpstreamError(w http.ResponseWriter, statusCode int,
 // ---------------------------------------------------------------------------
 
 func (d *ClaudeDriver) InterceptRequest(w http.ResponseWriter, body map[string]interface{}, model string) bool {
-	if !identity.IsWarmupRequest(body) {
+	if !isWarmupRequest(body) {
 		return false
 	}
 	flusher, _ := w.(http.Flusher)
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.WriteHeader(http.StatusOK)
-	for _, event := range identity.WarmupEvents(model) {
+	for _, event := range warmupEvents(model) {
 		w.Write([]byte(event))
 		if flusher != nil {
 			flusher.Flush()
@@ -350,7 +349,7 @@ func (d *ClaudeDriver) InterceptRequest(w http.ResponseWriter, body map[string]i
 func claudeSessionUUID(body map[string]interface{}) string {
 	if metadata, ok := body["metadata"].(map[string]interface{}); ok {
 		if uid, ok := metadata["user_id"].(string); ok {
-			return identity.ExtractSessionUUID(uid)
+			return extractSessionUUID(uid)
 		}
 	}
 	return ""

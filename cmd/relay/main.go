@@ -13,7 +13,6 @@ import (
 	"github.com/yansircc/llm-broker/internal/domain"
 	"github.com/yansircc/llm-broker/internal/driver"
 	"github.com/yansircc/llm-broker/internal/events"
-	"github.com/yansircc/llm-broker/internal/identity"
 	"github.com/yansircc/llm-broker/internal/pool"
 	"github.com/yansircc/llm-broker/internal/relay"
 	"github.com/yansircc/llm-broker/internal/server"
@@ -88,9 +87,6 @@ func main() {
 	// Initialize auth middleware
 	authMw := auth.NewMiddleware(cfg.StaticToken, s)
 
-	// Initialize identity transformer
-	trans := identity.NewTransformer(p, cfg.MaxCacheControls)
-
 	// Initialize drivers
 	pauses := driver.ErrorPauses{
 		Pause401:        cfg.ErrorPause401,
@@ -105,7 +101,7 @@ func main() {
 			APIVersion: cfg.ClaudeAPIVersion,
 			BetaHeader: cfg.ClaudeBetaHeader,
 			Pauses:     pauses,
-		}, trans),
+		}, p, cfg.MaxCacheControls),
 		domain.ProviderCodex: driver.NewCodexDriver(driver.CodexConfig{
 			APIURL: cfg.CodexAPIURL,
 			Pauses: pauses,

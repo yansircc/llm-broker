@@ -7,8 +7,6 @@ import (
 	"net/http"
 	"strings"
 	"time"
-
-	"github.com/yansircc/llm-broker/internal/identity"
 )
 
 func (d *ClaudeDriver) GenerateAuthURL() (string, OAuthSession, error) {
@@ -58,7 +56,7 @@ func fetchOrgUUIDFromAPIHeader(ctx context.Context, client *http.Client, apiURL,
 		return ""
 	}
 	req.Header.Set("Content-Type", "application/json")
-	identity.SetRequiredHeaders(req.Header, accessToken, apiVersion, betaHeader)
+	setClaudeRequiredHeaders(req.Header, accessToken, apiVersion, betaHeader)
 
 	resp, err := httpClientOrDefault(client, 15*time.Second).Do(req)
 	if err != nil {

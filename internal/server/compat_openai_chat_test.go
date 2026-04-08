@@ -18,7 +18,6 @@ import (
 	"github.com/yansircc/llm-broker/internal/domain"
 	"github.com/yansircc/llm-broker/internal/driver"
 	"github.com/yansircc/llm-broker/internal/events"
-	"github.com/yansircc/llm-broker/internal/identity"
 	"github.com/yansircc/llm-broker/internal/pool"
 	"github.com/yansircc/llm-broker/internal/relay"
 	"github.com/yansircc/llm-broker/internal/store"
@@ -431,7 +430,7 @@ func TestCompatClaudeToOpenAIChatResponse(t *testing.T) {
 func TestHandleCompatListModels(t *testing.T) {
 	srv := newTestServer(t)
 	srv.catalogDrivers = map[domain.Provider]driver.Descriptor{
-		domain.ProviderClaude: driver.NewClaudeDriver(driver.ClaudeConfig{}, nil),
+		domain.ProviderClaude: driver.NewClaudeDriver(driver.ClaudeConfig{}, driver.NoopStainlessStore{}, 4),
 		domain.ProviderGemini: driver.NewGeminiDriver(driver.GeminiConfig{}),
 	}
 
@@ -1509,7 +1508,7 @@ func newCompatMultiProviderTestServer(t *testing.T, upstreamClients map[domain.P
 	claudeDrv := driver.NewClaudeDriver(driver.ClaudeConfig{
 		APIURL:     "https://claude.example/v1/messages",
 		APIVersion: "2023-06-01",
-	}, identity.NewTransformer(noopStainlessBinder{}, 8))
+	}, driver.NoopStainlessStore{}, 8)
 	geminiDrv := driver.NewGeminiDriver(driver.GeminiConfig{
 		APIURL: "https://gemini.example",
 	})
@@ -1542,12 +1541,6 @@ func newCompatMultiProviderTestServer(t *testing.T, upstreamClients map[domain.P
 			domain.ProviderGemini: geminiDrv,
 		},
 	}
-}
-
-type noopStainlessBinder struct{}
-
-func (noopStainlessBinder) BindStainlessFromRequest(context.Context, string, http.Header, http.Header) error {
-	return nil
 }
 
 type staticTokenProvider struct{}

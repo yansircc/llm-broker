@@ -2,8 +2,6 @@ package pool
 
 import (
 	"context"
-	"encoding/json"
-	"net/http"
 	"time"
 
 	"github.com/yansircc/llm-broker/internal/domain"
@@ -150,68 +148,4 @@ func (p *Pool) AcquireRefreshLock(ctx context.Context, accountID, lockID string)
 
 func (p *Pool) ReleaseRefreshLock(ctx context.Context, accountID, lockID string) error {
 	return p.store.ReleaseRefreshLock(ctx, accountID, lockID)
-}
-
-func (p *Pool) BindStainlessFromRequest(ctx context.Context, accountID string, reqHeaders http.Header, outHeaders http.Header) error {
-	stored, ok, err := p.GetStainless(ctx, accountID)
-	if err != nil {
-		return err
-	}
-
-	if ok {
-		var headers map[string]string
-		if json.Unmarshal([]byte(stored), &headers) == nil {
-			for k, v := range headers {
-				outHeaders.Set(k, v)
-			}
-		}
-	} else {
-		captured := make(map[string]string)
-		for _, key := range boundStainlessKeys {
-			if v := reqHeaders.Get(key); v != "" {
-				captured[key] = v
-				outHeaders.Set(key, v)
-			}
-		}
-		if len(captured) > 0 {
-			data, _ := json.Marshal(captured)
-			won, err := p.SetStainlessNX(ctx, accountID, string(data), 24*time.Hour)
-			if err != nil {
-				return err
-			}
-			if !won {
-				if reread, ok, err := p.GetStainless(ctx, accountID); err != nil {
-					return err
-				} else if ok {
-					var headers map[string]string
-					if json.Unmarshal([]byte(reread), &headers) == nil {
-						for k, v := range headers {
-							outHeaders.Set(k, v)
-						}
-					}
-				}
-			}
-		}
-	}
-
-	for _, key := range passthroughStainlessKeys {
-		if v := reqHeaders.Get(key); v != "" {
-			outHeaders.Set(key, v)
-		}
-	}
-	return nil
-}
-
-var boundStainlessKeys = []string{
-	"x-stainless-os",
-	"x-stainless-arch",
-	"x-stainless-runtime",
-	"x-stainless-runtime-version",
-	"x-stainless-lang",
-	"x-stainless-package-version",
-}
-
-var passthroughStainlessKeys = []string{
-	"x-stainless-retry-count",
-	"x-stainless-read-timeout",
 }
