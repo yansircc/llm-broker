@@ -17,7 +17,8 @@
 	let providerError = $state('');
 	let generating = $state(false);
 	let exchanging = $state(false);
-	let selectedCellID = $state('');
+	const legacyDirectValue = '__legacy_direct__';
+	let selectedRoute = $state('');
 	let sessionId = $state('');
 	let authUrl = $state('');
 	let callbackInput = $state('');
@@ -44,8 +45,8 @@
 			provider = providers.find((option) => option.id === id) ?? null;
 			cells = cellList;
 			const available = availableCells(cellList);
-			if (!available.some((cell) => cell.id === selectedCellID)) {
-				selectedCellID = available[0]?.id ?? '';
+			if (selectedRoute !== legacyDirectValue && !available.some((cell) => cell.id === selectedRoute)) {
+				selectedRoute = available[0]?.id ?? legacyDirectValue;
 			}
 			if (!provider) {
 				providerError = `unknown provider: ${id}`;
@@ -58,7 +59,7 @@
 	}
 
 	async function generateAuthUrl() {
-		if (!provider || !selectedCellID) return;
+		if (!provider || !hasRouteSelection()) return;
 		generating = true;
 		genError = '';
 		try {
@@ -66,7 +67,7 @@
 				method: 'POST',
 				body: JSON.stringify({
 					provider: provider.id,
-					cell_id: selectedCellID
+					cell_id: effectiveCellID()
 				})
 			});
 			sessionId = data.session_id;
@@ -137,8 +138,17 @@
 		return source.filter(cellAvailable);
 	}
 
+	function hasRouteSelection(): boolean {
+		return selectedRoute !== '';
+	}
+
+	function effectiveCellID(): string {
+		return selectedRoute === legacyDirectValue ? '' : selectedRoute;
+	}
+
 	function selectedCell(): EgressCellView | undefined {
-		return cells.find((cell) => cell.id === selectedCellID);
+		const cellID = effectiveCellID();
+		return cellID ? cells.find((cell) => cell.id === cellID) : undefined;
 	}
 
 	function region(cell: EgressCellView | null | undefined): string {
@@ -151,6 +161,11 @@
 		const cellRegion = region(cell);
 		if (cellRegion !== '-') parts.push(cellRegion);
 		return parts.join(' / ');
+	}
+
+	function selectedRouteLabel(): string {
+		if (selectedRoute === legacyDirectValue) return 'legacy direct';
+		return selectedCell()?.name ?? effectiveCellID();
 	}
 </script>
 
@@ -174,10 +189,11 @@
 		provider: <b>{provider.label}</b>
 	</div>
 
-	<h2>egress cell {#if selectedCellID}<span class="g">&#10003;</span>{/if}</h2>
+	<h2>egress route {#if hasRouteSelection()}<span class="g">&#10003;</span>{/if}</h2>
 	<div class="bar">
-		<select bind:value={selectedCellID} disabled={generating || exchanging || !!sessionId || !!result}>
-			<option value="">select cell</option>
+		<select bind:value={selectedRoute} disabled={generating || exchanging || !!sessionId || !!result}>
+			<option value="">select route</option>
+			<option value={legacyDirectValue}>legacy direct</option>
 			{#each availableCells() as cell (cell.id)}
 				<option value={cell.id}>{optionLabel(cell)}</option>
 			{/each}
@@ -190,7 +206,11 @@
 				[start over]
 			</button>
 		{/if}
-		{#if selectedCell()}
+		{#if selectedRoute === legacyDirectValue}
+			<br><br>
+			route: <b>legacy direct</b><br>
+			<span class="muted">use broker direct egress without binding this account to a cell</span>
+		{:else if selectedCell()}
 			<br><br>
 			cell: <b>{selectedCell()?.name}</b><br>
 			region: <b>{region(selectedCell())}</b><br>
@@ -204,7 +224,7 @@
 	<h2>authorize {#if sessionId}<span class="g">&#10003;</span>{/if}</h2>
 	{#if !sessionId}
 		<p class="hint">generate an OAuth URL, open it in browser, login and authorize.</p>
-		<button class="link" onclick={generateAuthUrl} disabled={generating || !selectedCellID}>
+		<button class="link" onclick={generateAuthUrl} disabled={generating || !hasRouteSelection()}>
 			{generating ? '[generating...]' : '[generate auth url]'}
 		</button>
 		{#if genError}
@@ -239,7 +259,7 @@
 				<br><br>
 				email: <b>{result.email}</b><br>
 				status: <b class="g">{result.status}</b><br>
-				cell: <b>{selectedCell()?.name ?? selectedCellID}</b><br>
+				route: <b>{selectedRouteLabel()}</b><br>
 				<br>
 				<a href="{base}/accounts/{result.id}">view account &rarr;</a>
 			</div>

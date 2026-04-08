@@ -136,7 +136,7 @@ func (s *Server) hydrateExchangeCodeRequest(ctx context.Context, req *exchangeCo
 func (s *Server) validateExchangeCellSelection(existing *domain.Account, requestedCellID string, provider domain.Provider) error {
 	requestedCellID = strings.TrimSpace(requestedCellID)
 	if requestedCellID == "" {
-		return fmt.Errorf("cell_id is required")
+		return nil
 	}
 
 	currentAccountID := ""
@@ -161,20 +161,22 @@ func (s *Server) validateExchangeCellSelection(existing *domain.Account, request
 	return nil
 }
 
-func (s *Server) oauthClientForCell(cellID string) (*http.Client, error) {
+func (s *Server) oauthClientForRoute(cellID string) (*http.Client, error) {
+	if s.transportPool == nil {
+		return nil, fmt.Errorf("oauth transport is unavailable")
+	}
+
 	cellID = strings.TrimSpace(cellID)
 	if cellID == "" {
-		return nil, fmt.Errorf("cell_id is required")
+		return s.transportPool.ClientForAccount(&domain.Account{
+			ID: "oauth-direct:" + uuid.NewString(),
+		}), nil
 	}
 
 	cell := s.pool.GetCell(cellID)
 	if reason := accountCellBindError(cell, time.Now().UTC()); reason != "" {
 		return nil, fmt.Errorf("%s", reason)
 	}
-	if s.transportPool == nil {
-		return nil, fmt.Errorf("oauth transport is unavailable")
-	}
-
 	return s.transportPool.ClientForAccount(&domain.Account{
 		CellID: cellID,
 		Cell:   cell,

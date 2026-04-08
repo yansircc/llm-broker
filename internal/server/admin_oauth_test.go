@@ -176,6 +176,65 @@ func TestHandleGenerateAuthURLStoresSelectedCell(t *testing.T) {
 	}
 }
 
+func TestHandleGenerateAuthURLAllowsLegacyDirect(t *testing.T) {
+	ms := store.NewMockStore()
+	bus := events.NewBus(100)
+	p, err := pool.New(ms, bus)
+	if err != nil {
+		t.Fatalf("pool.New() error = %v", err)
+	}
+
+	stub := &exchangeStubDriver{
+		provider: domain.ProviderClaude,
+		authURL:  "https://example.com/oauth",
+		session: driver.OAuthSession{
+			CodeVerifier: "verifier-123",
+			State:        "state-123",
+		},
+	}
+
+	srv := &Server{
+		cfg:          &config.Config{},
+		store:        ms,
+		pool:         p,
+		bus:          bus,
+		oauthDrivers: map[domain.Provider]driver.OAuthDriver{domain.ProviderClaude: stub},
+	}
+
+	req := adminRequest("POST", "/admin/accounts/generate-auth-url")
+	req.Body = io.NopCloser(bytes.NewReader([]byte(`{"provider":"claude","cell_id":""}`)))
+	w := httptest.NewRecorder()
+
+	srv.handleGenerateAuthURL(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", w.Code, w.Body.String())
+	}
+
+	var resp struct {
+		SessionID string `json:"session_id"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("json.Unmarshal() error = %v", err)
+	}
+
+	sessionJSON, ok, err := p.GetDelOAuthSession(context.Background(), resp.SessionID)
+	if err != nil {
+		t.Fatalf("GetDelOAuthSession() error = %v", err)
+	}
+	if !ok {
+		t.Fatal("expected oauth session to be stored")
+	}
+
+	var envelope oauthSessionEnvelope
+	if err := json.Unmarshal([]byte(sessionJSON), &envelope); err != nil {
+		t.Fatalf("json.Unmarshal(session) error = %v", err)
+	}
+	if envelope.CellID != "" {
+		t.Fatalf("cell_id = %q, want empty legacy direct binding", envelope.CellID)
+	}
+}
+
 func TestHandleExchangeCodeCreatesAccountBoundToCell(t *testing.T) {
 	ms := store.NewMockStore()
 	bus := events.NewBus(100)
@@ -261,7 +320,7 @@ func TestHandleExchangeCodeCreatesAccountBoundToCell(t *testing.T) {
 	}
 }
 
-func TestHandleExchangeCodeRejectsMissingCellIDForNewAccount(t *testing.T) {
+func TestHandleExchangeCodeAllowsLegacyDirectForNewAccount(t *testing.T) {
 	ms := store.NewMockStore()
 	bus := events.NewBus(100)
 	p, err := pool.New(ms, bus)
@@ -303,11 +362,23 @@ func TestHandleExchangeCodeRejectsMissingCellIDForNewAccount(t *testing.T) {
 
 	srv.handleExchangeCode(w, req)
 
-	if w.Code != http.StatusBadRequest {
+	if w.Code != http.StatusOK {
 		t.Fatalf("status = %d, body = %s", w.Code, w.Body.String())
 	}
-	if !bytes.Contains(w.Body.Bytes(), []byte("cell_id is required")) {
-		t.Fatalf("body = %s", w.Body.String())
+
+	var resp exchangeAccountResponse
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("json.Unmarshal() error = %v", err)
+	}
+	acct := p.Get(resp.ID)
+	if acct == nil {
+		t.Fatal("account not found after exchange")
+	}
+	if acct.CellID != "" {
+		t.Fatalf("CellID = %q, want empty legacy direct binding", acct.CellID)
+	}
+	if stub.lastExchangeClient == nil {
+		t.Fatal("expected exchange client to be passed to driver")
 	}
 }
 

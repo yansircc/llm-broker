@@ -31,10 +31,6 @@ func (s *Server) handleGenerateAuthURL(w http.ResponseWriter, r *http.Request) {
 		writeAdminError(w, http.StatusBadRequest, "invalid_request", "provider is required")
 		return
 	}
-	if req.CellID == "" {
-		writeAdminError(w, http.StatusBadRequest, "invalid_request", "cell_id is required")
-		return
-	}
 
 	drv, ok := s.oauthDriverByID(req.Provider)
 	if !ok {
@@ -94,10 +90,6 @@ func (s *Server) handleExchangeCode(w http.ResponseWriter, r *http.Request) {
 		writeAdminError(w, http.StatusBadRequest, "invalid_request", "provider is required")
 		return
 	}
-	if req.CellID == "" {
-		writeAdminError(w, http.StatusBadRequest, "invalid_request", "cell_id is required")
-		return
-	}
 
 	drv, ok := s.oauthDriverByID(req.Provider)
 	if !ok {
@@ -109,7 +101,7 @@ func (s *Server) handleExchangeCode(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	client, err := s.oauthClientForCell(req.CellID)
+	client, err := s.oauthClientForRoute(req.CellID)
 	if err != nil {
 		writeAdminError(w, http.StatusBadRequest, "invalid_request", err.Error())
 		return
