@@ -1,13 +1,13 @@
 package transport
 
 import (
-	"net/http"
 	"testing"
 
 	"github.com/yansircc/llm-broker/internal/domain"
+	"golang.org/x/net/http2"
 )
 
-func TestBuildRoundTripperProxyEnablesHTTP2(t *testing.T) {
+func TestBuildRoundTripperProxyUsesHTTP2WithUTLS(t *testing.T) {
 	acct := &domain.Account{
 		Proxy: &domain.ProxyConfig{
 			Type: "socks5",
@@ -17,18 +17,12 @@ func TestBuildRoundTripperProxyEnablesHTTP2(t *testing.T) {
 	}
 
 	rt := buildRoundTripper(acct)
-	tr, ok := rt.(*http.Transport)
+	tr, ok := rt.(*http2.Transport)
 	if !ok {
-		t.Fatalf("round tripper type = %T, want *http.Transport", rt)
+		t.Fatalf("round tripper type = %T, want *http2.Transport", rt)
 	}
-	if !tr.ForceAttemptHTTP2 {
-		t.Fatal("proxy transport should enable ForceAttemptHTTP2")
-	}
-	if tr.DialContext == nil {
-		t.Fatal("proxy transport should use raw proxy DialContext")
-	}
-	if tr.DialTLSContext != nil {
-		t.Fatal("proxy transport should leave TLS negotiation to net/http")
+	if tr.DialTLSContext == nil {
+		t.Fatal("proxy transport should have DialTLSContext for uTLS")
 	}
 }
 

@@ -6,10 +6,11 @@ import (
 
 // ClaudeConfig holds the configuration needed by the Claude driver.
 type ClaudeConfig struct {
-	APIURL     string
-	APIVersion string
-	BetaHeader string
-	Pauses     ErrorPauses
+	APIURL        string
+	APIVersion    string
+	BetaHeader    string
+	Pauses        ErrorPauses
+	PromptEnvHome string // if set, enables prompt environment masking
 }
 
 // ClaudeDriver implements Driver for Claude.
@@ -19,11 +20,16 @@ type ClaudeDriver struct {
 }
 
 func NewClaudeDriver(cfg ClaudeConfig, stainless StainlessStore, maxCacheControls int) *ClaudeDriver {
+	var masker *promptEnvMasker
+	if cfg.PromptEnvHome != "" {
+		masker = newPromptEnvMasker(cfg.PromptEnvHome)
+	}
 	return &ClaudeDriver{
 		cfg: cfg,
 		transformer: claudeTransformer{
 			stainless:        stainless,
 			maxCacheControls: maxCacheControls,
+			envMasker:        masker,
 		},
 	}
 }

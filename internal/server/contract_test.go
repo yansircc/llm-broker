@@ -315,7 +315,7 @@ func TestListAccounts_IncludesSurfaceAvailability(t *testing.T) {
 	}
 	srv.pool, _ = pool.New(srv.store, srv.bus)
 	srv.pool.SetDrivers(map[domain.Provider]driver.SchedulerDriver{
-		domain.ProviderClaude: driver.NewClaudeDriver(driver.ClaudeConfig{}, nil),
+		domain.ProviderClaude: driver.NewClaudeDriver(driver.ClaudeConfig{}, driver.NoopStainlessStore{}, 4),
 	})
 
 	w := httptest.NewRecorder()

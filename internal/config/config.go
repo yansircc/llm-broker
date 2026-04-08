@@ -59,6 +59,9 @@ type Config struct {
 	LogRetentionDays int
 	TraceCompat    bool
 
+	// Prompt environment masking (opt-in)
+	PromptEnvHome string // canonical home path; enables prompt env masking when set
+
 	// Runtime
 	BackgroundJobsMode       string
 	BackgroundLeaderLockPath string
@@ -107,6 +110,8 @@ func Load() *Config {
 		LogBlobs:         envBool("LOG_BLOBS", false),
 		LogRetentionDays: envInt("LOG_RETENTION_DAYS", 3),
 		TraceCompat:      envBool("TRACE_COMPAT", false),
+
+		PromptEnvHome: os.Getenv("PROMPT_ENV_HOME"),
 
 		BackgroundJobsMode:       envOr("BACKGROUND_JOBS_MODE", "all"),
 		BackgroundLeaderLockPath: envOr("BACKGROUND_LEADER_LOCK_PATH", "/var/run/llm-broker/background.lock"),

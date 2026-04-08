@@ -8,15 +8,18 @@ import (
 	"net/http"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/yansircc/llm-broker/internal/domain"
-	"github.com/yansircc/llm-broker/internal/identity"
 )
 
 type noopClaudeStainlessBinder struct{}
 
-func (noopClaudeStainlessBinder) BindStainlessFromRequest(context.Context, string, http.Header, http.Header) error {
-	return nil
+func (noopClaudeStainlessBinder) GetStainless(context.Context, string) (string, bool, error) {
+	return "", false, nil
+}
+func (noopClaudeStainlessBinder) SetStainlessNX(context.Context, string, string, time.Duration) (bool, error) {
+	return true, nil
 }
 
 func TestClaudeBuildRequestNormalizesSystemEnvelopeForSonnet(t *testing.T) {
@@ -226,7 +229,7 @@ func buildClaudeUpstreamBodyE(t *testing.T, rawBody []byte, isCountTokens bool) 
 		APIURL:     "https://claude.example/v1/messages",
 		APIVersion: "2023-06-01",
 		BetaHeader: "claude-code-20250219",
-	}, identity.NewTransformer(noopClaudeStainlessBinder{}, 8))
+	}, noopClaudeStainlessBinder{}, 8)
 	input := &RelayInput{
 		RawBody:       rawBody,
 		Headers:       make(http.Header),

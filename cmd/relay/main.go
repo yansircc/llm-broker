@@ -97,10 +97,11 @@ func main() {
 	}
 	drivers := map[domain.Provider]driver.Driver{
 		domain.ProviderClaude: driver.NewClaudeDriver(driver.ClaudeConfig{
-			APIURL:     cfg.ClaudeAPIURL,
-			APIVersion: cfg.ClaudeAPIVersion,
-			BetaHeader: cfg.ClaudeBetaHeader,
-			Pauses:     pauses,
+			APIURL:        cfg.ClaudeAPIURL,
+			APIVersion:    cfg.ClaudeAPIVersion,
+			BetaHeader:    cfg.ClaudeBetaHeader,
+			Pauses:        pauses,
+			PromptEnvHome: cfg.PromptEnvHome,
 		}, p, cfg.MaxCacheControls),
 		domain.ProviderCodex: driver.NewCodexDriver(driver.CodexConfig{
 			APIURL: cfg.CodexAPIURL,

@@ -91,7 +91,7 @@ func TestClaudeInterpret_400DisabledOrganizationBlocks(t *testing.T) {
 func TestClaudeInterpret_403NonBanReturnsReject(t *testing.T) {
 	d := NewClaudeDriver(ClaudeConfig{
 		Pauses: ErrorPauses{Pause403: 10 * time.Minute},
-	}, nil)
+	}, NoopStainlessStore{}, 4)
 
 	effect := d.Interpret(http.StatusForbidden, make(http.Header), []byte(`{"error":{"message":"request rejected"}}`), "claude-sonnet-4-6", json.RawMessage(`{}`))
 
@@ -109,7 +109,7 @@ func TestClaudeInterpret_403NonBanReturnsReject(t *testing.T) {
 func TestClaudeInterpret_400NonBanReturnsReject(t *testing.T) {
 	d := NewClaudeDriver(ClaudeConfig{
 		Pauses: ErrorPauses{Pause403: 10 * time.Minute},
-	}, nil)
+	}, NoopStainlessStore{}, 4)
 
 	effect := d.Interpret(http.StatusBadRequest, make(http.Header), []byte(`{"error":{"message":"request rejected"}}`), "claude-sonnet-4-6", json.RawMessage(`{}`))
 
@@ -125,7 +125,7 @@ func TestClaudeInterpret_400NonBanReturnsReject(t *testing.T) {
 }
 
 func TestClaudeInterpret_404ReturnsReject(t *testing.T) {
-	d := NewClaudeDriver(ClaudeConfig{}, nil)
+	d := NewClaudeDriver(ClaudeConfig{}, NoopStainlessStore{}, 4)
 
 	effect := d.Interpret(http.StatusNotFound, make(http.Header), []byte(`{"error":{"type":"not_found_error","message":"model: claude-haiku-4-6"}}`), "claude-haiku-4-6", json.RawMessage(`{}`))
 
@@ -141,7 +141,7 @@ func TestClaudeInterpret_404ReturnsReject(t *testing.T) {
 }
 
 func TestClaudeInterpret_502ReturnsServerError(t *testing.T) {
-	d := NewClaudeDriver(ClaudeConfig{}, nil)
+	d := NewClaudeDriver(ClaudeConfig{}, NoopStainlessStore{}, 4)
 
 	effect := d.Interpret(http.StatusBadGateway, make(http.Header), []byte(`{"error":{"type":"api_error","message":"upstream bad gateway"}}`), "claude-sonnet-4-6", json.RawMessage(`{}`))
 

@@ -134,6 +134,7 @@ func mergeBetaHeaders(clientBeta, relayBeta string) string {
 type claudeTransformer struct {
 	stainless        StainlessStore
 	maxCacheControls int
+	envMasker        *promptEnvMasker // nil when masking disabled
 }
 
 type transformResult struct {
@@ -155,6 +156,12 @@ func (t *claudeTransformer) transform(
 	}
 
 	stripBillingHeaders(body)
+
+	// Mask Claude-injected environment fingerprints (opt-in via PromptEnvHome)
+	if t.envMasker != nil {
+		t.envMasker.maskSystem(body)
+		t.envMasker.maskMessageReminders(body)
+	}
 
 	enforceCacheControl(body, t.maxCacheControls)
 
@@ -180,6 +187,13 @@ func (t *claudeTransformer) transform(
 	removeAllStainless(result.Headers)
 	if err := t.bindStainless(ctx, acct.ID, reqHeaders, result.Headers); err != nil {
 		return nil, err
+	}
+
+	// When prompt env masking is active, override stainless OS/arch headers
+	// to match the canonical prompt environment.  Without this, a Linux
+	// client would carry x-stainless-os=Linux alongside Platform: darwin.
+	if t.envMasker != nil {
+		t.envMasker.overrideStainless(result.Headers)
 	}
 
 	return result, nil
@@ -372,6 +386,176 @@ func computeSessionHash(userID, systemPrompt, firstMessage string) string {
 	return ""
 }
 
+// ---------------------------------------------------------------------------
+// Prompt environment masking
+// ---------------------------------------------------------------------------
+
+// promptEnvMasker rewrites Claude-injected environment fingerprints in system
+// prompts and <system-reminder> tags.  Activated only when PROMPT_ENV_HOME is
+// set.
+type promptEnvMasker struct {
+	home    string // canonical home, e.g. "/Users/user"
+	workDir string // canonical workdir, e.g. "/Users/user/project"
+
+	// Canonical values for prompt and stainless consistency
+	platform string // "darwin"
+	shell    string // "/bin/zsh"
+	osVer    string // "Darwin 25.4.0"
+	stOS     string // x-stainless-os value: "Darwin"
+	stArch   string // x-stainless-arch value: "arm64"
+
+	// Scoped patterns — match only Claude Code's " - Field: value" injection
+	// format.  Safe for system fields that may contain user-authored content.
+	reScopedPlatform *regexp.Regexp
+	reScopedShell    *regexp.Regexp
+	reScopedOS       *regexp.Regexp
+	reScopedWorkDir  *regexp.Regexp
+	reScopedGitUser  *regexp.Regexp
+	reScopedHome     *regexp.Regexp
+
+	// Broad patterns — used only inside <system-reminder> tags where all
+	// content is Claude-injected.
+	reBroadPlatform *regexp.Regexp
+	reBroadShell    *regexp.Regexp
+	reBroadOS       *regexp.Regexp
+	reBroadWorkDir  *regexp.Regexp
+	reBroadGitUser  *regexp.Regexp
+	reBroadHome     *regexp.Regexp
+
+	reReminder *regexp.Regexp
+}
+
+func newPromptEnvMasker(home string) *promptEnvMasker {
+	return &promptEnvMasker{
+		home:     home,
+		workDir:  home + "/project",
+		platform: "darwin",
+		shell:    "/bin/zsh",
+		osVer:    "Darwin 25.4.0",
+		stOS:     "Darwin",
+		stArch:   "arm64",
+
+		// Scoped: require " - " prefix (Claude Code env block format)
+		reScopedPlatform: regexp.MustCompile(`( - Platform:\s*)\S+`),
+		reScopedShell:    regexp.MustCompile(`( - Shell:\s*)\S+`),
+		reScopedOS:       regexp.MustCompile(`( - OS Version:\s*)[^\n]+`),
+		reScopedWorkDir:  regexp.MustCompile(`( - (?:Primary )?[Ww]orking directory:\s*)/\S+`),
+		reScopedGitUser:  regexp.MustCompile(`( - Git user:\s*)[^\n]+`),
+		reScopedHome:     regexp.MustCompile(`( - (?:Primary )?[Ww]orking directory:\s*)/(?:Users|home)/[^/\s"')]+/`),
+
+		// Broad: match anywhere (only applied inside <system-reminder>)
+		reBroadPlatform: regexp.MustCompile(`(Platform:\s*)\S+`),
+		reBroadShell:    regexp.MustCompile(`(Shell:\s*)\S+`),
+		reBroadOS:       regexp.MustCompile(`(OS Version:\s*)[^\n<]+`),
+		reBroadWorkDir:  regexp.MustCompile(`((?:Primary )?[Ww]orking directory:\s*)/\S+`),
+		reBroadGitUser:  regexp.MustCompile(`(Git user:\s*)[^\n<]+`),
+		reBroadHome:     regexp.MustCompile(`/(?:Users|home)/[^/\s"')]+/`),
+
+		reReminder: regexp.MustCompile(`(<system-reminder>)([\s\S]*?)(</system-reminder>)`),
+	}
+}
+
+// rewriteEnvBlock rewrites only Claude Code's " - Field: value" environment
+// injection lines.  Safe for system fields that may mix injected and
+// user-authored content.
+func (m *promptEnvMasker) rewriteEnvBlock(text string) string {
+	text = m.reScopedPlatform.ReplaceAllString(text, "${1}"+m.platform)
+	text = m.reScopedShell.ReplaceAllString(text, "${1}"+m.shell)
+	text = m.reScopedOS.ReplaceAllString(text, "${1}"+m.osVer)
+	// Replace home path in working directory lines first (more specific)
+	text = m.reScopedHome.ReplaceAllString(text, "${1}"+m.home+"/")
+	text = m.reScopedWorkDir.ReplaceAllString(text, "${1}"+m.workDir)
+	text = m.reScopedGitUser.ReplaceAllString(text, "${1}User")
+	return text
+}
+
+// rewriteReminderText rewrites environment info broadly.  Only used inside
+// <system-reminder> tags where all content is Claude-injected.
+func (m *promptEnvMasker) rewriteReminderText(text string) string {
+	text = m.reBroadPlatform.ReplaceAllString(text, "${1}"+m.platform)
+	text = m.reBroadShell.ReplaceAllString(text, "${1}"+m.shell)
+	text = m.reBroadOS.ReplaceAllString(text, "${1}"+m.osVer)
+	text = m.reBroadWorkDir.ReplaceAllString(text, "${1}"+m.workDir)
+	text = m.reBroadHome.ReplaceAllString(text, m.home+"/")
+	text = m.reBroadGitUser.ReplaceAllString(text, "${1}User")
+	return text
+}
+
+// overrideStainless forces OS/arch stainless headers to match the canonical
+// prompt environment, preventing a Linux stainless fingerprint paired with a
+// Darwin prompt fingerprint.
+func (m *promptEnvMasker) overrideStainless(h http.Header) {
+	if m.stOS != "" {
+		h.Set("x-stainless-os", m.stOS)
+	}
+	if m.stArch != "" {
+		h.Set("x-stainless-arch", m.stArch)
+	}
+}
+
+// maskSystem rewrites only Claude Code's " - Field: value" environment lines
+// in the system field.  User-authored text (e.g. compat system messages) that
+// happens to contain "Platform:" without the " - " prefix is not touched.
+func (m *promptEnvMasker) maskSystem(body map[string]interface{}) {
+	system, ok := body["system"]
+	if !ok {
+		return
+	}
+	switch s := system.(type) {
+	case string:
+		body["system"] = m.rewriteEnvBlock(s)
+	case []interface{}:
+		for i, entry := range s {
+			switch e := entry.(type) {
+			case string:
+				s[i] = m.rewriteEnvBlock(e)
+			case map[string]interface{}:
+				if text, ok := e["text"].(string); ok {
+					e["text"] = m.rewriteEnvBlock(text)
+				}
+			}
+		}
+	}
+}
+
+// maskMessageReminders rewrites environment info only inside <system-reminder>
+// tags in messages, leaving user text untouched.
+func (m *promptEnvMasker) maskMessageReminders(body map[string]interface{}) {
+	messages, ok := body["messages"].([]interface{})
+	if !ok {
+		return
+	}
+	for _, msg := range messages {
+		msgMap, ok := msg.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		switch content := msgMap["content"].(type) {
+		case string:
+			msgMap["content"] = m.reReminder.ReplaceAllStringFunc(content, func(match string) string {
+				parts := m.reReminder.FindStringSubmatch(match)
+				if len(parts) < 4 {
+					return match
+				}
+				return parts[1] + m.rewriteReminderText(parts[2]) + parts[3]
+			})
+		case []interface{}:
+			for _, block := range content {
+				if b, ok := block.(map[string]interface{}); ok {
+					if text, ok := b["text"].(string); ok {
+						b["text"] = m.reReminder.ReplaceAllStringFunc(text, func(match string) string {
+							parts := m.reReminder.FindStringSubmatch(match)
+							if len(parts) < 4 {
+								return match
+							}
+							return parts[1] + m.rewriteReminderText(parts[2]) + parts[3]
+						})
+					}
+				}
+			}
+		}
+	}
+}
 
 // ---------------------------------------------------------------------------
 // Warmup detection & response

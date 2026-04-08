@@ -1,6 +1,67 @@
-# broker
+# CLAUDE.md
 
-This file is for LLM agents working in this repo.
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+
+## Build & Dev Commands
+
+```bash
+make build          # Build frontend + Go binary (output: ./llm-broker)
+make test           # Run all Go tests: go test ./...
+make lint           # Run go vet ./...
+make ui             # Build Svelte frontend only (cd web && npm install && npm run build)
+make dev-ui         # Run Svelte dev server (cd web && npm run dev)
+make dev-go         # Run Go backend only (go run ./cmd/relay)
+make deps           # Tidy Go modules
+make clean          # Remove binary and frontend dist
+```
+
+Run a single test:
+```bash
+go test ./internal/pool/ -run TestPickExclusion -v
+```
+
+Database migration (explicit, never auto-migrates on startup):
+```bash
+./llm-broker migrate
+```
+
+## Tech Stack
+
+- **Go 1.24** — backend, single binary with embedded frontend
+- **Svelte 5 + SvelteKit 2 + Vite 6** — frontend in `web/`, built to `internal/ui/dist/` and embedded
+- **SQLite** (pure Go `modernc.org/sqlite`) — no CGO dependency
+- **AES-256-GCM** — token encryption via `ENCRYPTION_KEY` env var
+- **uTLS** — TLS fingerprint obfuscation for upstream requests
+
+## Architecture Map
+
+Single entry point: `cmd/relay/main.go`. All code lives in `internal/`.
+
+```
+server      HTTP handlers, routing, admin API, auth middleware
+  ↓
+relay       Execution pipeline: plan → pick → token → build → upstream → interpret → observe
+  ↓
+pool        In-memory account state machine. Loads from DB at startup.
+            Pick() selects accounts. Observe() is the sole write entrance for state transitions.
+  ↓
+driver      Provider abstraction boundary. Each provider (Claude, Codex, Gemini) implements Driver.
+            Owns: OAuth, token refresh, request building, response interpretation, model catalog.
+  ↓
+tokens      Token freshness manager. Refresh locks, expiry checks, encrypted storage.
+  ↓
+store       SQLite persistence. Schema in store/schema.sql (embedded).
+  ↓
+events      Ring-buffer event bus. Observability only — never source of truth.
+transport   HTTP client pool with per-account proxy routing.
+domain      Core types: Account, Provider, Status. No business logic.
+config      All config from environment variables. No config files.
+crypto      AES-256-GCM encrypt/decrypt for stored tokens.
+```
+
+The `Driver` interface is composed of role-specific sub-interfaces:
+`Descriptor`, `RelayDriver`, `OAuthDriver`, `RefreshDriver`, `SchedulerDriver`, `AdminDriver`.
+`ExecutionDriver = RelayDriver + SchedulerDriver`. Full `Driver = all combined`.
 
 ## Essence
 
@@ -194,6 +255,37 @@ Prefer changes that:
 - The project relies on VPS snapshots and `restore.sh` for rollback safety.
 - A failed deploy should be recoverable with `bash .claude/skills/deploy/scripts/restore.sh latest`.
 - That safety net exists so the code can stay clean; it is not permission to leave permanent compatibility clutter in the runtime path.
+
+## Client Anti-Bypass Setup
+
+Clients must only reach upstream through the broker. Server-side rewriting alone is insufficient if clients can bypass the gateway.
+
+**Required client environment:**
+
+```bash
+export ANTHROPIC_BASE_URL="https://<broker-host>"
+export ANTHROPIC_API_KEY="<broker-token>"
+export CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1
+export CLAUDE_CODE_ATTRIBUTION_HEADER=false
+```
+
+**Optional network-level blocking (Clash / ACL rules):**
+
+```yaml
+# Block direct connections to Anthropic from client machines
+- DOMAIN-SUFFIX,anthropic.com,REJECT
+- DOMAIN-SUFFIX,claude.com,REJECT
+- DOMAIN-SUFFIX,claude.ai,REJECT
+```
+
+**Server-side opt-in:**
+
+```bash
+# Enable prompt environment masking (normalize platform/shell/OS/paths)
+export PROMPT_ENV_HOME=/Users/user
+```
+
+**Verification:** `GET /v1/models` with a valid broker token returns the model list (proves auth + relay wiring). Direct `curl https://api.anthropic.com` from client machines is blocked by network rules.
 
 ## Short Checklist Before You Edit
 

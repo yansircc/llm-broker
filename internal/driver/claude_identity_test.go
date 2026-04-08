@@ -148,3 +148,149 @@ func TestSetClaudeRequiredHeaders_UAFallback(t *testing.T) {
 		t.Fatalf("User-Agent = %q, want fallback version", ua)
 	}
 }
+
+// ---------------------------------------------------------------------------
+// Prompt env masking tests (Phase 4)
+// ---------------------------------------------------------------------------
+
+func TestPromptEnvMasker_SystemString(t *testing.T) {
+	m := newPromptEnvMasker("/Users/user")
+	body := map[string]interface{}{
+		"system": "# Environment\n - Platform: linux\n - Shell: bash\n - OS Version: Linux 6.5.0-44\n - Primary working directory: /home/alice/myproject\n - Git user: Alice Smith\n",
+	}
+	m.maskSystem(body)
+	s := body["system"].(string)
+
+	checks := []struct{ pattern, want string }{
+		{"Platform: ", " - Platform: darwin"},
+		{"Shell: ", " - Shell: /bin/zsh"},
+		{"OS Version: ", " - OS Version: Darwin 25.4.0"},
+		{"Primary working directory: ", " - Primary working directory: /Users/user/project"},
+		{"Git user: ", " - Git user: User"},
+	}
+	for _, c := range checks {
+		if !strings.Contains(s, c.want) {
+			t.Errorf("system should contain %q, got:\n%s", c.want, s)
+		}
+	}
+}
+
+func TestPromptEnvMasker_SystemDoesNotRewriteUserContent(t *testing.T) {
+	m := newPromptEnvMasker("/Users/user")
+	// Compat user system prompt without " - " prefix must NOT be rewritten
+	body := map[string]interface{}{
+		"system": "You are an assistant.\nPlatform: describe the platform.\nShell: explain shell commands.\nOS Version: return the OS.\nGit user: show the user.",
+	}
+	m.maskSystem(body)
+	s := body["system"].(string)
+
+	if strings.Contains(s, "darwin") || strings.Contains(s, "/bin/zsh") || strings.Contains(s, "Darwin 25.4.0") {
+		t.Errorf("user-authored system text should not be rewritten, got:\n%s", s)
+	}
+}
+
+func TestPromptEnvMasker_SystemArray(t *testing.T) {
+	m := newPromptEnvMasker("/Users/user")
+	body := map[string]interface{}{
+		"system": []interface{}{
+			map[string]interface{}{
+				"type": "text",
+				"text": " - Platform: linux\n - Shell: bash",
+			},
+		},
+	}
+	m.maskSystem(body)
+	blocks := body["system"].([]interface{})
+	text := blocks[0].(map[string]interface{})["text"].(string)
+	if !strings.Contains(text, " - Platform: darwin") {
+		t.Errorf("array block should be masked, got: %s", text)
+	}
+}
+
+func TestPromptEnvMasker_HomePathInWorkDir(t *testing.T) {
+	m := newPromptEnvMasker("/Users/canonical")
+	// Home paths in " - working directory:" lines are rewritten
+	body := map[string]interface{}{
+		"system": " - Primary working directory: /home/alice/myproject\n",
+	}
+	m.maskSystem(body)
+	s := body["system"].(string)
+	if strings.Contains(s, "/home/alice/") {
+		t.Errorf("home path in workdir line should be masked, got: %s", s)
+	}
+	if !strings.Contains(s, "/Users/canonical/") {
+		t.Errorf("should use canonical home, got: %s", s)
+	}
+}
+
+func TestPromptEnvMasker_BareHomePathNotRewritten(t *testing.T) {
+	m := newPromptEnvMasker("/Users/canonical")
+	// Bare home paths outside " - working directory:" lines are NOT rewritten
+	// in system field (could be user content)
+	body := map[string]interface{}{
+		"system": "path is /Users/alice/code and /home/bob/work",
+	}
+	m.maskSystem(body)
+	s := body["system"].(string)
+	if strings.Contains(s, "/Users/canonical/") {
+		t.Error("bare home paths in system should not be rewritten")
+	}
+}
+
+func TestPromptEnvMasker_MessageReminders(t *testing.T) {
+	m := newPromptEnvMasker("/Users/user")
+	body := map[string]interface{}{
+		"messages": []interface{}{
+			map[string]interface{}{
+				"role":    "user",
+				"content": "Look at /Users/alice/file.go <system-reminder>Platform: linux\nShell: bash</system-reminder> rest",
+			},
+		},
+	}
+	m.maskMessageReminders(body)
+	msgs := body["messages"].([]interface{})
+	text := msgs[0].(map[string]interface{})["content"].(string)
+
+	// User text outside <system-reminder> must be preserved
+	if !strings.Contains(text, "/Users/alice/file.go") {
+		t.Error("user text outside system-reminder should be preserved")
+	}
+	// Inside system-reminder should be masked
+	if strings.Contains(text, "Platform: linux") {
+		t.Error("env inside system-reminder should be masked")
+	}
+	if !strings.Contains(text, "Platform: darwin") {
+		t.Errorf("should contain masked platform, got: %s", text)
+	}
+}
+
+func TestPromptEnvMasker_Disabled(t *testing.T) {
+	// When PromptEnvHome is empty, masker is nil → no masking
+	d := NewClaudeDriver(ClaudeConfig{}, NoopStainlessStore{}, 4)
+	if d.transformer.envMasker != nil {
+		t.Error("masker should be nil when PromptEnvHome is empty")
+	}
+}
+
+func TestPromptEnvMasker_Enabled(t *testing.T) {
+	d := NewClaudeDriver(ClaudeConfig{PromptEnvHome: "/Users/x"}, NoopStainlessStore{}, 4)
+	if d.transformer.envMasker == nil {
+		t.Error("masker should be non-nil when PromptEnvHome is set")
+	}
+}
+
+func TestPromptEnvMasker_OverrideStainless(t *testing.T) {
+	m := newPromptEnvMasker("/Users/user")
+	h := make(http.Header)
+	h.Set("x-stainless-os", "Linux")
+	h.Set("x-stainless-arch", "x64")
+
+	m.overrideStainless(h)
+
+	if got := h.Get("x-stainless-os"); got != "Darwin" {
+		t.Errorf("x-stainless-os = %q, want Darwin", got)
+	}
+	if got := h.Get("x-stainless-arch"); got != "arm64" {
+		t.Errorf("x-stainless-arch = %q, want arm64", got)
+	}
+}
