@@ -561,11 +561,12 @@ func TestBindAccountCell_RejectsOccupiedCell(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
+	// Use a non-socks5 cell — socks5 cells are shareable and won't reject.
 	if err := srv.store.SaveEgressCell(context.Background(), &domain.EgressCell{
 		ID:        "cell-fr-linode-02",
 		Name:      "FR Linode 02",
 		Status:    domain.EgressCellActive,
-		Proxy:     &domain.ProxyConfig{Type: "socks5", Host: "127.0.0.1", Port: 1082},
+		Proxy:     &domain.ProxyConfig{Type: "http", Host: "127.0.0.1", Port: 1082},
 		CreatedAt: time.Now().UTC(),
 		UpdatedAt: time.Now().UTC(),
 	}); err != nil {
