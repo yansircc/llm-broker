@@ -342,11 +342,11 @@ func TestListAccounts_IncludesSurfaceAvailability(t *testing.T) {
 	if got := byID["acct-native"]["available_native"]; got != true {
 		t.Fatalf("acct-native available_native = %#v, want true", got)
 	}
-	if got := byID["acct-native"]["available_compat"]; got != false {
-		t.Fatalf("acct-native available_compat = %#v, want false", got)
+	if got := byID["acct-native"]["available_compat"]; got != true {
+		t.Fatalf("acct-native available_compat = %#v, want true", got)
 	}
-	if got := byID["acct-compat"]["available_native"]; got != false {
-		t.Fatalf("acct-compat available_native = %#v, want false", got)
+	if got := byID["acct-compat"]["available_native"]; got != true {
+		t.Fatalf("acct-compat available_native = %#v, want true", got)
 	}
 	if got := byID["acct-compat"]["available_compat"]; got != true {
 		t.Fatalf("acct-compat available_compat = %#v, want true", got)

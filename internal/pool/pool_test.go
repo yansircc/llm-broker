@@ -96,6 +96,7 @@ func (m *mockDriver) CalcCost(_ string, _ *driver.Usage) float64           { ret
 func (m *mockDriver) GetUtilization(_ json.RawMessage) []driver.UtilWindow { return nil }
 
 var testDriver = &mockDriver{provider: domain.ProviderClaude}
+var testGeminiDriver = &mockDriver{provider: domain.ProviderGemini}
 
 func newTestPool(t *testing.T, accounts ...*domain.Account) *Pool {
 	t.Helper()
@@ -222,7 +223,7 @@ func TestPick_SkipsUnavailableCell(t *testing.T) {
 	}
 }
 
-func TestPickForSurface_SeparatesNativeAndCompatLanes(t *testing.T) {
+func TestPickForSurface_ClaudeIgnoresCellLanes(t *testing.T) {
 	native := activeAccount("native", "native@x")
 	native.Priority = 80
 	native.CellID = "cell-native"
@@ -261,8 +262,8 @@ func TestPickForSurface_SeparatesNativeAndCompatLanes(t *testing.T) {
 	if err != nil {
 		t.Fatalf("PickForSurface(native): %v", err)
 	}
-	if gotNative.ID != "native" {
-		t.Fatalf("PickForSurface(native) = %s, want native", gotNative.ID)
+	if gotNative.ID != "compat" {
+		t.Fatalf("PickForSurface(native) = %s, want compat", gotNative.ID)
 	}
 
 	gotCompat, err := p.PickForSurface(testDriver, nil, "claude-haiku", "", domain.SurfaceCompat)
@@ -274,7 +275,7 @@ func TestPickForSurface_SeparatesNativeAndCompatLanes(t *testing.T) {
 	}
 }
 
-func TestSurfaceAvailabilityMap_RespectsSurfaceLanes(t *testing.T) {
+func TestSurfaceAvailabilityMap_ClaudeIgnoresCellLanes(t *testing.T) {
 	native := activeAccount("native-avail", "native@x")
 	compat := activeAccount("compat-avail", "compat@x")
 	compat.CellID = "cell-compat"
@@ -300,14 +301,87 @@ func TestSurfaceAvailabilityMap_RespectsSurfaceLanes(t *testing.T) {
 	if !availability[native.ID].Native {
 		t.Fatal("native legacy-direct account should be native-available")
 	}
-	if availability[native.ID].Compat {
-		t.Fatal("native legacy-direct account should not be compat-available")
+	if !availability[native.ID].Compat {
+		t.Fatal("native legacy-direct account should be compat-available")
 	}
-	if availability[compat.ID].Native {
-		t.Fatal("compat lane account should not be native-available")
+	if !availability[compat.ID].Native {
+		t.Fatal("compat lane account should be native-available")
 	}
 	if !availability[compat.ID].Compat {
 		t.Fatal("compat lane account should be compat-available")
+	}
+}
+
+func TestSurfaceAvailabilityMap_NonClaudeStillRespectsSurfaceLanes(t *testing.T) {
+	native := &domain.Account{
+		ID:       "gem-native",
+		Email:    "native@gem",
+		Provider: domain.ProviderGemini,
+		Subject:  "gem-native",
+		Status:   domain.StatusActive,
+		Priority: 50,
+	}
+	compat := &domain.Account{
+		ID:       "gem-compat",
+		Email:    "compat@gem",
+		Provider: domain.ProviderGemini,
+		Subject:  "gem-compat",
+		Status:   domain.StatusActive,
+		Priority: 50,
+		CellID:   "cell-compat",
+	}
+
+	p := newTestPool(t, native, compat)
+	p.SetDrivers(map[domain.Provider]driver.SchedulerDriver{
+		domain.ProviderGemini: testGeminiDriver,
+	})
+	if err := p.SaveCell(&domain.EgressCell{
+		ID:        "cell-compat",
+		Name:      "compat",
+		Status:    domain.EgressCellActive,
+		Proxy:     &domain.ProxyConfig{Type: "socks5", Host: "10.0.0.3", Port: 11082},
+		Labels:    map[string]string{"lane": "compat"},
+		CreatedAt: time.Now().UTC(),
+		UpdatedAt: time.Now().UTC(),
+	}); err != nil {
+		t.Fatalf("SaveCell(cell-compat): %v", err)
+	}
+
+	availability := p.SurfaceAvailabilityMap()
+
+	if !availability[native.ID].Native {
+		t.Fatal("native legacy-direct gemini account should be native-available")
+	}
+	if availability[native.ID].Compat {
+		t.Fatal("native legacy-direct gemini account should not be compat-available")
+	}
+	if availability[compat.ID].Native {
+		t.Fatal("compat lane gemini account should not be native-available")
+	}
+	if !availability[compat.ID].Compat {
+		t.Fatal("compat lane gemini account should be compat-available")
+	}
+}
+
+func TestPickForSurface_IgnoresBoundAccountFromOtherProvider(t *testing.T) {
+	claude := activeAccount("claude-bound", "claude@x")
+	gemini := &domain.Account{
+		ID:       "gemini-live",
+		Email:    "gemini@x",
+		Provider: domain.ProviderGemini,
+		Subject:  "gemini-live",
+		Status:   domain.StatusActive,
+		Priority: 50,
+	}
+
+	p := newTestPool(t, claude, gemini)
+
+	got, err := p.PickForSurface(testGeminiDriver, nil, "gemini-2.5-flash", claude.ID, domain.SurfaceNative)
+	if err != nil {
+		t.Fatalf("PickForSurface(native, bound other provider): %v", err)
+	}
+	if got.ID != gemini.ID {
+		t.Fatalf("PickForSurface(native, bound other provider) = %s, want %s", got.ID, gemini.ID)
 	}
 }
 
