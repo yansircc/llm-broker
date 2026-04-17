@@ -97,6 +97,27 @@ func TestClaudeBuildRequestNormalizesSystemEnvelopeForSonnet(t *testing.T) {
 	})
 }
 
+func TestClaudeBuildRequestNormalizesSystemEnvelopeForOpus47(t *testing.T) {
+	body := buildClaudeRequestBody(t, "claude-opus-4-7", map[string]interface{}{
+		"max_tokens": 1,
+		"messages": []interface{}{
+			map[string]interface{}{"role": "user", "content": "hello"},
+		},
+	})
+	got := buildClaudeUpstreamBody(t, body, false)
+
+	if got["model"] != "claude-opus-4-7" {
+		t.Fatalf("model = %#v", got["model"])
+	}
+	system := mustSystemBlocks(t, got["system"])
+	if len(system) != 1 {
+		t.Fatalf("len(system) = %d, want 1", len(system))
+	}
+	if text, _ := system[0]["text"].(string); text != claudeCodeSystemBlockText {
+		t.Fatalf("system[0].text = %q", text)
+	}
+}
+
 func TestClaudeBuildRequestLeavesHaikuAndCountTokensUnchanged(t *testing.T) {
 	t.Run("haiku request stays untouched", func(t *testing.T) {
 		body := buildClaudeRequestBody(t, "claude-haiku-4-5", map[string]interface{}{

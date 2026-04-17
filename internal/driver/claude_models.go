@@ -14,6 +14,7 @@ type claudeModelEntry struct {
 }
 
 var claudeModelEntries = []claudeModelEntry{
+	{PublicID: "claude-opus-4-7", UpstreamID: "claude-opus-4-7", ContextWindow: 200000, Advertise: true},
 	{PublicID: "claude-opus-4-6", UpstreamID: "claude-opus-4-6", ContextWindow: 200000, Advertise: true},
 	{PublicID: "claude-opus-4-5", UpstreamID: "claude-opus-4-5", ContextWindow: 200000, Advertise: true},
 	{PublicID: "claude-opus-4-1", UpstreamID: "claude-opus-4-1", ContextWindow: 200000, Advertise: true},
