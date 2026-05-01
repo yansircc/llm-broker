@@ -1,11 +1,14 @@
 <script lang="ts">
 	import { api } from '$lib/api';
-	import type { DashboardData, DashboardEvent, RecentRequestLog } from '$lib/admin-types';
+	import type { ActivityData, DashboardEvent, RecentRequestLog, UsagePeriod } from '$lib/admin-types';
 	import ConfirmAction from '$lib/components/ConfirmAction.svelte';
 	import { eventTypeColor, fmtCost, fmtDate, fmtJSON, fmtNum, fmtTime, shortModel, statusColor } from '$lib/format';
 
-	let data = $state<DashboardData | null>(null);
+	let data = $state<ActivityData | null>(null);
+	let usage = $state<UsagePeriod[]>([]);
 	let error = $state('');
+	let usageError = $state('');
+	let usageLoading = $state(false);
 	let lastRefresh = $state('');
 
 	$effect(() => {
@@ -14,11 +17,27 @@
 
 	async function loadAll() {
 		error = '';
+		usageError = '';
 		try {
-			data = await api<DashboardData>('/dashboard');
+			data = await api<ActivityData>('/activity');
+			void loadUsage();
 			lastRefresh = new Date().toLocaleTimeString('en-GB', { hour12: false });
 		} catch (e: any) {
 			error = e.message;
+		}
+	}
+
+	async function loadUsage() {
+		usageLoading = true;
+		try {
+			// Remote SQLite analytics can still exceed the default 15s fetch timeout.
+			// Remove this override after indexed/preaggregated usage queries are consistently <15s.
+			usage = await api<UsagePeriod[]>('/activity/usage', { timeout: 30000 });
+		} catch (e: any) {
+			usage = [];
+			usageError = e.message;
+		} finally {
+			usageLoading = false;
 		}
 	}
 
@@ -107,7 +126,11 @@
 	<div class="sub">{data.health.version} &middot; up {data.health.uptime} &middot; sqlite <span class={data.health.sqlite === 'ok' ? 'g' : 'r'}>{data.health.sqlite}</span></div>
 
 	<h2>usage</h2>
-	{#if data.usage.length === 0}
+	{#if usageLoading}
+		<p class="muted">loading usage...</p>
+	{:else if usageError}
+		<p class="error-msg">{usageError}</p>
+	{:else if usage.length === 0}
 		<p class="muted">no usage data yet</p>
 	{:else}
 		<table>
@@ -122,14 +145,14 @@
 				</tr>
 			</thead>
 			<tbody>
-				{#each data.usage as usage, i (usage.label)}
+				{#each usage as period, i (period.label)}
 					<tr>
-						<td>{usage.label}</td>
-						<td class="num">{fmtNum(usage.requests)}</td>
-						<td class="num">{fmtNum(usage.input_tokens)}</td>
-						<td class="num">{fmtNum(usage.output_tokens)}</td>
-						<td class="num">{fmtNum(usage.cache_read_tokens)}</td>
-						<td class="num">{#if i === data.usage.length - 1}<b>{fmtCost(usage.cost_usd)}</b>{:else}{fmtCost(usage.cost_usd)}{/if}</td>
+						<td>{period.label}</td>
+						<td class="num">{fmtNum(period.requests)}</td>
+						<td class="num">{fmtNum(period.input_tokens)}</td>
+						<td class="num">{fmtNum(period.output_tokens)}</td>
+						<td class="num">{fmtNum(period.cache_read_tokens)}</td>
+						<td class="num">{#if i === usage.length - 1}<b>{fmtCost(period.cost_usd)}</b>{:else}{fmtCost(period.cost_usd)}{/if}</td>
 					</tr>
 				{/each}
 			</tbody>

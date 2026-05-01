@@ -629,7 +629,37 @@ func (m *MockStore) QueryUsagePeriods(_ context.Context, _ string, _ *time.Locat
 }
 
 func (m *MockStore) QueryUserTotalCosts(_ context.Context) (map[string]float64, error) {
-	return nil, nil
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	result := make(map[string]float64)
+	for _, entry := range m.logs {
+		if entry.Status != "ok" {
+			continue
+		}
+		result[entry.UserID] += entry.CostUSD
+	}
+	return result, nil
+}
+
+func (m *MockStore) QueryUserTotalCostsByIDs(_ context.Context, userIDs []string) (map[string]float64, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	allow := make(map[string]struct{}, len(userIDs))
+	result := make(map[string]float64, len(userIDs))
+	for _, userID := range userIDs {
+		allow[userID] = struct{}{}
+		result[userID] = 0
+	}
+	for _, entry := range m.logs {
+		if entry.Status != "ok" {
+			continue
+		}
+		if _, ok := allow[entry.UserID]; !ok {
+			continue
+		}
+		result[entry.UserID] += entry.CostUSD
+	}
+	return result, nil
 }
 
 func (m *MockStore) QueryModelUsage(_ context.Context, _ string) ([]domain.ModelUsageRow, error) {

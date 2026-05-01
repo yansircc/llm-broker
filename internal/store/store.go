@@ -71,5 +71,6 @@ type Store interface {
 	// Dashboard & analytics
 	QueryUsagePeriods(ctx context.Context, userID string, loc *time.Location) ([]domain.UsagePeriod, error)
 	QueryUserTotalCosts(ctx context.Context) (map[string]float64, error)
+	QueryUserTotalCostsByIDs(ctx context.Context, userIDs []string) (map[string]float64, error)
 	QueryModelUsage(ctx context.Context, userID string) ([]domain.ModelUsageRow, error)
 }

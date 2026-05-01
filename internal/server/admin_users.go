@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -85,10 +86,17 @@ func (s *Server) handleListUsers(w http.ResponseWriter, r *http.Request) {
 		writeAdminError(w, http.StatusInternalServerError, "internal_error", "failed to list users")
 		return
 	}
-	if users == nil {
-		users = []*domain.User{}
+	writeJSON(w, http.StatusOK, s.userSummaryViews(users))
+}
+
+func (s *Server) handleListUserTotalCosts(w http.ResponseWriter, r *http.Request) {
+	userIDs := parseCSVQuery(r.URL.Query().Get("ids"))
+	totals, err := s.store.QueryUserTotalCostsByIDs(r.Context(), userIDs)
+	if err != nil {
+		writeAdminError(w, http.StatusInternalServerError, "internal_error", "failed to query user total costs")
+		return
 	}
-	writeJSON(w, http.StatusOK, users)
+	writeJSON(w, http.StatusOK, UserTotalCostsResponse{Totals: totals})
 }
 
 func (s *Server) handleDeleteUser(w http.ResponseWriter, r *http.Request) {
@@ -242,6 +250,27 @@ func generateUserToken(name string) (plaintext, hashStr, prefix string, err erro
 	hashStr = hex.EncodeToString(h[:])
 	prefix = fmt.Sprintf("tk_%s_%s...", name, hexStr[:4])
 	return plaintext, hashStr, prefix, nil
+}
+
+func parseCSVQuery(raw string) []string {
+	if raw == "" {
+		return nil
+	}
+	parts := strings.Split(raw, ",")
+	result := make([]string, 0, len(parts))
+	seen := make(map[string]struct{}, len(parts))
+	for _, part := range parts {
+		value := strings.TrimSpace(part)
+		if value == "" {
+			continue
+		}
+		if _, ok := seen[value]; ok {
+			continue
+		}
+		seen[value] = struct{}{}
+		result = append(result, value)
+	}
+	return result
 }
 
 // ---------------------------------------------------------------------------

@@ -91,6 +91,45 @@ func TestLogAnalyticsIgnoreFailedAttempts(t *testing.T) {
 	}
 }
 
+func TestQueryUserTotalCostsByIDs(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "user-costs.db")
+	if err := Migrate(dbPath); err != nil {
+		t.Fatalf("Migrate: %v", err)
+	}
+
+	store, err := New(dbPath)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	defer store.Close()
+
+	now := time.Now().UTC()
+	for _, entry := range []*domain.RequestLog{
+		{UserID: "user-1", Status: "ok", CostUSD: 1.25, CreatedAt: now},
+		{UserID: "user-1", Status: "ok", CostUSD: 0.75, CreatedAt: now.Add(time.Second)},
+		{UserID: "user-2", Status: "ok", CostUSD: 2.50, CreatedAt: now.Add(2 * time.Second)},
+		{UserID: "user-3", Status: "upstream_403", CostUSD: 99, CreatedAt: now.Add(3 * time.Second)},
+	} {
+		if err := store.InsertRequestLog(context.Background(), entry); err != nil {
+			t.Fatalf("InsertRequestLog(%s): %v", entry.UserID, err)
+		}
+	}
+
+	totalCosts, err := store.QueryUserTotalCostsByIDs(context.Background(), []string{"user-1", "user-3"})
+	if err != nil {
+		t.Fatalf("QueryUserTotalCostsByIDs: %v", err)
+	}
+	if totalCosts["user-1"] != 2 {
+		t.Fatalf("totalCosts[user-1] = %v, want 2", totalCosts["user-1"])
+	}
+	if totalCosts["user-3"] != 0 {
+		t.Fatalf("totalCosts[user-3] = %v, want 0", totalCosts["user-3"])
+	}
+	if _, ok := totalCosts["user-2"]; ok {
+		t.Fatalf("unexpected total for user-2 = %v", totalCosts["user-2"])
+	}
+}
+
 func TestRequestLogObservabilityQueries(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "observability.db")
 	if err := Migrate(dbPath); err != nil {

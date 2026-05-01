@@ -250,6 +250,101 @@ func TestDashboard_EventsIncludeUpstreamStatus(t *testing.T) {
 	}
 }
 
+func TestActivity_UsesLightweightShape(t *testing.T) {
+	srv := newTestServer(t)
+
+	if err := srv.store.SaveAccount(context.Background(), &domain.Account{
+		ID:       "acct-1",
+		Email:    "acct-1@example.com",
+		Provider: domain.ProviderClaude,
+		Status:   domain.StatusActive,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := srv.store.CreateUser(context.Background(), &domain.User{
+		ID:        "u-1",
+		Name:      "alice",
+		Status:    "active",
+		CreatedAt: time.Now().UTC(),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := srv.store.InsertRequestLog(context.Background(), &domain.RequestLog{
+		UserID:            "u-1",
+		AccountID:         "acct-1",
+		Provider:          "claude",
+		Surface:           "native",
+		Model:             "claude-sonnet-4-6",
+		Path:              "/v1/messages",
+		Status:            "upstream_403",
+		EffectKind:        "block",
+		UpstreamStatus:    http.StatusForbidden,
+		UpstreamErrorType: "blocked",
+		CreatedAt:         time.Now().UTC(),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	srv.pool, _ = pool.New(srv.store, srv.bus)
+	srv.bus.Publish(events.Event{
+		Type:      events.EventReject,
+		AccountID: "acct-1",
+		UserID:    "u-1",
+		Message:   "blocked request",
+		Timestamp: time.Now().UTC(),
+	})
+
+	w := httptest.NewRecorder()
+	srv.handleActivity(w, adminRequest("GET", "/admin/activity"))
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status %d, body: %s", w.Code, w.Body.String())
+	}
+	body := w.Body.Bytes()
+	assertJSONArray(t, body, "accounts")
+	assertJSONArray(t, body, "users")
+	assertJSONArray(t, body, "events")
+	assertJSONArray(t, body, "recent_failures")
+
+	if got := jsonPath(t, body, "accounts").([]interface{}); len(got) != 1 {
+		t.Fatalf("len(accounts) = %d, want 1", len(got))
+	}
+	if got := jsonPath(t, body, "users").([]interface{}); len(got) != 1 {
+		t.Fatalf("len(users) = %d, want 1", len(got))
+	}
+	if got := jsonPath(t, body, "recent_failures").([]interface{}); len(got) != 1 {
+		t.Fatalf("len(recent_failures) = %d, want 1", len(got))
+	}
+	if got := jsonPath(t, body, "accounts").([]interface{})[0].(map[string]interface{})["email"]; got != "acct-1@example.com" {
+		t.Fatalf("account email = %#v, want %q", got, "acct-1@example.com")
+	}
+	if got := jsonPath(t, body, "users").([]interface{})[0].(map[string]interface{})["name"]; got != "alice" {
+		t.Fatalf("user name = %#v, want %q", got, "alice")
+	}
+}
+
+func TestActivityUsage_EmptyData(t *testing.T) {
+	srv := newTestServer(t)
+
+	w := httptest.NewRecorder()
+	srv.handleActivityUsage(w, adminRequest("GET", "/admin/activity/usage"))
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status %d", w.Code)
+	}
+	body := w.Body.Bytes()
+	var result interface{}
+	if err := json.Unmarshal(body, &result); err != nil {
+		t.Fatal(err)
+	}
+	arr, ok := result.([]interface{})
+	if !ok {
+		t.Fatalf("response is %T, expected array", result)
+	}
+	if len(arr) != 0 {
+		t.Fatalf("len(result) = %d, want 0", len(arr))
+	}
+}
+
 // ---------------------------------------------------------------------------
 // Account detail contract tests
 // ---------------------------------------------------------------------------
@@ -683,6 +778,106 @@ func TestListUsers_Empty(t *testing.T) {
 	}
 	if len(arr) != 0 {
 		t.Errorf("expected empty array, got %d elements", len(arr))
+	}
+}
+
+func TestListUsers_ReturnsUserSummaries(t *testing.T) {
+	srv := newTestServer(t)
+
+	acct := &domain.Account{
+		ID:        "acct-1",
+		Provider:  domain.ProviderClaude,
+		Subject:   "sub-1",
+		Email:     "bound@example.com",
+		Status:    domain.StatusActive,
+		CreatedAt: time.Now().UTC(),
+	}
+	if err := srv.pool.Add(acct); err != nil {
+		t.Fatal(err)
+	}
+
+	user := &domain.User{
+		ID:             "u-1",
+		Name:           "alice",
+		TokenHash:      tokenHash("user-token"),
+		TokenPrefix:    "tk_alice_abcd...",
+		Status:         "active",
+		AllowedSurface: domain.SurfaceCompat,
+		BoundAccountID: acct.ID,
+		CreatedAt:      time.Now().UTC(),
+	}
+	if err := srv.store.CreateUser(context.Background(), user); err != nil {
+		t.Fatal(err)
+	}
+
+	w := httptest.NewRecorder()
+	srv.handleListUsers(w, adminRequest("GET", "/admin/users"))
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status %d, body: %s", w.Code, w.Body.String())
+	}
+
+	var result []map[string]any
+	if err := json.Unmarshal(w.Body.Bytes(), &result); err != nil {
+		t.Fatal(err)
+	}
+	if len(result) != 1 {
+		t.Fatalf("len(result) = %d, want 1", len(result))
+	}
+	if got := result[0]["allowed_surface"]; got != "compat" {
+		t.Fatalf("allowed_surface = %#v, want %q", got, "compat")
+	}
+	if got := result[0]["bound_account_email"]; got != "bound@example.com" {
+		t.Fatalf("bound_account_email = %#v, want %q", got, "bound@example.com")
+	}
+	if _, ok := result[0]["total_cost"]; ok {
+		t.Fatalf("unexpected total_cost in user summary: %#v", result[0]["total_cost"])
+	}
+}
+
+func TestListUserTotalCosts_ReturnsRequestedTotals(t *testing.T) {
+	srv := newTestServer(t)
+
+	for _, user := range []*domain.User{
+		{ID: "u-1", Name: "alice", Status: "active", CreatedAt: time.Now().UTC()},
+		{ID: "u-2", Name: "bob", Status: "active", CreatedAt: time.Now().UTC()},
+		{ID: "u-3", Name: "carol", Status: "active", CreatedAt: time.Now().UTC()},
+	} {
+		if err := srv.store.CreateUser(context.Background(), user); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, log := range []*domain.RequestLog{
+		{UserID: "u-1", Status: "ok", CostUSD: 1.25, CreatedAt: time.Now().UTC()},
+		{UserID: "u-1", Status: "ok", CostUSD: 0.75, CreatedAt: time.Now().UTC()},
+		{UserID: "u-2", Status: "ok", CostUSD: 2.50, CreatedAt: time.Now().UTC()},
+		{UserID: "u-3", Status: "upstream_403", CostUSD: 99, CreatedAt: time.Now().UTC()},
+	} {
+		if err := srv.store.InsertRequestLog(context.Background(), log); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	w := httptest.NewRecorder()
+	srv.handleListUserTotalCosts(w, adminRequest("GET", "/admin/users/total-costs?ids=u-1,u-3"))
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status %d, body: %s", w.Code, w.Body.String())
+	}
+	if got := jsonPath(t, w.Body.Bytes(), "totals.u-1"); got != float64(2) {
+		t.Fatalf("totals.u-1 = %#v, want 2", got)
+	}
+	if got := jsonPath(t, w.Body.Bytes(), "totals.u-3"); got != float64(0) {
+		t.Fatalf("totals.u-3 = %#v, want 0", got)
+	}
+	var payload struct {
+		Totals map[string]float64 `json:"totals"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &payload); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := payload.Totals["u-2"]; ok {
+		t.Fatalf("unexpected total for unrequested user u-2: %#v", payload.Totals["u-2"])
 	}
 }
 

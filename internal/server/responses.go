@@ -21,6 +21,24 @@ type DashboardResponse struct {
 	RecentFailures []*domain.RequestLog       `json:"recent_failures"`
 }
 
+type ActivityResponse struct {
+	Health         HealthInfo           `json:"health"`
+	Accounts       []ActivityAccountRef `json:"accounts"`
+	Users          []ActivityUserRef    `json:"users"`
+	Events         []DashboardEvent     `json:"events"`
+	RecentFailures []*domain.RequestLog `json:"recent_failures"`
+}
+
+type ActivityAccountRef struct {
+	ID    string `json:"id"`
+	Email string `json:"email"`
+}
+
+type ActivityUserRef struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
+}
+
 type HealthInfo struct {
 	SQLite  string `json:"sqlite"`
 	Uptime  string `json:"uptime"`
@@ -73,7 +91,6 @@ type DashboardUser struct {
 	BoundAccountID    string         `json:"bound_account_id,omitempty"`
 	BoundAccountEmail string         `json:"bound_account_email,omitempty"`
 	LastActiveAt      *time.Time     `json:"last_active_at,omitempty"`
-	TotalCost         float64        `json:"total_cost"`
 }
 
 type DashboardEvent struct {
@@ -221,4 +238,8 @@ type UserDetailResponse struct {
 	Usage             []domain.UsagePeriod   `json:"usage"`
 	ModelUsage        []domain.ModelUsageRow `json:"model_usage"`
 	RecentRequests    []*domain.RequestLog   `json:"recent_requests"`
+}
+
+type UserTotalCostsResponse struct {
+	Totals map[string]float64 `json:"totals"`
 }

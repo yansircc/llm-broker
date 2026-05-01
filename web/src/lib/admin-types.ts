@@ -32,7 +32,10 @@ export interface UserSummary {
 	bound_account_id?: string;
 	bound_account_email?: string;
 	last_active_at: string | null;
-	total_cost: number;
+}
+
+export interface UserTotalCostsResponse {
+	totals: Record<string, number>;
 }
 
 export interface DashboardEvent {
@@ -150,6 +153,24 @@ export interface DashboardData {
 	events: DashboardEvent[];
 	outcome_stats: RelayOutcomeStat[];
 	cell_risk: CellRiskStat[];
+	recent_failures: RecentRequestLog[];
+}
+
+export interface ActivityAccountRef {
+	id: string;
+	email: string;
+}
+
+export interface ActivityUserRef {
+	id: string;
+	name: string;
+}
+
+export interface ActivityData {
+	health: HealthInfo;
+	accounts: ActivityAccountRef[];
+	users: ActivityUserRef[];
+	events: DashboardEvent[];
 	recent_failures: RecentRequestLog[];
 }
 

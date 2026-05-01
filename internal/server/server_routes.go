@@ -66,12 +66,15 @@ func (s *Server) registerAdminRoutes(mux *http.ServeMux) {
 
 	mux.Handle("POST /admin/users", admin(s.handleCreateUser))
 	mux.Handle("GET /admin/users", admin(s.handleListUsers))
+	mux.Handle("GET /admin/users/total-costs", admin(s.handleListUserTotalCosts))
 	mux.Handle("GET /admin/users/{id}", admin(s.handleGetUser))
 	mux.Handle("DELETE /admin/users/{id}", admin(s.handleDeleteUser))
 	mux.Handle("POST /admin/users/{id}/regenerate", admin(s.handleRegenerateUserToken))
 	mux.Handle("POST /admin/users/{id}/status", admin(s.handleUpdateUserStatus))
 	mux.Handle("POST /admin/users/{id}/policy", admin(s.handleUpdateUserPolicy))
 
+	mux.Handle("GET /admin/activity", admin(s.handleActivity))
+	mux.Handle("GET /admin/activity/usage", admin(s.handleActivityUsage))
 	mux.Handle("GET /admin/dashboard", admin(s.handleDashboard))
 	mux.Handle("GET /admin/health", admin(s.handleHealth))
 	mux.Handle("DELETE /admin/sessions/binding/{uuid}", admin(s.handleUnbindSession))

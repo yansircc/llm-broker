@@ -1,13 +1,16 @@
 <script lang="ts">
 	import { base } from '$app/paths';
 	import { api } from '$lib/api';
-	import type { AccountListItem, DashboardData, UserSummary, UserSurface } from '$lib/admin-types';
+	import type { AccountListItem, UserSummary, UserSurface, UserTotalCostsResponse } from '$lib/admin-types';
 	import { dotClass, fmtCost, timeAgo } from '$lib/format';
 
 	let users = $state<UserSummary[]>([]);
 	let accounts = $state<AccountListItem[]>([]);
+	let totalCosts = $state<Record<string, number>>({});
 	let error = $state('');
 	let lastRefresh = $state('');
+	let loadingTotalCosts = $state(false);
+	let totalCostRequestSeq = 0;
 
 	let showAddUser = $state(false);
 	let newUserName = $state('');
@@ -25,15 +28,41 @@
 	async function loadAll() {
 		error = '';
 		try {
-			const [dashboard, accountList] = await Promise.all([
-				api<DashboardData>('/dashboard'),
+			const [userList, accountList] = await Promise.all([
+				api<UserSummary[]>('/users'),
 				api<AccountListItem[]>('/accounts').catch(() => [])
 			]);
-			users = dashboard.users;
+			users = userList;
 			accounts = [...accountList].sort((a, b) => a.email.localeCompare(b.email));
+			void loadUserTotalCosts(userList.map((user) => user.id));
 			lastRefresh = new Date().toLocaleTimeString('en-GB', { hour12: false });
 		} catch (e: any) {
 			error = e.message;
+		}
+	}
+
+	async function loadUserTotalCosts(userIDs: string[]) {
+		const requestSeq = ++totalCostRequestSeq;
+		if (userIDs.length === 0) {
+			totalCosts = {};
+			loadingTotalCosts = false;
+			return;
+		}
+		loadingTotalCosts = true;
+		try {
+			const params = new URLSearchParams({ ids: userIDs.join(',') });
+			// Remote SQLite analytics can still exceed the default 15s fetch timeout.
+			// Remove this override after indexed/preaggregated user-cost queries are consistently <15s.
+			const result = await api<UserTotalCostsResponse>(`/users/total-costs?${params.toString()}`, { timeout: 30000 });
+			if (requestSeq !== totalCostRequestSeq) return;
+			totalCosts = result.totals;
+		} catch {
+			if (requestSeq !== totalCostRequestSeq) return;
+			totalCosts = {};
+		} finally {
+			if (requestSeq === totalCostRequestSeq) {
+				loadingTotalCosts = false;
+			}
 		}
 	}
 
@@ -96,11 +125,11 @@
 					allowed_surface: res.allowed_surface,
 					bound_account_id: res.bound_account_id,
 					bound_account_email: res.bound_account_email,
-					last_active_at: null,
-					total_cost: 0
+					last_active_at: null
 				},
 				...users
 			];
+			void loadUserTotalCosts(users.map((user) => user.id));
 			showAddUser = false;
 			newUserName = '';
 			newAllowedSurface = 'native';
@@ -127,6 +156,17 @@ curl -fsS "$BASE_URL/v1/models" \\
 		await navigator.clipboard.writeText(buildKeyCheckCmd(createdUser.token));
 		copied = true;
 		setTimeout(() => { copied = false; }, 2000);
+	}
+
+	function hasTotalCost(userID: string): boolean {
+		return Object.prototype.hasOwnProperty.call(totalCosts, userID);
+	}
+
+	function totalCostText(userID: string): string {
+		if (hasTotalCost(userID)) {
+			return fmtCost(totalCosts[userID] ?? 0);
+		}
+		return loadingTotalCosts ? '...' : '-';
 	}
 </script>
 
@@ -200,7 +240,7 @@ curl -fsS "$BASE_URL/v1/models" \\
 						<td>{user.allowed_surface}</td>
 						<td class:muted={!user.bound_account_id}>{boundAccountText(user)}</td>
 						<td>{timeAgo(user.last_active_at ?? '')}</td>
-						<td class="num {user.total_cost === 0 ? 'muted' : ''}">{fmtCost(user.total_cost)}</td>
+						<td class="num {hasTotalCost(user.id) && (totalCosts[user.id] ?? 0) === 0 ? 'muted' : ''}">{totalCostText(user.id)}</td>
 					</tr>
 				{/each}
 			</tbody>

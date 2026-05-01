@@ -66,25 +66,7 @@ func (s *Server) dashboardUsers(ctx context.Context) []DashboardUser {
 	if err != nil {
 		slog.Warn("dashboard: list users failed", "error", err)
 	}
-	userCosts, err := s.store.QueryUserTotalCosts(ctx)
-	if err != nil {
-		slog.Warn("dashboard: query user costs failed", "error", err)
-	}
-
-	views := make([]DashboardUser, 0, len(users))
-	for _, user := range users {
-		views = append(views, DashboardUser{
-			ID:                user.ID,
-			Name:              user.Name,
-			Status:            user.Status,
-			AllowedSurface:    user.AllowedSurface,
-			BoundAccountID:    user.BoundAccountID,
-			BoundAccountEmail: s.boundAccountEmail(user.BoundAccountID),
-			LastActiveAt:      user.LastActiveAt,
-			TotalCost:         userCosts[user.ID],
-		})
-	}
-	return views
+	return s.userSummaryViews(users)
 }
 
 func (s *Server) dashboardEvents(limit int) []DashboardEvent {
@@ -224,6 +206,22 @@ func dashboardCellName(cell *domain.EgressCell, cellID string) string {
 		return "legacy direct"
 	}
 	return cellID
+}
+
+func (s *Server) userSummaryViews(users []*domain.User) []DashboardUser {
+	views := make([]DashboardUser, 0, len(users))
+	for _, user := range users {
+		views = append(views, DashboardUser{
+			ID:                user.ID,
+			Name:              user.Name,
+			Status:            user.Status,
+			AllowedSurface:    user.AllowedSurface,
+			BoundAccountID:    user.BoundAccountID,
+			BoundAccountEmail: s.boundAccountEmail(user.BoundAccountID),
+			LastActiveAt:      user.LastActiveAt,
+		})
+	}
+	return views
 }
 
 func dashboardCellRegion(cell *domain.EgressCell) string {

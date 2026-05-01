@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
@@ -256,24 +257,46 @@ func (s *SQLiteStore) QueryUsagePeriods(ctx context.Context, userID string, loc 
 		{"30 days", now.Add(-30 * 24 * time.Hour), now},
 	}
 
-	result := make([]domain.UsagePeriod, 0, len(periods))
+	baseArgs := make([]interface{}, 0, len(periods)*10+3)
+	selects := make([]string, 0, len(periods)*5)
 	for _, p := range periods {
-		var where string
-		var args []interface{}
-		if userID != "" {
-			where = "user_id = ? AND status = 'ok' AND created_at >= ? AND created_at < ?"
-			args = []interface{}{userID, p.since.Unix(), p.until.Unix()}
-		} else {
-			where = "status = 'ok' AND created_at >= ? AND created_at < ?"
-			args = []interface{}{p.since.Unix(), p.until.Unix()}
+		selects = append(selects,
+			"COUNT(CASE WHEN created_at >= ? AND created_at < ? THEN 1 END)",
+			"COALESCE(SUM(CASE WHEN created_at >= ? AND created_at < ? THEN input_tokens ELSE 0 END),0)",
+			"COALESCE(SUM(CASE WHEN created_at >= ? AND created_at < ? THEN output_tokens ELSE 0 END),0)",
+			"COALESCE(SUM(CASE WHEN created_at >= ? AND created_at < ? THEN cache_read_tokens ELSE 0 END),0)",
+			"COALESCE(SUM(CASE WHEN created_at >= ? AND created_at < ? THEN cost_usd ELSE 0 END),0)",
+		)
+		for i := 0; i < 5; i++ {
+			baseArgs = append(baseArgs, p.since.Unix(), p.until.Unix())
 		}
-		row := s.db.QueryRowContext(ctx, fmt.Sprintf(
-			`SELECT COALESCE(COUNT(*),0), COALESCE(SUM(input_tokens),0), COALESCE(SUM(output_tokens),0),
-			COALESCE(SUM(cache_read_tokens),0), COALESCE(SUM(cost_usd),0)
-			FROM request_log WHERE %s`, where), args...)
-		up := domain.UsagePeriod{Label: p.label}
-		row.Scan(&up.Requests, &up.InputTokens, &up.OutputTokens, &up.CacheReadTokens, &up.CostUSD)
-		result = append(result, up)
+	}
+	where := "status = 'ok' AND created_at >= ? AND created_at < ?"
+	baseArgs = append(baseArgs, periods[len(periods)-1].since.Unix(), now.Unix())
+	if userID != "" {
+		where += " AND user_id = ?"
+		baseArgs = append(baseArgs, userID)
+	}
+
+	row := s.db.QueryRowContext(ctx,
+		fmt.Sprintf("SELECT %s FROM request_log WHERE %s", strings.Join(selects, ", "), where),
+		baseArgs...,
+	)
+
+	scanTargets := make([]interface{}, 0, len(periods)*5)
+	result := make([]domain.UsagePeriod, len(periods))
+	for i, p := range periods {
+		result[i].Label = p.label
+		scanTargets = append(scanTargets,
+			&result[i].Requests,
+			&result[i].InputTokens,
+			&result[i].OutputTokens,
+			&result[i].CacheReadTokens,
+			&result[i].CostUSD,
+		)
+	}
+	if err := row.Scan(scanTargets...); err != nil {
+		return nil, err
 	}
 	return result, nil
 }
@@ -293,6 +316,45 @@ func (s *SQLiteStore) QueryUserTotalCosts(ctx context.Context) (map[string]float
 		result[userID] = cost
 	}
 	return result, rows.Err()
+}
+
+func (s *SQLiteStore) QueryUserTotalCostsByIDs(ctx context.Context, userIDs []string) (map[string]float64, error) {
+	result := make(map[string]float64, len(userIDs))
+	if len(userIDs) == 0 {
+		return result, nil
+	}
+	placeholders := make([]string, len(userIDs))
+	args := make([]interface{}, 0, len(userIDs))
+	for i, userID := range userIDs {
+		placeholders[i] = "?"
+		args = append(args, userID)
+		result[userID] = 0
+	}
+	query := fmt.Sprintf(
+		`SELECT user_id, COALESCE(SUM(cost_usd),0)
+		FROM request_log INDEXED BY idx_request_log_user
+		WHERE user_id IN (%s) AND status = 'ok'
+		GROUP BY user_id`,
+		strings.Join(placeholders, ","),
+	)
+	rows, err := s.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var userID string
+		var cost float64
+		if err := rows.Scan(&userID, &cost); err != nil {
+			return nil, err
+		}
+		result[userID] = cost
+	}
+	return result, rows.Err()
+}
+
+func strconvItoa(v int) string {
+	return strconv.Itoa(v)
 }
 
 func (s *SQLiteStore) QueryModelUsage(ctx context.Context, userID string) ([]domain.ModelUsageRow, error) {
