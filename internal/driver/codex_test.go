@@ -154,10 +154,11 @@ func TestCanServe_PerFamily(t *testing.T) {
 		model string
 		want  bool
 	}{
-		{"gpt-5.3-codex", false},       // standard family exhausted
-		{"gpt-5.4", false},             // standard family
-		{"gpt-5.3-codex-spark", true},  // spark family has capacity
-		{"codex-1", false},             // standard family
+		{"gpt-5.5", false},            // standard family
+		{"gpt-5.3-codex", false},      // standard family exhausted
+		{"gpt-5.4", false},            // standard family
+		{"gpt-5.3-codex-spark", true}, // spark family has capacity
+		{"codex-1", false},            // standard family
 	}
 	for _, tt := range tests {
 		if got := d.CanServe(state, tt.model, now); got != tt.want {
@@ -301,6 +302,7 @@ func TestCodexModelFamily(t *testing.T) {
 		model string
 		want  string
 	}{
+		{"gpt-5.5", ""},
 		{"gpt-5.3-codex", ""},
 		{"gpt-5.4", ""},
 		{"gpt-5.3-codex-spark", "bengalfox"},
@@ -313,6 +315,21 @@ func TestCodexModelFamily(t *testing.T) {
 			t.Errorf("codexModelFamily(%q) = %q, want %q", tt.model, got, tt.want)
 		}
 	}
+}
+
+func TestCodexModelsIncludesGPT55(t *testing.T) {
+	d := NewCodexDriver(CodexConfig{})
+	models := d.Models()
+	for _, model := range models {
+		if model.ID != "gpt-5.5" {
+			continue
+		}
+		if model.ContextWindow != 400000 {
+			t.Fatalf("gpt-5.5 context_window = %d, want %d", model.ContextWindow, 400000)
+		}
+		return
+	}
+	t.Fatal("gpt-5.5 missing from codex model catalog")
 }
 
 func TestDiscoverCodexFamilyPrefixes(t *testing.T) {

@@ -1,0 +1,11 @@
+[Unit]
+Description=Run local-cell-watchdog every 2 minutes
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=2min
+Unit=local-cell-watchdog.service
+
+[Install]
+WantedBy=timers.target
+

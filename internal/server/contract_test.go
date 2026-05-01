@@ -973,6 +973,40 @@ func TestNativeRoute_RejectsCompatOnlyUser(t *testing.T) {
 	}
 }
 
+func TestHandleListModels_IncludesCodexGPT55(t *testing.T) {
+	srv := newTestServer(t)
+	srv.catalogDrivers = map[domain.Provider]driver.Descriptor{
+		domain.ProviderCodex: driver.NewCodexDriver(driver.CodexConfig{}),
+	}
+
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/v1/models", nil)
+	srv.handleListModels(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status %d, body: %s", w.Code, w.Body.String())
+	}
+
+	var body struct {
+		Object string `json:"object"`
+		Data   []struct {
+			ID string `json:"id"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
+		t.Fatalf("json.Unmarshal() error = %v", err)
+	}
+	if body.Object != "list" {
+		t.Fatalf("object = %q", body.Object)
+	}
+	for _, model := range body.Data {
+		if model.ID == "gpt-5.5" {
+			return
+		}
+	}
+	t.Fatalf("native models missing codex gpt-5.5: %#v", body.Data)
+}
+
 func TestDeleteUser_NotFound(t *testing.T) {
 	srv := newTestServer(t)
 

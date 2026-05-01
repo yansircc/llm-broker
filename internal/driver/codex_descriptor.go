@@ -42,6 +42,7 @@ func (d *CodexDriver) Info() ProviderInfo {
 
 func (d *CodexDriver) Models() []Model {
 	return []Model{
+		{ID: "gpt-5.5", Object: "model", Created: 1709164800, OwnedBy: "openai", ContextWindow: 400000},
 		{ID: "gpt-5.4", Object: "model", Created: 1709164800, OwnedBy: "openai", ContextWindow: 1050000},
 		{ID: "gpt-5.4-mini", Object: "model", Created: 1709164800, OwnedBy: "openai", ContextWindow: 1050000},
 		{ID: "gpt-5.3-codex", Object: "model", Created: 1709164800, OwnedBy: "openai", ContextWindow: 400000},

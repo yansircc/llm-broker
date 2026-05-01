@@ -1,0 +1,12 @@
+[Unit]
+Description=Self-heal broker local-danted cells
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=root
+Environment=BROKER_ENV_FILE=/etc/llm-broker.env
+Environment=WATCHDOG_IFACE=eth0
+ExecStart=/usr/local/bin/local-cell-watchdog
+
