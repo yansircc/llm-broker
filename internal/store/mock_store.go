@@ -482,15 +482,19 @@ func (m *MockStore) UpdateUserLastActive(_ context.Context, id string) error {
 	return nil
 }
 
-func (m *MockStore) InsertRequestLog(_ context.Context, log *domain.RequestLog) error {
+func (m *MockStore) InsertRequestLog(_ context.Context, log *domain.RequestLog) (int64, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.InsertRequestErr != nil {
-		return m.InsertRequestErr
+		return 0, m.InsertRequestErr
 	}
 	copy := *log
+	if copy.ID == 0 {
+		copy.ID = int64(len(m.logs)) + 1
+	}
+	log.ID = copy.ID
 	m.logs = append(m.logs, &copy)
-	return nil
+	return copy.ID, nil
 }
 
 func (m *MockStore) QueryRequestLogs(_ context.Context, opts domain.RequestLogQuery) ([]*domain.RequestLog, int, error) {

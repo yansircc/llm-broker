@@ -40,6 +40,17 @@ type Server struct {
 	requestSeq     atomic.Uint64
 	activeRequests sync.Map
 	connStates     sync.Map
+	logFlush       sync.WaitGroup
+}
+
+// WaitForLogFlush blocks until pending compat-lifecycle request-log inserts +
+// on-disk writes complete. Tests should defer this before t.TempDir cleanup
+// so the async file writes can't outlive the directory's removal.
+func (s *Server) WaitForLogFlush() {
+	if s == nil {
+		return
+	}
+	s.logFlush.Wait()
 }
 
 func New(

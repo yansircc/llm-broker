@@ -13,6 +13,7 @@ import (
 type SQLiteStore struct {
 	db            *sql.DB
 	cleanupCancel context.CancelFunc
+	logBlobDir    string
 }
 
 // New opens a SQLiteStore and requires the current schema to already exist.
@@ -34,6 +35,15 @@ func New(dbPath string) (*SQLiteStore, error) {
 	}
 
 	return s, nil
+}
+
+// SetLogBlobDir tells the store where to purge per-request JSON log files.
+// Pass "" to disable on-disk log file purging in PurgeOldLogs.
+func (s *SQLiteStore) SetLogBlobDir(dir string) {
+	if s == nil {
+		return
+	}
+	s.logBlobDir = dir
 }
 
 func (s *SQLiteStore) Ping(ctx context.Context) error { return s.db.PingContext(ctx) }

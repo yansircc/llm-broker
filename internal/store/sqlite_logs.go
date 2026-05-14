@@ -1,45 +1,48 @@
 package store
 
 import (
-	"bytes"
 	"context"
-	"encoding/json"
 	"fmt"
-	"strconv"
 	"strings"
 	"time"
 
 	"github.com/yansircc/llm-broker/internal/domain"
+	"github.com/yansircc/llm-broker/internal/requestlog"
 )
 
-func (s *SQLiteStore) InsertRequestLog(ctx context.Context, l *domain.RequestLog) error {
-	_, err := s.db.ExecContext(ctx,
+// InsertRequestLog persists the slim 18-column row and returns the assigned id.
+// Observation payload (headers/body/meta) is no longer stored in SQL — callers
+// should write the file via requestlog.WriteLogFile using the returned id.
+func (s *SQLiteStore) InsertRequestLog(ctx context.Context, l *domain.RequestLog) (int64, error) {
+	if l == nil {
+		return 0, nil
+	}
+	res, err := s.db.ExecContext(ctx,
 		`INSERT INTO request_log (
-			user_id, account_id, provider, surface, model, path, cell_id, bucket_key,
-			session_uuid, binding_source, client_headers_json, client_body_excerpt, request_meta_json,
+			user_id, account_id, provider, surface, model, cell_id,
 			input_tokens, output_tokens, cache_read_tokens, cache_create_tokens, cost_usd,
-			status, effect_kind, upstream_status, upstream_url, upstream_request_headers_json,
-			upstream_request_meta_json, upstream_request_body_excerpt, upstream_request_id,
-			upstream_headers_json, upstream_response_meta_json, upstream_response_body_excerpt,
-			upstream_error_type, upstream_error_message, request_bytes, attempt_count, duration_ms, created_at
+			status, effect_kind, upstream_status, upstream_error_type,
+			duration_ms, created_at
 		)
 		VALUES (
-			?, ?, ?, ?, ?, ?, ?, ?,
+			?, ?, ?, ?, ?, ?,
 			?, ?, ?, ?, ?,
-			?, ?, ?, ?, ?,
-			?, ?, ?, ?, ?,
-			?, ?, ?,
-			?, ?, ?,
-			?, ?, ?, ?, ?, ?
+			?, ?, ?, ?,
+			?, ?
 		)`,
-		l.UserID, l.AccountID, l.Provider, l.Surface, l.Model, l.Path, l.CellID, l.BucketKey,
-		l.SessionUUID, l.BindingSource, observationJSONString(l.ClientHeaders), l.ClientBodyExcerpt, observationJSONString(l.RequestMeta),
+		l.UserID, l.AccountID, l.Provider, l.Surface, l.Model, l.CellID,
 		l.InputTokens, l.OutputTokens, l.CacheReadTokens, l.CacheCreateTokens, l.CostUSD,
-		l.Status, l.EffectKind, l.UpstreamStatus, l.UpstreamURL, observationJSONString(l.UpstreamRequestHeaders),
-		observationJSONString(l.UpstreamRequestMeta), l.UpstreamRequestBodyExcerpt, l.UpstreamRequestID,
-		observationJSONString(l.UpstreamHeaders), observationJSONString(l.UpstreamResponseMeta), l.UpstreamResponseBodyExcerpt,
-		l.UpstreamErrorType, l.UpstreamErrorMessage, l.RequestBytes, l.AttemptCount, l.DurationMs, l.CreatedAt.Unix())
-	return err
+		l.Status, l.EffectKind, l.UpstreamStatus, l.UpstreamErrorType,
+		l.DurationMs, l.CreatedAt.Unix())
+	if err != nil {
+		return 0, err
+	}
+	id, err := res.LastInsertId()
+	if err != nil {
+		return 0, err
+	}
+	l.ID = id
+	return id, nil
 }
 
 func (s *SQLiteStore) QueryRequestLogs(ctx context.Context, opts domain.RequestLogQuery) ([]*domain.RequestLog, int, error) {
@@ -57,13 +60,10 @@ func (s *SQLiteStore) QueryRequestLogs(ctx context.Context, opts domain.RequestL
 	copy(fetchArgs, args)
 	fetchArgs = append(fetchArgs, limit, opts.Offset)
 
-	query := fmt.Sprintf(`SELECT id, user_id, account_id, provider, surface, model, path, cell_id, bucket_key,
-		session_uuid, binding_source, client_headers_json, client_body_excerpt, request_meta_json,
+	query := fmt.Sprintf(`SELECT id, user_id, account_id, provider, surface, model, cell_id,
 		input_tokens, output_tokens, cache_read_tokens, cache_create_tokens, cost_usd,
-		status, effect_kind, upstream_status, upstream_url, upstream_request_headers_json,
-		upstream_request_meta_json, upstream_request_body_excerpt, upstream_request_id,
-		upstream_headers_json, upstream_response_meta_json, upstream_response_body_excerpt,
-		upstream_error_type, upstream_error_message, request_bytes, attempt_count, duration_ms, created_at
+		status, effect_kind, upstream_status, upstream_error_type,
+		duration_ms, created_at
 		FROM request_log WHERE %s ORDER BY created_at DESC LIMIT ? OFFSET ?`, where)
 
 	rows, err := s.db.QueryContext(ctx, query, fetchArgs...)
@@ -75,47 +75,16 @@ func (s *SQLiteStore) QueryRequestLogs(ctx context.Context, opts domain.RequestL
 	for rows.Next() {
 		l := &domain.RequestLog{}
 		var ts int64
-		var clientHeadersJSON string
-		var requestMetaJSON string
-		var upstreamRequestHeadersJSON string
-		var upstreamRequestMetaJSON string
-		var upstreamHeadersJSON string
-		var upstreamResponseMetaJSON string
-		if err := rows.Scan(&l.ID, &l.UserID, &l.AccountID, &l.Provider, &l.Surface, &l.Model, &l.Path, &l.CellID, &l.BucketKey,
-			&l.SessionUUID, &l.BindingSource, &clientHeadersJSON, &l.ClientBodyExcerpt, &requestMetaJSON,
+		if err := rows.Scan(&l.ID, &l.UserID, &l.AccountID, &l.Provider, &l.Surface, &l.Model, &l.CellID,
 			&l.InputTokens, &l.OutputTokens, &l.CacheReadTokens, &l.CacheCreateTokens,
-			&l.CostUSD, &l.Status, &l.EffectKind, &l.UpstreamStatus, &l.UpstreamURL, &upstreamRequestHeadersJSON,
-			&upstreamRequestMetaJSON, &l.UpstreamRequestBodyExcerpt, &l.UpstreamRequestID, &upstreamHeadersJSON,
-			&upstreamResponseMetaJSON, &l.UpstreamResponseBodyExcerpt, &l.UpstreamErrorType, &l.UpstreamErrorMessage,
-			&l.RequestBytes, &l.AttemptCount, &l.DurationMs, &ts); err != nil {
+			&l.CostUSD, &l.Status, &l.EffectKind, &l.UpstreamStatus, &l.UpstreamErrorType,
+			&l.DurationMs, &ts); err != nil {
 			return nil, 0, err
 		}
-		l.ClientHeaders = decodeObservationJSON(clientHeadersJSON)
-		l.RequestMeta = decodeObservationJSON(requestMetaJSON)
-		l.UpstreamRequestHeaders = decodeObservationJSON(upstreamRequestHeadersJSON)
-		l.UpstreamRequestMeta = decodeObservationJSON(upstreamRequestMetaJSON)
-		l.UpstreamHeaders = decodeObservationJSON(upstreamHeadersJSON)
-		l.UpstreamResponseMeta = decodeObservationJSON(upstreamResponseMetaJSON)
 		l.CreatedAt = time.Unix(ts, 0).UTC()
 		logs = append(logs, l)
 	}
 	return logs, total, rows.Err()
-}
-
-func observationJSONString(raw json.RawMessage) string {
-	trimmed := bytes.TrimSpace(raw)
-	if len(trimmed) == 0 || bytes.Equal(trimmed, []byte("null")) {
-		return "{}"
-	}
-	return string(trimmed)
-}
-
-func decodeObservationJSON(raw string) json.RawMessage {
-	trimmed := strings.TrimSpace(raw)
-	if trimmed == "" || trimmed == "{}" || trimmed == "null" {
-		return nil
-	}
-	return json.RawMessage(trimmed)
 }
 
 func (s *SQLiteStore) QueryRelayOutcomeStats(ctx context.Context, since time.Time) ([]domain.RelayOutcomeStat, error) {
@@ -212,10 +181,15 @@ func (s *SQLiteStore) QueryCellRiskStats(ctx context.Context, since time.Time) (
 	return result, rows.Err()
 }
 
+// PurgeOldLogs deletes both SQL rows and on-disk log files older than `before`.
+// The file purge walks <logDir>/YYYY/MM/DD at day granularity (best-effort).
 func (s *SQLiteStore) PurgeOldLogs(ctx context.Context, before time.Time) (int64, error) {
 	res, err := s.db.ExecContext(ctx, "DELETE FROM request_log WHERE created_at < ?", before.Unix())
 	if err != nil {
 		return 0, err
+	}
+	if s.logBlobDir != "" {
+		requestlog.PurgeLogsBefore(s.logBlobDir, before)
 	}
 	return res.RowsAffected()
 }
@@ -303,7 +277,9 @@ func (s *SQLiteStore) QueryUsagePeriods(ctx context.Context, userID string, loc 
 
 func (s *SQLiteStore) QueryUserTotalCosts(ctx context.Context) (map[string]float64, error) {
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT user_id, COALESCE(SUM(cost_usd),0) FROM request_log WHERE status = 'ok' GROUP BY user_id`)
+		`SELECT user_id, COALESCE(SUM(cost_usd),0)
+		FROM request_log
+		WHERE status = 'ok' GROUP BY user_id`)
 	if err != nil {
 		return nil, err
 	}
@@ -332,7 +308,7 @@ func (s *SQLiteStore) QueryUserTotalCostsByIDs(ctx context.Context, userIDs []st
 	}
 	query := fmt.Sprintf(
 		`SELECT user_id, COALESCE(SUM(cost_usd),0)
-		FROM request_log INDEXED BY idx_request_log_user
+		FROM request_log
 		WHERE user_id IN (%s) AND status = 'ok'
 		GROUP BY user_id`,
 		strings.Join(placeholders, ","),
@@ -351,10 +327,6 @@ func (s *SQLiteStore) QueryUserTotalCostsByIDs(ctx context.Context, userIDs []st
 		result[userID] = cost
 	}
 	return result, rows.Err()
-}
-
-func strconvItoa(v int) string {
-	return strconv.Itoa(v)
 }
 
 func (s *SQLiteStore) QueryModelUsage(ctx context.Context, userID string) ([]domain.ModelUsageRow, error) {

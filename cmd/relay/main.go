@@ -4,7 +4,6 @@ import (
 	"context"
 	"log/slog"
 	"os"
-	"path/filepath"
 	"time"
 
 	"github.com/yansircc/llm-broker/internal/auth"
@@ -15,6 +14,7 @@ import (
 	"github.com/yansircc/llm-broker/internal/events"
 	"github.com/yansircc/llm-broker/internal/pool"
 	"github.com/yansircc/llm-broker/internal/relay"
+	"github.com/yansircc/llm-broker/internal/requestlog"
 	"github.com/yansircc/llm-broker/internal/server"
 	"github.com/yansircc/llm-broker/internal/store"
 	"github.com/yansircc/llm-broker/internal/tokens"
@@ -158,17 +158,16 @@ func main() {
 	})
 
 	// Initialize relay
-	blobDir := ""
-	if cfg.LogBlobs {
-		blobDir = filepath.Join(filepath.Dir(cfg.DBPath), "request-log-blobs")
-	}
+	blobDir := requestlog.ResolveBlobDir(cfg.DBPath, cfg.LogBlobsMode)
+	s.SetLogBlobDir(blobDir)
 	r := relay.New(p, tokMgr, s, relay.Config{
 		MaxRequestBodyMB:  cfg.MaxRequestBodyMB,
 		MaxRetryAccounts:  cfg.MaxRetryAccounts,
-		SessionBindingTTL: cfg.SessionBindingTTL,
-		CellErrorPause:    cfg.CellErrorPause,
-		TraceCompat:       cfg.TraceCompat,
-		RequestLogBlobDir: blobDir,
+		SessionBindingTTL:  cfg.SessionBindingTTL,
+		CellErrorPause:     cfg.CellErrorPause,
+		TraceCompat:        cfg.TraceCompat,
+		RequestLogBlobDir:  blobDir,
+		RequestLogBlobMode: cfg.LogBlobsMode,
 	}, transportPool, bus, executionDrivers)
 
 	// Start server

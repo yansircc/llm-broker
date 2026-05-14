@@ -4,6 +4,8 @@ import (
 	"os"
 	"strconv"
 	"time"
+
+	"github.com/yansircc/llm-broker/internal/requestlog"
 )
 
 type Config struct {
@@ -54,10 +56,10 @@ type Config struct {
 	CompatMaxConcurrent        int // 0 disables the compat concurrency limiter
 
 	// Logging
-	LogLevel       string
-	LogBlobs       bool
+	LogLevel         string
+	LogBlobsMode     requestlog.BlobMode
 	LogRetentionDays int
-	TraceCompat    bool
+	TraceCompat      bool
 
 	// Prompt environment masking (opt-in)
 	PromptEnvHome string // canonical home path; enables prompt env masking when set
@@ -107,7 +109,7 @@ func Load() *Config {
 		CompatMaxConcurrent:        envInt("COMPAT_MAX_CONCURRENT", 4),
 
 		LogLevel:         envOr("LOG_LEVEL", "info"),
-		LogBlobs:         envBool("LOG_BLOBS", false),
+		LogBlobsMode:     requestlog.ParseBlobMode(os.Getenv("LOG_BLOBS")),
 		LogRetentionDays: envInt("LOG_RETENTION_DAYS", 3),
 		TraceCompat:      envBool("TRACE_COMPAT", false),
 

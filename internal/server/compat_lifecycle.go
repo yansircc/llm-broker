@@ -12,6 +12,7 @@ import (
 	"github.com/yansircc/llm-broker/internal/auth"
 	"github.com/yansircc/llm-broker/internal/domain"
 	"github.com/yansircc/llm-broker/internal/requestid"
+	"github.com/yansircc/llm-broker/internal/requestlog"
 )
 
 type observedResponseWriter struct {
@@ -99,15 +100,18 @@ func (s *Server) logCompatFailureRequest(
 	}
 
 	entry := &domain.RequestLog{
-		Surface:           string(domain.SurfaceCompat),
+		Surface:    string(domain.SurfaceCompat),
+		Status:     status,
+		EffectKind: effectKind,
+		DurationMs: duration.Milliseconds(),
+		CreatedAt:  time.Now().UTC(),
+	}
+	obs := &requestlog.LogObservation{
 		Path:              r.URL.Path,
-		Status:            status,
-		EffectKind:        effectKind,
 		RequestBytes:      len(rawBody),
-		DurationMs:        duration.Milliseconds(),
-		CreatedAt:         time.Now().UTC(),
 		ClientHeaders:     compatLifecycleHeaders(r.Header),
 		ClientBodyExcerpt: compatLifecycleBodyExcerpt(rawBody),
+		ClientBody:        rawBody,
 	}
 
 	if ki := auth.GetKeyInfo(r.Context()); ki != nil {
@@ -150,19 +154,49 @@ func (s *Server) logCompatFailureRequest(
 	}
 	if message = strings.TrimSpace(message); message != "" {
 		meta["error_message"] = message
+		obs.UpstreamErrorMessage = message
 	}
 	for key, value := range extra {
 		if compatLifecycleHasValue(value) {
 			meta[key] = value
 		}
 	}
-	entry.RequestMeta = compatLifecycleMarshal(meta)
+	obs.RequestMeta = compatLifecycleMarshal(meta)
 
+	logDir := s.requestLogBlobDir()
+	mode := s.requestLogBlobMode()
+	shouldWriteFile := logDir != "" && mode.ShouldWrite(entry.Status)
+	store := s.store
+	s.logFlush.Add(1)
 	go func() {
-		if err := s.store.InsertRequestLog(context.Background(), entry); err != nil {
+		defer s.logFlush.Done()
+		id, err := store.InsertRequestLog(context.Background(), entry)
+		if err != nil {
 			slog.Warn("compat lifecycle request log failed", "status", status, "phase", phase, "error", err)
+			return
+		}
+		entry.ID = id
+		if !shouldWriteFile {
+			return
+		}
+		if werr := requestlog.WriteLogFile(logDir, entry, obs); werr != nil {
+			slog.Warn("compat lifecycle request log file failed", "id", id, "error", werr)
 		}
 	}()
+}
+
+func (s *Server) requestLogBlobDir() string {
+	if s == nil || s.cfg == nil {
+		return ""
+	}
+	return requestlog.ResolveBlobDir(s.cfg.DBPath, s.cfg.LogBlobsMode)
+}
+
+func (s *Server) requestLogBlobMode() requestlog.BlobMode {
+	if s == nil || s.cfg == nil {
+		return requestlog.BlobModeOff
+	}
+	return s.cfg.LogBlobsMode
 }
 
 func compatLifecycleHeaders(h http.Header) json.RawMessage {

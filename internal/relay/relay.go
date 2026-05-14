@@ -3,12 +3,14 @@ package relay
 import (
 	"context"
 	"net/http"
+	"sync"
 	"time"
 
 	"github.com/yansircc/llm-broker/internal/domain"
 	"github.com/yansircc/llm-broker/internal/driver"
 	"github.com/yansircc/llm-broker/internal/events"
 	"github.com/yansircc/llm-broker/internal/pool"
+	"github.com/yansircc/llm-broker/internal/requestlog"
 )
 
 type TransportProvider interface {
@@ -16,16 +18,17 @@ type TransportProvider interface {
 }
 
 type StoreWriter interface {
-	InsertRequestLog(ctx context.Context, log *domain.RequestLog) error
+	InsertRequestLog(ctx context.Context, log *domain.RequestLog) (int64, error)
 }
 
 type Config struct {
-	MaxRequestBodyMB  int
-	MaxRetryAccounts  int
-	SessionBindingTTL time.Duration
-	CellErrorPause    time.Duration
-	TraceCompat       bool
-	RequestLogBlobDir string
+	MaxRequestBodyMB   int
+	MaxRetryAccounts   int
+	SessionBindingTTL  time.Duration
+	CellErrorPause     time.Duration
+	TraceCompat        bool
+	RequestLogBlobDir  string
+	RequestLogBlobMode requestlog.BlobMode
 }
 
 type Relay struct {
@@ -36,6 +39,7 @@ type Relay struct {
 	transport TransportProvider
 	bus       *events.Bus
 	drivers   map[domain.Provider]driver.ExecutionDriver
+	logFlush  sync.WaitGroup
 }
 
 type TokenProvider interface {
@@ -64,6 +68,17 @@ func New(
 
 func (r *Relay) driverFor(provider domain.Provider) driver.ExecutionDriver {
 	return r.drivers[provider]
+}
+
+// WaitForLogFlush blocks until every pending request-log insert + on-disk
+// write started by logRequestAsync has completed. Tests should defer this
+// before t.TempDir cleanup so async file writes don't race the directory's
+// removal.
+func (r *Relay) WaitForLogFlush() {
+	if r == nil {
+		return
+	}
+	r.logFlush.Wait()
 }
 
 func (r *Relay) HandleProvider(provider domain.Provider) http.HandlerFunc {

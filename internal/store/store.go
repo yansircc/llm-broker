@@ -62,7 +62,7 @@ type Store interface {
 	UpdateUserLastActive(ctx context.Context, id string) error
 
 	// Request log
-	InsertRequestLog(ctx context.Context, log *domain.RequestLog) error
+	InsertRequestLog(ctx context.Context, log *domain.RequestLog) (int64, error)
 	QueryRequestLogs(ctx context.Context, opts domain.RequestLogQuery) ([]*domain.RequestLog, int, error)
 	QueryRelayOutcomeStats(ctx context.Context, since time.Time) ([]domain.RelayOutcomeStat, error)
 	QueryCellRiskStats(ctx context.Context, since time.Time) ([]domain.CellRiskStat, error)

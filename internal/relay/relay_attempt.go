@@ -15,6 +15,7 @@ import (
 	"github.com/yansircc/llm-broker/internal/events"
 	"github.com/yansircc/llm-broker/internal/neterr"
 	"github.com/yansircc/llm-broker/internal/pool"
+	"github.com/yansircc/llm-broker/internal/requestlog"
 )
 
 type relayAttemptOutcome int
@@ -77,10 +78,12 @@ func upstreamRequestID(headers http.Header) string {
 	return headers.Get("x-request-id")
 }
 
-func (r *Relay) baseRequestLog(prepared *preparedRelayRequest, acct *domain.Account, attempt int) *domain.RequestLog {
+func (r *Relay) baseRequestLog(prepared *preparedRelayRequest, acct *domain.Account, attempt int) (*domain.RequestLog, *requestlog.LogObservation) {
 	entry := &domain.RequestLog{
+		CreatedAt: time.Now().UTC(),
+	}
+	obs := &requestlog.LogObservation{
 		AttemptCount: attempt + 1,
-		CreatedAt:    time.Now().UTC(),
 	}
 	if prepared != nil && prepared.keyInfo != nil {
 		entry.UserID = prepared.keyInfo.ID
@@ -88,48 +91,54 @@ func (r *Relay) baseRequestLog(prepared *preparedRelayRequest, acct *domain.Acco
 	if prepared != nil && prepared.input != nil {
 		entry.Surface = string(prepared.surface)
 		entry.Model = prepared.input.Model
-		entry.Path = requestLogPath(prepared)
-		entry.RequestBytes = len(requestLogClientBody(prepared))
-		entry.SessionUUID = prepared.sessionUUID
-		entry.BindingSource = requestBindingSource(prepared)
-		entry.ClientHeaders = requestClientHeaders(requestLogClientHeaders(prepared))
-		entry.ClientBodyExcerpt = requestBodyExcerpt(requestLogClientBody(prepared))
-		entry.RequestMeta = requestMeta(prepared)
+		obs.Path = requestLogPath(prepared)
+		body := requestLogClientBody(prepared)
+		obs.RequestBytes = len(body)
+		obs.SessionUUID = prepared.sessionUUID
+		obs.BindingSource = requestBindingSource(prepared)
+		obs.ClientHeaders = requestClientHeaders(requestLogClientHeaders(prepared))
+		obs.ClientBodyExcerpt = requestBodyExcerpt(body)
+		obs.RequestMeta = requestMeta(prepared)
+		obs.ClientBody = body
 	}
 	if acct != nil {
 		entry.AccountID = acct.ID
 		entry.Provider = string(acct.Provider)
 		entry.CellID = acct.CellID
-		entry.BucketKey = acct.BucketKey
+		obs.BucketKey = acct.BucketKey
 	}
-	return entry
+	return entry, obs
 }
 
-func setRequestLogUpstreamRequest(entry *domain.RequestLog, req *http.Request, body []byte) {
-	if entry == nil || req == nil {
+func setRequestLogUpstreamRequest(obs *requestlog.LogObservation, req *http.Request, body []byte) {
+	if obs == nil || req == nil {
 		return
 	}
-	entry.UpstreamURL = safeRequestURL(req)
-	entry.UpstreamRequestHeaders = marshalObservationMapString(traceRequestHeaders(req.Header))
-	entry.UpstreamRequestMeta = upstreamRequestMeta(req, body)
-	entry.UpstreamRequestBodyExcerpt = requestBodyExcerpt(body)
+	obs.UpstreamURL = safeRequestURL(req)
+	obs.UpstreamRequestHeaders = marshalObservationMapString(traceRequestHeaders(req.Header))
+	obs.UpstreamRequestMeta = upstreamRequestMeta(req, body)
+	obs.UpstreamRequestBodyExcerpt = requestBodyExcerpt(body)
+	obs.UpstreamRequestBody = body
 }
 
-func setRequestLogUpstreamResponse(entry *domain.RequestLog, resp *http.Response, body []byte, effect *driver.Effect) {
-	if entry == nil {
+func setRequestLogUpstreamResponse(entry *domain.RequestLog, obs *requestlog.LogObservation, resp *http.Response, body []byte, effect *driver.Effect) {
+	if obs == nil {
 		return
 	}
 	if resp != nil {
-		entry.UpstreamRequestID = upstreamRequestID(resp.Header)
-		entry.UpstreamHeaders = marshalObservationMapString(traceResponseHeaders(resp.Header))
-		entry.UpstreamResponseMeta = upstreamResponseMeta(resp, body)
-		entry.UpstreamResponseBodyExcerpt = requestBodyExcerpt(body)
+		obs.UpstreamRequestID = upstreamRequestID(resp.Header)
+		obs.UpstreamHeaders = marshalObservationMapString(traceResponseHeaders(resp.Header))
+		obs.UpstreamResponseMeta = upstreamResponseMeta(resp, body)
+		obs.UpstreamResponseBodyExcerpt = requestBodyExcerpt(body)
+		obs.UpstreamResponseBody = body
 	}
 	if effect == nil {
 		return
 	}
-	entry.UpstreamErrorType = effect.UpstreamErrorType
-	entry.UpstreamErrorMessage = effect.UpstreamErrorMessage
+	if entry != nil {
+		entry.UpstreamErrorType = effect.UpstreamErrorType
+	}
+	obs.UpstreamErrorMessage = effect.UpstreamErrorMessage
 }
 
 func newRelayAttemptState() *relayAttemptState {
@@ -197,18 +206,17 @@ func (r *Relay) executeRelayAttempt(
 	if err != nil {
 		var requestErr *driver.RequestValidationError
 		if errors.As(err, &requestErr) {
-			entry := r.baseRequestLog(prepared, acct, attempt)
+			entry, obs := r.baseRequestLog(prepared, acct, attempt)
 			entry.Status = fmt.Sprintf("validation_%d", requestErr.StatusCode)
 			entry.EffectKind = requestValidationEffectKind(requestErr.StatusCode)
 			entry.UpstreamStatus = requestErr.StatusCode
 			entry.UpstreamErrorType = "request_validation_error"
-			entry.UpstreamErrorMessage = requestErr.Message
+			obs.UpstreamErrorMessage = requestErr.Message
 			entry.DurationMs = time.Since(attemptStartedAt).Milliseconds()
-			entry.RequestMeta = mergeObservationMeta(entry.RequestMeta, map[string]any{
+			obs.RequestMeta = requestlog.MergeMeta(obs.RequestMeta, map[string]any{
 				"error_phase": "build_request",
 			})
-			r.attachRequestLogArtifacts(entry, prepared, nil, nil)
-			r.logRequestAsync(entry)
+			r.logRequestAsync(entry, obs)
 
 			slog.Warn("driver rejected request before upstream",
 				"accountId", acct.ID,
@@ -259,13 +267,12 @@ func (r *Relay) executeRelayAttempt(
 		if acct.CellID != "" && r.cfg.CellErrorPause > 0 && neterr.IsTransport(err) {
 			r.pool.CooldownCell(acct.CellID, time.Now().Add(r.cfg.CellErrorPause), fmt.Sprintf("relay transport error on account %s: %v", acct.Email, err))
 		}
-		entry := r.baseRequestLog(prepared, acct, attempt)
+		entry, obs := r.baseRequestLog(prepared, acct, attempt)
 		entry.Status = "transport_error"
 		entry.EffectKind = "transport_error"
 		entry.DurationMs = time.Since(attemptStartedAt).Milliseconds()
-		setRequestLogUpstreamRequest(entry, upReq, upstreamReqBody)
-		r.attachRequestLogArtifacts(entry, prepared, upstreamReqBody, nil)
-		r.logRequestAsync(entry)
+		setRequestLogUpstreamRequest(obs, upReq, upstreamReqBody)
+		r.logRequestAsync(entry, obs)
 		slog.Error("upstream request failed",
 			"accountId", acct.ID,
 			"userId", prepared.keyInfo.ID,
@@ -323,30 +330,29 @@ func (r *Relay) executeRelayAttempt(
 
 		state.lastUpstreamStatus = resp.StatusCode
 		state.lastUpstreamBody = errBody
-		entry := r.baseRequestLog(prepared, acct, attempt)
+		entry, obs := r.baseRequestLog(prepared, acct, attempt)
 		entry.Status = fmt.Sprintf("upstream_%d", resp.StatusCode)
 		entry.UpstreamStatus = resp.StatusCode
 		entry.DurationMs = time.Since(attemptStartedAt).Milliseconds()
-		setRequestLogUpstreamRequest(entry, upReq, upstreamReqBody)
+		setRequestLogUpstreamRequest(obs, upReq, upstreamReqBody)
 		effect := drv.Interpret(resp.StatusCode, resp.Header, errBody, prepared.input.Model, json.RawMessage(acct.ProviderStateJSON))
-		setRequestLogUpstreamResponse(entry, resp, errBody, &effect)
-		r.attachRequestLogArtifacts(entry, prepared, upstreamReqBody, errBody)
+		setRequestLogUpstreamResponse(entry, obs, resp, errBody, &effect)
 
 		if drv.ParseNonRetriable(resp.StatusCode, errBody) {
-			r.logRequestAsync(entry)
+			r.logRequestAsync(entry, obs)
 			drv.WriteUpstreamError(w, resp.StatusCode, errBody, prepared.input.IsStream)
 			return relayAttemptDone
 		}
 
 		if drv.RetrySameAccount(resp.StatusCode, errBody, state.forbiddenRetries[acct.ID]) {
-			r.logRequestAsync(entry)
+			r.logRequestAsync(entry, obs)
 			state.forbiddenRetries[acct.ID]++
 			state.lastErr = fmt.Errorf("upstream %d (retry %d)", resp.StatusCode, state.forbiddenRetries[acct.ID])
 			return relayAttemptContinue
 		}
 
 		entry.EffectKind = relayEffectKind(effect.Kind)
-		r.logRequestAsync(entry)
+		r.logRequestAsync(entry, obs)
 		r.pool.Observe(acct.ID, effect)
 		r.maybeSetUserRouteBinding(ctx, prepared, drv, acct, effect)
 		state.exclude(acct, effect)
@@ -362,15 +368,14 @@ func (r *Relay) executeRelayAttempt(
 		resp.Body.Close()
 
 		effect := drv.Interpret(resp.StatusCode, resp.Header, errBody, prepared.input.Model, json.RawMessage(acct.ProviderStateJSON))
-		entry := r.baseRequestLog(prepared, acct, attempt)
+		entry, obs := r.baseRequestLog(prepared, acct, attempt)
 		entry.Status = fmt.Sprintf("upstream_%d", resp.StatusCode)
 		entry.UpstreamStatus = resp.StatusCode
 		entry.EffectKind = relayEffectKind(effect.Kind)
 		entry.DurationMs = time.Since(attemptStartedAt).Milliseconds()
-		setRequestLogUpstreamRequest(entry, upReq, upstreamReqBody)
-		setRequestLogUpstreamResponse(entry, resp, errBody, &effect)
-		r.attachRequestLogArtifacts(entry, prepared, upstreamReqBody, errBody)
-		r.logRequestAsync(entry)
+		setRequestLogUpstreamRequest(obs, upReq, upstreamReqBody)
+		setRequestLogUpstreamResponse(entry, obs, resp, errBody, &effect)
+		r.logRequestAsync(entry, obs)
 		r.pool.Observe(acct.ID, effect)
 		r.maybeSetUserRouteBinding(ctx, prepared, drv, acct, effect)
 
@@ -436,22 +441,21 @@ func (r *Relay) finishRelaySuccess(
 		w.Write(respBody)
 	}
 
-	entry := r.baseRequestLog(prepared, acct, attempt)
+	entry, obs := r.baseRequestLog(prepared, acct, attempt)
 	entry.Status = "ok"
 	if prepared.input.IsStream && !streamCompleted {
 		entry.Status = "stream_incomplete"
 	}
 	entry.EffectKind = relayEffectKind(effect.Kind)
 	entry.DurationMs = time.Since(attemptStartedAt).Milliseconds()
-	setRequestLogUpstreamRequest(entry, upReq, upstreamReqBody)
-	setRequestLogUpstreamResponse(entry, resp, respBody, &effect)
-	r.attachRequestLogArtifacts(entry, prepared, upstreamReqBody, respBody)
+	setRequestLogUpstreamRequest(obs, upReq, upstreamReqBody)
+	setRequestLogUpstreamResponse(entry, obs, resp, respBody, &effect)
 	if prepared.input.IsStream {
-		entry.RequestMeta = mergeObservationMeta(entry.RequestMeta, map[string]any{
+		obs.RequestMeta = requestlog.MergeMeta(obs.RequestMeta, map[string]any{
 			"stream_completed": streamCompleted,
 		})
 		if observer, ok := w.(interface{ ClientResponseObservation() map[string]any }); ok {
-			entry.RequestMeta = mergeObservationMeta(entry.RequestMeta, map[string]any{
+			obs.RequestMeta = requestlog.MergeMeta(obs.RequestMeta, map[string]any{
 				"client_response": observer.ClientResponseObservation(),
 			})
 		}
@@ -473,7 +477,7 @@ func (r *Relay) finishRelaySuccess(
 		entry.CacheCreateTokens = usage.CacheCreateTokens
 		entry.CostUSD = drv.CalcCost(prepared.input.Model, usage)
 	}
-	r.logRequestAsync(entry)
+	r.logRequestAsync(entry, obs)
 }
 
 func (r *Relay) maybeSetUserRouteBinding(ctx context.Context, prepared *preparedRelayRequest, drv driver.ExecutionDriver, acct *domain.Account, effect driver.Effect) {
@@ -497,12 +501,28 @@ func (r *Relay) maybeSetUserRouteBinding(ctx context.Context, prepared *prepared
 	}
 }
 
-func (r *Relay) logRequestAsync(entry *domain.RequestLog) {
+func (r *Relay) logRequestAsync(entry *domain.RequestLog, obs *requestlog.LogObservation) {
 	if entry == nil {
 		return
 	}
+	r.logFlush.Add(1)
 	go func() {
-		_ = r.store.InsertRequestLog(context.Background(), entry)
+		defer r.logFlush.Done()
+		id, err := r.store.InsertRequestLog(context.Background(), entry)
+		if err != nil {
+			slog.Warn("insert request log failed", "error", err)
+			return
+		}
+		entry.ID = id
+		if obs == nil || r.cfg.RequestLogBlobDir == "" {
+			return
+		}
+		if !r.cfg.RequestLogBlobMode.ShouldWrite(entry.Status) {
+			return
+		}
+		if werr := requestlog.WriteLogFile(r.cfg.RequestLogBlobDir, entry, obs); werr != nil {
+			slog.Warn("write request log file failed", "id", id, "error", werr)
+		}
 	}()
 }
 
