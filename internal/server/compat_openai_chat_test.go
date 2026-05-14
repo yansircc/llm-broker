@@ -8,6 +8,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -20,6 +22,7 @@ import (
 	"github.com/yansircc/llm-broker/internal/events"
 	"github.com/yansircc/llm-broker/internal/pool"
 	"github.com/yansircc/llm-broker/internal/relay"
+	"github.com/yansircc/llm-broker/internal/requestlog"
 	"github.com/yansircc/llm-broker/internal/store"
 )
 
@@ -620,25 +623,47 @@ func TestHandleCompatOpenAIChatCompletions_LogsRawCompatClientRequest(t *testing
 	}
 
 	entry := waitForCompatRequestLog(t, srv)
-	if entry.Path != "/compat/v1/chat/completions" {
-		t.Fatalf("entry.Path = %q, want compat path", entry.Path)
+	if entry.Surface != "compat" {
+		t.Fatalf("entry.Surface = %q, want compat", entry.Surface)
 	}
-	if !strings.Contains(entry.ClientBodyExcerpt, `"claude/claude-sonnet-4-5"`) {
-		t.Fatalf("ClientBodyExcerpt = %q, want raw compat model", entry.ClientBodyExcerpt)
+	artifactPath := filepath.Join(
+		srv.requestLogBlobDir(),
+		entry.CreatedAt.UTC().Format("2006/01/02"),
+		strconv.FormatInt(entry.ID, 10)+".json",
+	)
+	raw, err := os.ReadFile(artifactPath)
+	if err != nil {
+		t.Fatalf("ReadFile(%s): %v", artifactPath, err)
 	}
-	if !strings.Contains(entry.ClientBodyExcerpt, `"reasoning_effort":"max"`) {
-		t.Fatalf("ClientBodyExcerpt = %q, want raw compat-only field", entry.ClientBodyExcerpt)
+	var artifact map[string]any
+	if err := json.Unmarshal(raw, &artifact); err != nil {
+		t.Fatalf("Unmarshal observation artifact: %v", err)
 	}
-	if !strings.Contains(entry.UpstreamRequestBodyExcerpt, `"claude-sonnet-4-5"`) {
-		t.Fatalf("UpstreamRequestBodyExcerpt = %q, want translated model", entry.UpstreamRequestBodyExcerpt)
+	client, ok := artifact["client"].(map[string]any)
+	if !ok {
+		t.Fatalf("artifact client = %#v", artifact["client"])
 	}
-	if strings.Contains(entry.UpstreamRequestBodyExcerpt, "reasoning_effort") {
-		t.Fatalf("UpstreamRequestBodyExcerpt = %q, unexpected raw compat field", entry.UpstreamRequestBodyExcerpt)
+	clientBody, _ := client["body_excerpt"].(string)
+	if !strings.Contains(clientBody, `"claude/claude-sonnet-4-5"`) {
+		t.Fatalf("client.body_excerpt = %q, want raw compat model", clientBody)
 	}
-
-	var requestMeta map[string]any
-	if err := json.Unmarshal(entry.RequestMeta, &requestMeta); err != nil {
-		t.Fatalf("Unmarshal RequestMeta: %v", err)
+	if !strings.Contains(clientBody, `"reasoning_effort":"max"`) {
+		t.Fatalf("client.body_excerpt = %q, want raw compat-only field", clientBody)
+	}
+	upstreamRequest, ok := artifact["upstream_request"].(map[string]any)
+	if !ok {
+		t.Fatalf("artifact upstream_request = %#v", artifact["upstream_request"])
+	}
+	upstreamBody, _ := upstreamRequest["body_excerpt"].(string)
+	if !strings.Contains(upstreamBody, `"claude-sonnet-4-5"`) {
+		t.Fatalf("upstream_request.body_excerpt = %q, want translated model", upstreamBody)
+	}
+	if strings.Contains(upstreamBody, "reasoning_effort") {
+		t.Fatalf("upstream_request.body_excerpt = %q, unexpected raw compat field", upstreamBody)
+	}
+	requestMeta, ok := client["meta"].(map[string]any)
+	if !ok {
+		t.Fatalf("client.meta = %#v, want object", client["meta"])
 	}
 	compatClient, ok := requestMeta["compat_client"].(map[string]any)
 	if !ok {
@@ -646,17 +671,6 @@ func TestHandleCompatOpenAIChatCompletions_LogsRawCompatClientRequest(t *testing
 	}
 	if compatClient["reasoning_effort"] != "max" {
 		t.Fatalf("compat_client.reasoning_effort = %#v, want max", compatClient["reasoning_effort"])
-	}
-	path, _ := requestMeta["body_artifact_path"].(string)
-	if path == "" {
-		t.Fatalf("body_artifact_path = %#v, want non-empty path", requestMeta["body_artifact_path"])
-	}
-	raw, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatalf("ReadFile(%s): %v", path, err)
-	}
-	if !strings.Contains(string(raw), `"reasoning_effort":"max"`) {
-		t.Fatalf("raw artifact = %q, want raw compat request", string(raw))
 	}
 }
 
@@ -1211,10 +1225,7 @@ func TestHandleCompatOpenAIChatCompletions_RateLimited(t *testing.T) {
 	if entry.EffectKind != "overload" {
 		t.Fatalf("entry.EffectKind = %q, want overload", entry.EffectKind)
 	}
-	var meta map[string]any
-	if err := json.Unmarshal(entry.RequestMeta, &meta); err != nil {
-		t.Fatalf("Unmarshal RequestMeta: %v", err)
-	}
+	meta := readCompatRequestLogMeta(t, srv, entry)
 	if meta["phase"] != "compat_preflight" {
 		t.Fatalf("phase = %#v, want compat_preflight", meta["phase"])
 	}
@@ -1257,10 +1268,7 @@ func TestHandleCompatOpenAIChatCompletions_LogsConvertFailure(t *testing.T) {
 	if entry.EffectKind != "server_error" {
 		t.Fatalf("entry.EffectKind = %q, want server_error", entry.EffectKind)
 	}
-	var meta map[string]any
-	if err := json.Unmarshal(entry.RequestMeta, &meta); err != nil {
-		t.Fatalf("Unmarshal RequestMeta: %v", err)
-	}
+	meta := readCompatRequestLogMeta(t, srv, entry)
 	if meta["phase"] != "compat_final" {
 		t.Fatalf("phase = %#v, want compat_final", meta["phase"])
 	}
@@ -1314,10 +1322,7 @@ func TestHandleCompatOpenAIChatCompletions_StreamIncompleteWritesLifecycleFailur
 	if last.EffectKind != "stream_incomplete" {
 		t.Fatalf("entry.EffectKind = %q, want stream_incomplete", last.EffectKind)
 	}
-	var meta map[string]any
-	if err := json.Unmarshal(last.RequestMeta, &meta); err != nil {
-		t.Fatalf("Unmarshal RequestMeta: %v", err)
-	}
+	meta := readCompatRequestLogMeta(t, srv, last)
 	if meta["phase"] != "compat_final" {
 		t.Fatalf("phase = %#v, want compat_final", meta["phase"])
 	}
@@ -1404,6 +1409,9 @@ func waitForCompatRequestLog(t *testing.T, srv *Server) *domain.RequestLog {
 			t.Fatalf("QueryRequestLogs() error = %v", err)
 		}
 		if total > 0 && len(logs) > 0 {
+			// Drain pending log-write goroutines so callers can safely read the on-disk file.
+			srv.relay.WaitForLogFlush()
+			srv.WaitForLogFlush()
 			return logs[0]
 		}
 		time.Sleep(10 * time.Millisecond)
@@ -1422,6 +1430,8 @@ func waitForCompatRequestLogsCount(t *testing.T, srv *Server, want int) []*domai
 			t.Fatalf("QueryRequestLogs() error = %v", err)
 		}
 		if total >= want && len(logs) >= want {
+			srv.relay.WaitForLogFlush()
+			srv.WaitForLogFlush()
 			return logs
 		}
 		time.Sleep(10 * time.Millisecond)
@@ -1440,6 +1450,41 @@ func findCompatRequestLogByStatus(t *testing.T, logs []*domain.RequestLog, want 
 	}
 	t.Fatalf("request logs do not contain status %q", want)
 	return nil
+}
+
+// readCompatRequestLogMeta loads the on-disk observation artifact for a
+// compat-lifecycle request log entry and returns the meta object that lives
+// under client.meta in the v2 payload (the same object previously stored in
+// RequestLog.RequestMeta).
+func readCompatRequestLogMeta(t *testing.T, srv *Server, entry *domain.RequestLog) map[string]any {
+	t.Helper()
+
+	if entry == nil || entry.ID == 0 {
+		t.Fatalf("readCompatRequestLogMeta: entry has no id")
+	}
+	dir := srv.requestLogBlobDir()
+	if dir == "" {
+		// Fall back to the relay's blob dir for success-path entries.
+		dir = filepath.Join(filepath.Dir(srv.cfg.DBPath), "request-log-blobs")
+	}
+	path := filepath.Join(dir,
+		entry.CreatedAt.UTC().Format("2006/01/02"),
+		strconv.FormatInt(entry.ID, 10)+".json",
+	)
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("ReadFile(%s): %v", path, err)
+	}
+	var artifact map[string]any
+	if err := json.Unmarshal(raw, &artifact); err != nil {
+		t.Fatalf("Unmarshal observation artifact: %v", err)
+	}
+	client, ok := artifact["client"].(map[string]any)
+	if !ok {
+		return nil
+	}
+	meta, _ := client["meta"].(map[string]any)
+	return meta
 }
 
 func newCompatMultiProviderTestServer(t *testing.T, upstreamClients map[domain.Provider]*http.Client) *Server {
@@ -1513,9 +1558,12 @@ func newCompatMultiProviderTestServer(t *testing.T, upstreamClients map[domain.P
 		APIURL: "https://gemini.example",
 	})
 
-	return &Server{
+	blobDir := t.TempDir()
+	srv := &Server{
 		cfg: &config.Config{
 			MaxRequestBodyMB: 60,
+			DBPath:           filepath.Join(blobDir, "data.db"),
+			LogBlobsMode:     requestlog.BlobModeAll,
 		},
 		store: ms,
 		pool:  p,
@@ -1525,9 +1573,10 @@ func newCompatMultiProviderTestServer(t *testing.T, upstreamClients map[domain.P
 			staticTokenProvider{},
 			ms,
 			relay.Config{
-				MaxRequestBodyMB:  60,
-				MaxRetryAccounts:  0,
-				RequestLogBlobDir: t.TempDir(),
+				MaxRequestBodyMB:   60,
+				MaxRetryAccounts:   0,
+				RequestLogBlobDir:  filepath.Join(blobDir, "request-log-blobs"),
+				RequestLogBlobMode: requestlog.BlobModeAll,
 			},
 			staticTransportProvider{clients: upstreamClients},
 			bus,
@@ -1541,6 +1590,9 @@ func newCompatMultiProviderTestServer(t *testing.T, upstreamClients map[domain.P
 			domain.ProviderGemini: geminiDrv,
 		},
 	}
+	t.Cleanup(srv.relay.WaitForLogFlush)
+	t.Cleanup(srv.WaitForLogFlush)
+	return srv
 }
 
 type staticTokenProvider struct{}

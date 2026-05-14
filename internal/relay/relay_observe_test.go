@@ -3,12 +3,9 @@ package relay
 import (
 	"encoding/json"
 	"net/http"
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 
-	"github.com/yansircc/llm-broker/internal/domain"
 	"github.com/yansircc/llm-broker/internal/driver"
 )
 
@@ -125,79 +122,6 @@ func TestRequestBodyExcerptKeepsHeadAndTailWhenTruncated(t *testing.T) {
 	}
 	if !strings.Contains(excerpt, "...<truncated>...") {
 		t.Fatalf("excerpt missing truncation marker: %q", excerpt)
-	}
-}
-
-func TestAttachRequestLogArtifactsSpillsTruncatedBodiesToFiles(t *testing.T) {
-	body := []byte(`{"head":"` + strings.Repeat("A", 5000) + `","middle":"` + strings.Repeat("B", 5000) + `","tail":"TAIL_MARKER"}`)
-	entry := &domain.RequestLog{
-		RequestMeta: json.RawMessage(`{"stream":true}`),
-	}
-	relaySvc := &Relay{
-		cfg: Config{
-			RequestLogBlobDir: t.TempDir(),
-		},
-	}
-	prepared := &preparedRelayRequest{
-		input: &driver.RelayInput{
-			RawBody: body,
-		},
-	}
-
-	relaySvc.attachRequestLogArtifacts(entry, prepared, nil, nil)
-
-	var meta map[string]any
-	if err := json.Unmarshal(entry.RequestMeta, &meta); err != nil {
-		t.Fatalf("Unmarshal RequestMeta: %v", err)
-	}
-	path, ok := meta["body_artifact_path"].(string)
-	if !ok || path == "" {
-		t.Fatalf("body_artifact_path = %#v, want non-empty path", meta["body_artifact_path"])
-	}
-	if !filepath.IsAbs(path) {
-		t.Fatalf("body_artifact_path = %q, want absolute path", path)
-	}
-	got, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatalf("ReadFile(%s): %v", path, err)
-	}
-	if string(got) != string(body) {
-		t.Fatalf("artifact content mismatch")
-	}
-}
-
-func TestAttachRequestLogArtifactsSpillsSmallBodiesToFiles(t *testing.T) {
-	body := []byte(`{"model":"claude-sonnet-4-6","messages":[{"role":"user","content":"hello"}]}`)
-	entry := &domain.RequestLog{
-		RequestMeta: json.RawMessage(`{"stream":false}`),
-	}
-	relaySvc := &Relay{
-		cfg: Config{
-			RequestLogBlobDir: t.TempDir(),
-		},
-	}
-	prepared := &preparedRelayRequest{
-		input: &driver.RelayInput{
-			RawBody: body,
-		},
-	}
-
-	relaySvc.attachRequestLogArtifacts(entry, prepared, nil, nil)
-
-	var meta map[string]any
-	if err := json.Unmarshal(entry.RequestMeta, &meta); err != nil {
-		t.Fatalf("Unmarshal RequestMeta: %v", err)
-	}
-	path, ok := meta["body_artifact_path"].(string)
-	if !ok || path == "" {
-		t.Fatalf("body_artifact_path = %#v, want non-empty path", meta["body_artifact_path"])
-	}
-	got, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatalf("ReadFile(%s): %v", path, err)
-	}
-	if string(got) != string(body) {
-		t.Fatalf("artifact content mismatch")
 	}
 }
 

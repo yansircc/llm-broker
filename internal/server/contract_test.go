@@ -269,13 +269,12 @@ func TestActivity_UsesLightweightShape(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if err := srv.store.InsertRequestLog(context.Background(), &domain.RequestLog{
+	if _, err := srv.store.InsertRequestLog(context.Background(), &domain.RequestLog{
 		UserID:            "u-1",
 		AccountID:         "acct-1",
 		Provider:          "claude",
 		Surface:           "native",
 		Model:             "claude-sonnet-4-6",
-		Path:              "/v1/messages",
 		Status:            "upstream_403",
 		EffectKind:        "block",
 		UpstreamStatus:    http.StatusForbidden,
@@ -853,7 +852,7 @@ func TestListUserTotalCosts_ReturnsRequestedTotals(t *testing.T) {
 		{UserID: "u-2", Status: "ok", CostUSD: 2.50, CreatedAt: time.Now().UTC()},
 		{UserID: "u-3", Status: "upstream_403", CostUSD: 99, CreatedAt: time.Now().UTC()},
 	} {
-		if err := srv.store.InsertRequestLog(context.Background(), log); err != nil {
+		if _, err := srv.store.InsertRequestLog(context.Background(), log); err != nil {
 			t.Fatal(err)
 		}
 	}
