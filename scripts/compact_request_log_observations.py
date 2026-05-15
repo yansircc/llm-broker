@@ -79,7 +79,10 @@ ALL_COLUMNS = [
 
 def available_columns(con: sqlite3.Connection) -> list[str]:
     cur = con.execute("PRAGMA table_info(request_log)")
-    return [row[1] for row in cur.fetchall()]
+    return [
+        (row[1].decode("utf-8", errors="replace") if isinstance(row[1], bytes) else row[1])
+        for row in cur.fetchall()
+    ]
 
 
 def json_value(raw: str | None) -> Any:
@@ -247,6 +250,10 @@ def migrate(
 
     uri = f"file:{db_path.resolve()}?mode=ro"
     con = sqlite3.connect(uri, uri=True)
+    # Historical excerpts may contain bytes that aren't valid UTF-8 (LLM
+    # responses truncated mid-codepoint). text_factory=bytes returns raw bytes
+    # and the build_payload helpers decode with errors="replace" downstream.
+    con.text_factory = bytes
     try:
         con.row_factory = sqlite3.Row
         present = set(available_columns(con))
@@ -278,7 +285,12 @@ def migrate(
             if not rows:
                 break
             for row_obj in rows:
-                row = dict(row_obj)
+                row = {
+                    k: (
+                        v.decode("utf-8", errors="replace") if isinstance(v, bytes) else v
+                    )
+                    for k, v in dict(row_obj).items()
+                }
                 stats["rows_seen"] += 1
                 if not has_observation(row):
                     stats["rows_skipped_empty"] += 1
