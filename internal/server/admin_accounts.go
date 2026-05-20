@@ -2,12 +2,14 @@ package server
 
 import (
 	"encoding/json"
+	"errors"
 	"log/slog"
 	"net/http"
 	"strings"
 	"time"
 
 	"github.com/yansircc/llm-broker/internal/domain"
+	"github.com/yansircc/llm-broker/internal/pool"
 )
 
 // handleListAccounts returns all accounts (without tokens).
@@ -29,10 +31,10 @@ func (s *Server) handleListAccounts(w http.ResponseWriter, r *http.Request) {
 			WeightMode:      a.PriorityMode,
 			LastUsedAt:      a.LastUsedAt,
 			CooldownUntil:   a.CooldownUntil,
-			CellID:          a.CellID,
+			CellID:          canonicalCellID(a.CellID),
 			AvailableNative: avail.Native,
 			AvailableCompat: avail.Compat,
-			Cell:            toCellSummary(a.Cell, cellCounts[a.CellID]),
+			Cell:            toCellSummary(a.Cell, cellCounts[canonicalCellID(a.CellID)]),
 			Windows:         proj.windows,
 		})
 	}
@@ -102,8 +104,8 @@ func (s *Server) handleGetAccount(w http.ResponseWriter, r *http.Request) {
 		LastRefreshAt:  acct.LastRefreshAt,
 		ExpiresAt:      acct.ExpiresAt,
 		CooldownUntil:  acct.CooldownUntil,
-		CellID:         acct.CellID,
-		Cell:           toCellSummary(acct.Cell, cellCounts[acct.CellID]),
+		CellID:         canonicalCellID(acct.CellID),
+		Cell:           toCellSummary(acct.Cell, cellCounts[canonicalCellID(acct.CellID)]),
 		Windows:        proj.windows,
 		Stainless:      stainless,
 		Sessions:       sessions,
@@ -198,11 +200,6 @@ func (s *Server) handleUpdateAccountWeight(w http.ResponseWriter, r *http.Reques
 
 func (s *Server) handleBindAccountCell(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
-	acct := s.pool.Get(id)
-	if acct == nil {
-		writeAdminError(w, http.StatusNotFound, "not_found", "account not found")
-		return
-	}
 	var req struct {
 		CellID string `json:"cell_id"`
 	}
@@ -211,65 +208,32 @@ func (s *Server) handleBindAccountCell(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	req.CellID = strings.TrimSpace(req.CellID)
-	if req.CellID != "" {
-		cell := s.pool.GetCell(req.CellID)
-		if cell == nil {
-			writeAdminError(w, http.StatusBadRequest, "invalid_request", "cell not found")
-			return
-		}
-		if req.CellID != acct.CellID {
-			if reason := accountCellBindError(cell, time.Now().UTC()); reason != "" {
-				writeAdminError(w, http.StatusBadRequest, "invalid_request", reason)
-				return
-			}
-			if cell.Proxy == nil || cell.Proxy.Type != "socks5" {
-				if accountOwnsCell(s.pool.List(), acct.ID, req.CellID, acct.Provider) {
-					writeAdminError(w, http.StatusBadRequest, "invalid_request", "cell is already bound to another account of the same provider")
-					return
-				}
-			}
-		}
-	}
-	if err := s.pool.Update(id, func(a *domain.Account) {
-		a.CellID = req.CellID
-	}); err != nil {
-		writeAdminError(w, http.StatusNotFound, "not_found", "account not found")
+	if err := s.pool.BindAccountCell(id, req.CellID, time.Now().UTC()); err != nil {
+		writeAccountCellBindingError(w, err)
 		return
 	}
 	slog.Info("account cell updated", "id", id, "cellId", req.CellID)
 	writeJSON(w, http.StatusOK, map[string]string{"id": id, "cell_id": req.CellID})
 }
 
-func accountCellBindError(cell *domain.EgressCell, now time.Time) string {
-	if cell == nil {
-		return "cell not found"
+func writeAccountCellBindingError(w http.ResponseWriter, err error) {
+	if errors.Is(err, pool.ErrAccountNotFound) {
+		writeAdminError(w, http.StatusNotFound, "not_found", "account not found")
+		return
 	}
-	status := cell.Status
-	if status == "" {
-		status = domain.EgressCellActive
+	if isCellBindingError(err) {
+		writeAdminError(w, http.StatusBadRequest, "invalid_request", err.Error())
+		return
 	}
-	if status != domain.EgressCellActive {
-		return "cell is not active"
-	}
-	if cell.CooldownUntil != nil && now.Before(*cell.CooldownUntil) {
-		return "cell is cooling down"
-	}
-	if cell.Proxy == nil || strings.TrimSpace(cell.Proxy.Host) == "" || cell.Proxy.Port <= 0 {
-		return "cell has no usable proxy"
-	}
-	return ""
+	writeAdminError(w, http.StatusInternalServerError, "internal_error", "failed to update account cell")
 }
 
-func accountOwnsCell(accounts []*domain.Account, accountID, cellID string, provider domain.Provider) bool {
-	for _, acct := range accounts {
-		if acct == nil || acct.ID == accountID {
-			continue
-		}
-		if acct.CellID == cellID && acct.Provider == provider {
-			return true
-		}
-	}
-	return false
+func isCellBindingError(err error) bool {
+	return errors.Is(err, pool.ErrCellNotFound) ||
+		errors.Is(err, pool.ErrCellInactive) ||
+		errors.Is(err, pool.ErrCellCoolingDown) ||
+		errors.Is(err, pool.ErrCellNoProxy) ||
+		errors.Is(err, pool.ErrCellOccupied)
 }
 
 func (s *Server) handleRefreshAccount(w http.ResponseWriter, r *http.Request) {

@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -557,6 +558,147 @@ func TestListEgressCells_EmptyAccountsArray(t *testing.T) {
 	}
 }
 
+func TestListEgressCells_CanonicalizesLegacyAccountCellID(t *testing.T) {
+	srv := newTestServer(t)
+
+	if err := srv.store.SaveAccount(context.Background(), &domain.Account{
+		ID:       "acct-dirty",
+		Email:    "dirty@example.com",
+		Provider: domain.ProviderClaude,
+		Status:   domain.StatusActive,
+		CellID:   " cell-dirty ",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := srv.store.SaveEgressCell(context.Background(), &domain.EgressCell{
+		ID:        "cell-dirty",
+		Name:      "dirty cell",
+		Status:    domain.EgressCellActive,
+		Proxy:     &domain.ProxyConfig{Type: "socks5", Host: "127.0.0.1", Port: 11080},
+		CreatedAt: time.Now().UTC(),
+		UpdatedAt: time.Now().UTC(),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	srv.pool, _ = pool.New(srv.store, srv.bus)
+
+	w := httptest.NewRecorder()
+	srv.handleListEgressCells(w, adminRequest("GET", "/admin/egress/cells"))
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status %d, body: %s", w.Code, w.Body.String())
+	}
+
+	var result []map[string]any
+	if err := json.Unmarshal(w.Body.Bytes(), &result); err != nil {
+		t.Fatalf("json.Unmarshal: %v", err)
+	}
+	if len(result) != 1 {
+		t.Fatalf("len(result) = %d, want 1", len(result))
+	}
+	accounts, ok := result[0]["accounts"].([]any)
+	if !ok {
+		t.Fatalf("accounts is %T, want []", result[0]["accounts"])
+	}
+	if len(accounts) != 1 {
+		t.Fatalf("len(accounts) = %d, want 1", len(accounts))
+	}
+	if err := srv.pool.DeleteCell("cell-dirty"); !errors.Is(err, pool.ErrCellInUse) {
+		t.Fatalf("DeleteCell(cell-dirty) = %v, want %v", err, pool.ErrCellInUse)
+	}
+}
+
+func TestDeleteEgressCell_RemovesUnboundCell(t *testing.T) {
+	srv := newTestServer(t)
+
+	if err := srv.store.SaveEgressCell(context.Background(), &domain.EgressCell{
+		ID:        "cell-unused",
+		Name:      "unused",
+		Status:    domain.EgressCellActive,
+		Proxy:     &domain.ProxyConfig{Type: "socks5", Host: "127.0.0.1", Port: 11080},
+		CreatedAt: time.Now().UTC(),
+		UpdatedAt: time.Now().UTC(),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	srv.pool, _ = pool.New(srv.store, srv.bus)
+
+	w := httptest.NewRecorder()
+	r := adminRequest(http.MethodDelete, "/admin/egress/cells/cell-unused")
+	r.SetPathValue("id", "cell-unused")
+	srv.handleDeleteEgressCell(w, r)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status %d, want %d, body: %s", w.Code, http.StatusOK, w.Body.String())
+	}
+	if got := jsonPath(t, w.Body.Bytes(), "deleted"); got != true {
+		t.Fatalf("deleted = %#v, want true", got)
+	}
+	cell, err := srv.store.GetEgressCell(context.Background(), "cell-unused")
+	if err != nil {
+		t.Fatalf("GetEgressCell(): %v", err)
+	}
+	if cell != nil {
+		t.Fatalf("GetEgressCell() = %#v, want nil", cell)
+	}
+}
+
+func TestDeleteEgressCell_RejectsBoundCell(t *testing.T) {
+	srv := newTestServer(t)
+
+	if err := srv.store.SaveAccount(context.Background(), &domain.Account{
+		ID:       "acct-bound",
+		Email:    "bound@example.com",
+		Provider: domain.ProviderClaude,
+		Status:   domain.StatusActive,
+		CellID:   "cell-bound",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := srv.store.SaveEgressCell(context.Background(), &domain.EgressCell{
+		ID:        "cell-bound",
+		Name:      "bound",
+		Status:    domain.EgressCellActive,
+		Proxy:     &domain.ProxyConfig{Type: "socks5", Host: "127.0.0.1", Port: 11080},
+		CreatedAt: time.Now().UTC(),
+		UpdatedAt: time.Now().UTC(),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	srv.pool, _ = pool.New(srv.store, srv.bus)
+
+	w := httptest.NewRecorder()
+	r := adminRequest(http.MethodDelete, "/admin/egress/cells/cell-bound")
+	r.SetPathValue("id", "cell-bound")
+	srv.handleDeleteEgressCell(w, r)
+
+	if w.Code != http.StatusConflict {
+		t.Fatalf("status %d, want %d, body: %s", w.Code, http.StatusConflict, w.Body.String())
+	}
+	if !strings.Contains(w.Body.String(), "cell_in_use") {
+		t.Fatalf("body %q does not mention cell_in_use", w.Body.String())
+	}
+	if cell := srv.pool.GetCell("cell-bound"); cell == nil {
+		t.Fatal("bound cell should remain")
+	}
+	if acct := srv.pool.Get("acct-bound"); acct == nil || acct.CellID != "cell-bound" {
+		t.Fatalf("account cell_id = %#v, want cell-bound", acct)
+	}
+}
+
+func TestDeleteEgressCell_NotFound(t *testing.T) {
+	srv := newTestServer(t)
+
+	w := httptest.NewRecorder()
+	r := adminRequest(http.MethodDelete, "/admin/egress/cells/missing")
+	r.SetPathValue("id", "missing")
+	srv.handleDeleteEgressCell(w, r)
+
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("status %d, want %d, body: %s", w.Code, http.StatusNotFound, w.Body.String())
+	}
+}
+
 func TestBindAccountCell_RejectsCoolingCell(t *testing.T) {
 	srv := newTestServer(t)
 
@@ -632,6 +774,53 @@ func TestBindAccountCell_AllowsActiveCell(t *testing.T) {
 	saved := srv.pool.Get("acct-2")
 	if saved == nil || saved.CellID != "cell-fr-linode-02" {
 		t.Fatalf("account cell_id = %q, want cell-fr-linode-02", saved.CellID)
+	}
+}
+
+func TestBindAccountCell_RejectsDeletedCellAfterPreflight(t *testing.T) {
+	srv := newTestServer(t)
+
+	if err := srv.store.SaveAccount(context.Background(), &domain.Account{
+		ID:       "acct-race",
+		Email:    "race@example.com",
+		Provider: domain.ProviderClaude,
+		Status:   domain.StatusActive,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := srv.store.SaveEgressCell(context.Background(), &domain.EgressCell{
+		ID:        "cell-race",
+		Name:      "cell race",
+		Status:    domain.EgressCellActive,
+		Proxy:     &domain.ProxyConfig{Type: "socks5", Host: "127.0.0.1", Port: 1083},
+		CreatedAt: time.Now().UTC(),
+		UpdatedAt: time.Now().UTC(),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	srv.pool, _ = pool.New(srv.store, srv.bus)
+
+	if cell := srv.pool.GetCell("cell-race"); cell == nil {
+		t.Fatal("preflight expected cell-race to exist")
+	}
+	if err := srv.pool.DeleteCell("cell-race"); err != nil {
+		t.Fatalf("DeleteCell(cell-race): %v", err)
+	}
+
+	w := httptest.NewRecorder()
+	r := httptest.NewRequest(http.MethodPost, "/admin/accounts/acct-race/cell", strings.NewReader(`{"cell_id":"cell-race"}`))
+	r = r.WithContext(adminRequest(http.MethodPost, "/admin/accounts/acct-race/cell").Context())
+	r.SetPathValue("id", "acct-race")
+	srv.handleBindAccountCell(w, r)
+
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("status %d, want %d, body: %s", w.Code, http.StatusBadRequest, w.Body.String())
+	}
+	if !strings.Contains(w.Body.String(), "cell not found") {
+		t.Fatalf("body %q does not mention missing cell", w.Body.String())
+	}
+	if saved := srv.pool.Get("acct-race"); saved == nil || saved.CellID != "" {
+		t.Fatalf("account cell_id = %#v, want empty", saved)
 	}
 }
 

@@ -1,9 +1,11 @@
 <script lang="ts">
 	import { page } from '$app/stores';
+	import { goto } from '$app/navigation';
 	import { base } from '$app/paths';
 	import { api } from '$lib/api';
 	import type { EgressCellView } from '$lib/admin-types';
 	import { fmtDate, dotClass } from '$lib/format';
+	import ConfirmAction from '$lib/components/ConfirmAction.svelte';
 
 	let cell = $state<EgressCellView | null>(null);
 	let error = $state('');
@@ -11,6 +13,7 @@
 	let actionError = $state('');
 	let clearing = $state(false);
 	let testing = $state(false);
+	let deleting = $state(false);
 	let testResult = $state<{ ok: boolean; latency_ms?: number; error?: string } | null>(null);
 
 	$effect(() => {
@@ -52,6 +55,20 @@
 
 	function cellAccounts(item: EgressCellView): NonNullable<EgressCellView['accounts']> {
 		return item.accounts ?? [];
+	}
+
+	async function deleteCell() {
+		if (!cell || deleting || cellAccounts(cell).length > 0) return;
+		deleting = true;
+		actionError = '';
+		try {
+			await api(`/egress/cells/${cell.id}`, { method: 'DELETE' });
+			goto(`${base}/dashboard`);
+		} catch (e: any) {
+			actionError = e.message;
+		} finally {
+			deleting = false;
+		}
 	}
 
 	async function clearCooldown() {
@@ -96,6 +113,9 @@
 		<button class="link" onclick={testCell} disabled={testing}>{testing ? '[testing...]' : '[test proxy]'}</button>
 		{#if cooldownActive(cell)}
 			<button class="link o" onclick={clearCooldown} disabled={clearing}>{clearing ? '[clearing...]' : '[clear cooldown]'}</button>
+		{/if}
+		{#if cellAccounts(cell).length === 0}
+			<ConfirmAction label={deleting ? '[deleting...]' : '[delete]'} cls="r" onclick={deleteCell} />
 		{/if}
 		{#if testResult}
 			{#if testResult.ok}

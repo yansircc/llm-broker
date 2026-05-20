@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net"
 	"net/http"
@@ -10,6 +11,7 @@ import (
 	"time"
 
 	"github.com/yansircc/llm-broker/internal/domain"
+	"github.com/yansircc/llm-broker/internal/pool"
 	"golang.org/x/net/proxy"
 )
 
@@ -33,7 +35,7 @@ func (s *Server) handleListEgressCells(w http.ResponseWriter, r *http.Request) {
 			Accounts:      make([]EgressCellAccountRef, 0, counts[cell.ID]),
 		}
 		for _, acct := range accounts {
-			if acct.CellID != cell.ID {
+			if canonicalCellID(acct.CellID) != cell.ID {
 				continue
 			}
 			item.Accounts = append(item.Accounts, EgressCellAccountRef{
@@ -115,6 +117,26 @@ func (s *Server) handleUpsertEgressCell(w http.ResponseWriter, r *http.Request) 
 		UpdatedAt:     saved.UpdatedAt,
 		Accounts:      []EgressCellAccountRef{},
 	})
+}
+
+func (s *Server) handleDeleteEgressCell(w http.ResponseWriter, r *http.Request) {
+	id := strings.TrimSpace(r.PathValue("id"))
+	if id == "" {
+		writeAdminError(w, http.StatusBadRequest, "invalid_request", "cell id is required")
+		return
+	}
+	if err := s.pool.DeleteCell(id); err != nil {
+		switch {
+		case errors.Is(err, pool.ErrCellNotFound):
+			writeAdminError(w, http.StatusNotFound, "not_found", "cell not found")
+		case errors.Is(err, pool.ErrCellInUse):
+			writeAdminError(w, http.StatusConflict, "cell_in_use", "cell has bound accounts")
+		default:
+			writeAdminError(w, http.StatusInternalServerError, "internal_error", "failed to delete cell")
+		}
+		return
+	}
+	writeJSON(w, http.StatusOK, EgressCellDeleteResponse{ID: id, Deleted: true})
 }
 
 func (s *Server) handleClearEgressCellCooldown(w http.ResponseWriter, r *http.Request) {

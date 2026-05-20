@@ -70,11 +70,21 @@ func (p *Pool) Update(accountID string, fn func(*domain.Account)) error {
 	}
 	acct, ok := p.accounts[accountID]
 	if !ok {
-		return fmt.Errorf("account %s not found", accountID)
+		return ErrAccountNotFound
 	}
 
 	projected := p.projectAccountLocked(acct)
 	fn(projected)
+	projected.CellID = canonicalCellID(projected.CellID)
+	if projected.CellID != acct.CellID || projected.Provider != acct.Provider {
+		currentCellID := acct.CellID
+		if projected.Provider != acct.Provider {
+			currentCellID = ""
+		}
+		if err := p.validateCellBindingLocked(accountID, projected.Provider, currentCellID, projected.CellID, time.Now().UTC()); err != nil {
+			return err
+		}
+	}
 
 	acct.Email = projected.Email
 	acct.Provider = projected.Provider
@@ -120,6 +130,10 @@ func (p *Pool) Add(acct *domain.Account) error {
 	stateJSON := acct.ProviderStateJSON
 	if stateJSON == "" {
 		stateJSON = "{}"
+	}
+	acct.CellID = canonicalCellID(acct.CellID)
+	if err := p.validateCellBindingLocked(acct.ID, acct.Provider, "", acct.CellID, time.Now().UTC()); err != nil {
+		return err
 	}
 	p.refreshBucketKeyLocked(acct, stateJSON)
 	bucket := p.ensureBucketLocked(acct)

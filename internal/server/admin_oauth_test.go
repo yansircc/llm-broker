@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -320,6 +321,58 @@ func TestHandleExchangeCodeCreatesAccountBoundToCell(t *testing.T) {
 	}
 }
 
+func TestCreateExchangedAccountRejectsDeletedCellAfterPreflight(t *testing.T) {
+	ms := store.NewMockStore()
+	bus := events.NewBus(100)
+	p, err := pool.New(ms, bus)
+	if err != nil {
+		t.Fatalf("pool.New() error = %v", err)
+	}
+	if err := p.SaveCell(&domain.EgressCell{
+		ID:        "cell-race",
+		Name:      "cell race",
+		Status:    domain.EgressCellActive,
+		Proxy:     &domain.ProxyConfig{Type: "socks5", Host: "127.0.0.1", Port: 11083},
+		CreatedAt: time.Now().UTC(),
+		UpdatedAt: time.Now().UTC(),
+	}); err != nil {
+		t.Fatalf("SaveCell() error = %v", err)
+	}
+
+	c := crypto.New("test-encryption-key")
+	tm := tokens.NewManager(p, c, nil, time.Minute, 0, nil)
+	stub := &exchangeStubDriver{provider: domain.ProviderClaude}
+	srv := &Server{
+		cfg:    &config.Config{},
+		store:  ms,
+		pool:   p,
+		tokens: tm,
+		bus:    bus,
+	}
+	result := &driver.ExchangeResult{
+		AccessToken:  "access-token",
+		RefreshToken: "refresh-token",
+		ExpiresIn:    3600,
+		Subject:      "sub-race",
+		Email:        "race@example.com",
+	}
+
+	if err := srv.validateExchangeCellSelection(nil, "cell-race", domain.ProviderClaude); err != nil {
+		t.Fatalf("validateExchangeCellSelection(): %v", err)
+	}
+	if err := p.DeleteCell("cell-race"); err != nil {
+		t.Fatalf("DeleteCell(cell-race): %v", err)
+	}
+
+	_, err = srv.createExchangedAccount(stub, result, "cell-race")
+	if !errors.Is(err, pool.ErrCellNotFound) {
+		t.Fatalf("createExchangedAccount() = %v, want %v", err, pool.ErrCellNotFound)
+	}
+	if accounts := p.List(); len(accounts) != 0 {
+		t.Fatalf("len(accounts) = %d, want 0", len(accounts))
+	}
+}
+
 func TestHandleExchangeCodeAllowsLegacyDirectForNewAccount(t *testing.T) {
 	ms := store.NewMockStore()
 	bus := events.NewBus(100)
@@ -482,5 +535,87 @@ func TestHandleExchangeCodePreservesExistingRefreshTokenOnRebind(t *testing.T) {
 	}
 	if refreshToken != "old-refresh" {
 		t.Fatalf("refresh token = %q, want old-refresh", refreshToken)
+	}
+}
+
+func TestUpdateExchangedAccountRejectsDeletedCellAfterPreflight(t *testing.T) {
+	ms := store.NewMockStore()
+	bus := events.NewBus(100)
+	p, err := pool.New(ms, bus)
+	if err != nil {
+		t.Fatalf("pool.New() error = %v", err)
+	}
+
+	c := crypto.New("test-encryption-key")
+	tm := tokens.NewManager(p, c, nil, time.Minute, 0, nil)
+	oldRefreshEnc, err := tm.EncryptToken("old-refresh")
+	if err != nil {
+		t.Fatalf("EncryptToken(old refresh) error = %v", err)
+	}
+	oldAccessEnc, err := tm.EncryptToken("old-access")
+	if err != nil {
+		t.Fatalf("EncryptToken(old access) error = %v", err)
+	}
+	existing := &domain.Account{
+		ID:              "acct-race",
+		Email:           "old@example.com",
+		Provider:        domain.ProviderClaude,
+		Subject:         "sub-race",
+		Status:          domain.StatusActive,
+		Priority:        50,
+		PriorityMode:    "auto",
+		RefreshTokenEnc: oldRefreshEnc,
+		AccessTokenEnc:  oldAccessEnc,
+		CreatedAt:       time.Now().UTC(),
+	}
+	if err := p.Add(existing); err != nil {
+		t.Fatalf("pool.Add() error = %v", err)
+	}
+	if err := p.SaveCell(&domain.EgressCell{
+		ID:        "cell-race",
+		Name:      "cell race",
+		Status:    domain.EgressCellActive,
+		Proxy:     &domain.ProxyConfig{Type: "socks5", Host: "127.0.0.1", Port: 11083},
+		CreatedAt: time.Now().UTC(),
+		UpdatedAt: time.Now().UTC(),
+	}); err != nil {
+		t.Fatalf("SaveCell() error = %v", err)
+	}
+
+	srv := &Server{
+		cfg:    &config.Config{},
+		store:  ms,
+		pool:   p,
+		tokens: tm,
+		bus:    bus,
+	}
+	result := &driver.ExchangeResult{
+		AccessToken:  "new-access",
+		RefreshToken: "new-refresh",
+		ExpiresIn:    3600,
+		Subject:      "sub-race",
+		Email:        "new@example.com",
+	}
+
+	if err := srv.validateExchangeCellSelection(existing, "cell-race", domain.ProviderClaude); err != nil {
+		t.Fatalf("validateExchangeCellSelection(): %v", err)
+	}
+	if err := p.DeleteCell("cell-race"); err != nil {
+		t.Fatalf("DeleteCell(cell-race): %v", err)
+	}
+
+	_, err = srv.updateExchangedAccount(existing, result, "cell-race")
+	if !errors.Is(err, pool.ErrCellNotFound) {
+		t.Fatalf("updateExchangedAccount() = %v, want %v", err, pool.ErrCellNotFound)
+	}
+	acct := p.Get(existing.ID)
+	if acct == nil {
+		t.Fatal("account not found after failed update")
+	}
+	if acct.CellID != "" {
+		t.Fatalf("CellID = %q, want empty", acct.CellID)
+	}
+	if acct.Email != "old@example.com" {
+		t.Fatalf("Email = %q, want old@example.com", acct.Email)
 	}
 }
