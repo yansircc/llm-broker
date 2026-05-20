@@ -2,8 +2,10 @@ package pool
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
+	"strings"
 	"time"
 
 	"github.com/yansircc/llm-broker/internal/domain"
@@ -39,7 +41,22 @@ func cloneCell(src *domain.EgressCell) *domain.EgressCell {
 	return &copy
 }
 
+var (
+	ErrCellNotFound    = errors.New("cell not found")
+	ErrCellInUse       = errors.New("cell has bound accounts")
+	ErrCellInactive    = errors.New("cell is not active")
+	ErrCellCoolingDown = errors.New("cell is cooling down")
+	ErrCellNoProxy     = errors.New("cell has no usable proxy")
+	ErrCellOccupied    = errors.New("cell is already bound to another account of the same provider")
+	ErrAccountNotFound = errors.New("account not found")
+)
+
+func canonicalCellID(cellID string) string {
+	return strings.TrimSpace(cellID)
+}
+
 func (p *Pool) cellLocked(cellID string) *domain.EgressCell {
+	cellID = canonicalCellID(cellID)
 	if cellID == "" {
 		return nil
 	}
@@ -47,7 +64,7 @@ func (p *Pool) cellLocked(cellID string) *domain.EgressCell {
 }
 
 func (p *Pool) cellForAccountLocked(acct *domain.Account) *domain.EgressCell {
-	if acct == nil || acct.CellID == "" {
+	if acct == nil || canonicalCellID(acct.CellID) == "" {
 		return nil
 	}
 	return p.cellLocked(acct.CellID)
@@ -117,6 +134,120 @@ func (p *Pool) SaveCell(cell *domain.EgressCell) error {
 	}
 	copy.HydrateRuntime()
 	p.cells[copy.ID] = copy
+	return nil
+}
+
+func (p *Pool) BindAccountCell(accountID, cellID string, now time.Time) error {
+	cellID = canonicalCellID(cellID)
+
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if err := p.reloadStateLocked(context.Background()); err != nil {
+		return fmt.Errorf("refresh pool state: %w", err)
+	}
+	acct, ok := p.accounts[accountID]
+	if !ok {
+		return ErrAccountNotFound
+	}
+	if err := p.validateCellBindingLocked(accountID, acct.Provider, acct.CellID, cellID, now); err != nil {
+		return err
+	}
+	acct.CellID = cellID
+	p.persistLocked(acct)
+	return nil
+}
+
+func (p *Pool) DeleteCell(cellID string) error {
+	cellID = canonicalCellID(cellID)
+
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if err := p.reloadStateLocked(context.Background()); err != nil {
+		return fmt.Errorf("refresh pool state: %w", err)
+	}
+	if p.cellLocked(cellID) == nil {
+		return ErrCellNotFound
+	}
+	for _, acct := range p.accounts {
+		if canonicalCellID(acct.CellID) == cellID {
+			return ErrCellInUse
+		}
+	}
+	if err := p.store.DeleteEgressCell(context.Background(), cellID); err != nil {
+		return err
+	}
+	delete(p.cells, cellID)
+	return nil
+}
+
+func (p *Pool) GetBindableCell(cellID string, now time.Time) (*domain.EgressCell, error) {
+	cellID = canonicalCellID(cellID)
+	if cellID == "" {
+		return nil, ErrCellNotFound
+	}
+
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if err := p.reloadStateLocked(context.Background()); err != nil {
+		return nil, fmt.Errorf("refresh pool state: %w", err)
+	}
+	cell := p.cellLocked(cellID)
+	if err := bindableCellError(cell, now); err != nil {
+		return nil, err
+	}
+	return cloneCell(cell), nil
+}
+
+func (p *Pool) ValidateCellBinding(accountID string, provider domain.Provider, currentCellID, requestedCellID string, now time.Time) error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if err := p.reloadStateLocked(context.Background()); err != nil {
+		return fmt.Errorf("refresh pool state: %w", err)
+	}
+	return p.validateCellBindingLocked(accountID, provider, currentCellID, requestedCellID, now)
+}
+
+func (p *Pool) validateCellBindingLocked(accountID string, provider domain.Provider, currentCellID, requestedCellID string, now time.Time) error {
+	currentCellID = canonicalCellID(currentCellID)
+	requestedCellID = canonicalCellID(requestedCellID)
+	if requestedCellID == "" || requestedCellID == currentCellID {
+		return nil
+	}
+
+	cell := p.cellLocked(requestedCellID)
+	if err := bindableCellError(cell, now); err != nil {
+		return err
+	}
+	if cell.Proxy == nil || cell.Proxy.Type != "socks5" {
+		for _, acct := range p.accounts {
+			if acct == nil || acct.ID == accountID {
+				continue
+			}
+			if canonicalCellID(acct.CellID) == requestedCellID && acct.Provider == provider {
+				return ErrCellOccupied
+			}
+		}
+	}
+	return nil
+}
+
+func bindableCellError(cell *domain.EgressCell, now time.Time) error {
+	if cell == nil {
+		return ErrCellNotFound
+	}
+	status := cell.Status
+	if status == "" {
+		status = domain.EgressCellActive
+	}
+	if status != domain.EgressCellActive {
+		return ErrCellInactive
+	}
+	if cell.CooldownUntil != nil && now.Before(*cell.CooldownUntil) {
+		return ErrCellCoolingDown
+	}
+	if cell.Proxy == nil || strings.TrimSpace(cell.Proxy.Host) == "" || cell.Proxy.Port <= 0 {
+		return ErrCellNoProxy
+	}
 	return nil
 }
 

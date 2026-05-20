@@ -126,6 +126,10 @@ func (s *Server) handleExchangeCode(w http.ResponseWriter, r *http.Request) {
 
 	resp, err := s.upsertExchangedAccount(drv, result, req.CellID)
 	if err != nil {
+		if isCellBindingError(err) {
+			writeAdminError(w, http.StatusBadRequest, "invalid_request", err.Error())
+			return
+		}
 		writeAdminError(w, http.StatusInternalServerError, "internal_error", "failed to persist exchanged account")
 		return
 	}

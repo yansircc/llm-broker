@@ -145,20 +145,7 @@ func (s *Server) validateExchangeCellSelection(existing *domain.Account, request
 		currentAccountID = existing.ID
 		currentCellID = existing.CellID
 	}
-	if requestedCellID == currentCellID {
-		return nil
-	}
-
-	cell := s.pool.GetCell(requestedCellID)
-	if reason := accountCellBindError(cell, time.Now().UTC()); reason != "" {
-		return fmt.Errorf("%s", reason)
-	}
-	if cell.Proxy == nil || cell.Proxy.Type != "socks5" {
-		if accountOwnsCell(s.pool.List(), currentAccountID, requestedCellID, provider) {
-			return fmt.Errorf("cell is already bound to another account of the same provider")
-		}
-	}
-	return nil
+	return s.pool.ValidateCellBinding(currentAccountID, provider, currentCellID, requestedCellID, time.Now().UTC())
 }
 
 func (s *Server) oauthClientForRoute(cellID string) (*http.Client, error) {
@@ -173,9 +160,9 @@ func (s *Server) oauthClientForRoute(cellID string) (*http.Client, error) {
 		}), nil
 	}
 
-	cell := s.pool.GetCell(cellID)
-	if reason := accountCellBindError(cell, time.Now().UTC()); reason != "" {
-		return nil, fmt.Errorf("%s", reason)
+	cell, err := s.pool.GetBindableCell(cellID, time.Now().UTC())
+	if err != nil {
+		return nil, err
 	}
 	return s.transportPool.ClientForAccount(&domain.Account{
 		CellID: cellID,
@@ -197,20 +184,25 @@ func (s *Server) updateExchangedAccount(existing *domain.Account, result *driver
 	}
 
 	expiresAt := time.Now().Add(time.Duration(result.ExpiresIn) * time.Second).UnixMilli()
-	if err := s.pool.StoreTokens(existing.ID, encAccess, encRefresh, expiresAt); err != nil {
-		return exchangeAccountResponse{}, err
-	}
-
-	_ = s.pool.Update(existing.ID, func(a *domain.Account) {
+	now := time.Now().UTC()
+	if err := s.pool.Update(existing.ID, func(a *domain.Account) {
 		a.Email = result.Email
 		a.Status = domain.StatusActive
+		a.ErrorMessage = ""
+		a.RefreshTokenEnc = encRefresh
+		a.AccessTokenEnc = encAccess
+		a.ExpiresAt = expiresAt
+		a.CooldownUntil = nil
+		a.LastRefreshAt = &now
 		a.Identity = result.Identity
 		a.Subject = result.Subject
 		a.CellID = cellID
 		if len(result.ProviderState) > 0 {
 			a.ProviderStateJSON = string(result.ProviderState)
 		}
-	})
+	}); err != nil {
+		return exchangeAccountResponse{}, err
+	}
 
 	return exchangeAccountResponse{
 		ID:     existing.ID,

@@ -134,6 +134,7 @@ func (p *Pool) ensureBucketLocked(acct *domain.Account) *domain.QuotaBucket {
 
 func (p *Pool) projectAccountLocked(acct *domain.Account) *domain.Account {
 	copy := *acct
+	copy.CellID = canonicalCellID(copy.CellID)
 	copy.BucketKey = p.bucketKeyLocked(acct)
 	copy.CooldownUntil = nil
 	copy.ProviderStateJSON = "{}"

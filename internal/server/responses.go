@@ -211,6 +211,11 @@ type EgressCellAccountRef struct {
 	Status   string `json:"status"`
 }
 
+type EgressCellDeleteResponse struct {
+	ID      string `json:"id"`
+	Deleted bool   `json:"deleted"`
+}
+
 // ---------------------------------------------------------------------------
 // Account Test Result
 // ---------------------------------------------------------------------------

@@ -1,6 +1,14 @@
 package server
 
-import "github.com/yansircc/llm-broker/internal/domain"
+import (
+	"strings"
+
+	"github.com/yansircc/llm-broker/internal/domain"
+)
+
+func canonicalCellID(cellID string) string {
+	return strings.TrimSpace(cellID)
+}
 
 func toCellSummary(cell *domain.EgressCell, accountCount int) *EgressCellSummaryResponse {
 	if cell == nil {
@@ -23,8 +31,9 @@ func toCellSummary(cell *domain.EgressCell, accountCount int) *EgressCellSummary
 func accountCountsByCell(accounts []*domain.Account) map[string]int {
 	counts := make(map[string]int)
 	for _, acct := range accounts {
-		if acct.CellID != "" {
-			counts[acct.CellID]++
+		cellID := canonicalCellID(acct.CellID)
+		if cellID != "" {
+			counts[cellID]++
 		}
 	}
 	return counts
