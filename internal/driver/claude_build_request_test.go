@@ -97,8 +97,8 @@ func TestClaudeBuildRequestNormalizesSystemEnvelopeForSonnet(t *testing.T) {
 	})
 }
 
-func TestClaudeBuildRequestNormalizesSystemEnvelopeForOpus47(t *testing.T) {
-	body := buildClaudeRequestBody(t, "claude-opus-4-7", map[string]interface{}{
+func TestClaudeBuildRequestNormalizesSystemEnvelopeForLatestOpus(t *testing.T) {
+	body := buildClaudeRequestBody(t, "claude-opus-4-8", map[string]interface{}{
 		"max_tokens": 1,
 		"messages": []interface{}{
 			map[string]interface{}{"role": "user", "content": "hello"},
@@ -106,7 +106,7 @@ func TestClaudeBuildRequestNormalizesSystemEnvelopeForOpus47(t *testing.T) {
 	})
 	got := buildClaudeUpstreamBody(t, body, false)
 
-	if got["model"] != "claude-opus-4-7" {
+	if got["model"] != "claude-opus-4-8" {
 		t.Fatalf("model = %#v", got["model"])
 	}
 	system := mustSystemBlocks(t, got["system"])

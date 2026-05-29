@@ -59,6 +59,20 @@ func TestClaudeCalcCost(t *testing.T) {
 	}
 }
 
+func TestClaudeModelsIncludesOpus48(t *testing.T) {
+	d := NewClaudeDriver(ClaudeConfig{}, NoopStainlessStore{}, 4)
+	for _, model := range d.Models() {
+		if model.ID != "claude-opus-4-8" {
+			continue
+		}
+		if model.ContextWindow != 1000000 {
+			t.Fatalf("claude-opus-4-8 context_window = %d, want 1000000", model.ContextWindow)
+		}
+		return
+	}
+	t.Fatal("claude-opus-4-8 missing from Claude model catalog")
+}
+
 func TestClaudeInterpret_400DisabledOrganizationBlocks(t *testing.T) {
 	d := NewClaudeDriver(ClaudeConfig{
 		Pauses: ErrorPauses{Pause401: time.Minute},
