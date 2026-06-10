@@ -467,6 +467,9 @@ func TestHandleCompatListModels(t *testing.T) {
 	if !ids["claude/claude-sonnet-4-5"] {
 		t.Fatalf("compat models missing claude model: %#v", ids)
 	}
+	if !ids["claude/claude-fable-5"] {
+		t.Fatalf("compat models missing fable model: %#v", ids)
+	}
 	if !ids["gemini/gemini-2.5-flash"] {
 		t.Fatalf("compat models missing gemini model: %#v", ids)
 	}

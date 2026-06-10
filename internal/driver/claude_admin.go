@@ -118,18 +118,12 @@ func (d *ClaudeDriver) CalcCost(model string, usage *Usage) float64 {
 	if usage == nil {
 		return 0
 	}
-	lower := strings.ToLower(model)
-	var inPrice, outPrice, cacheReadPrice, cacheCreatePrice float64
-	switch {
-	case strings.Contains(lower, "opus"):
-		inPrice, outPrice, cacheReadPrice, cacheCreatePrice = 5, 25, 0.50, 6.25
-	case strings.Contains(lower, "haiku"):
-		inPrice, outPrice, cacheReadPrice, cacheCreatePrice = 1, 5, 0.10, 1.25
-	default:
-		inPrice, outPrice, cacheReadPrice, cacheCreatePrice = 3, 15, 0.30, 3.75
+	pricing := claudeSonnetPricing
+	if entry, ok := claudeModelEntryForID(model); ok {
+		pricing = entry.Pricing
 	}
-	return (float64(usage.InputTokens)*inPrice + float64(usage.OutputTokens)*outPrice +
-		float64(usage.CacheReadTokens)*cacheReadPrice + float64(usage.CacheCreateTokens)*cacheCreatePrice) / 1_000_000
+	return (float64(usage.InputTokens)*pricing.Input + float64(usage.OutputTokens)*pricing.Output +
+		float64(usage.CacheReadTokens)*pricing.CacheRead + float64(usage.CacheCreateTokens)*pricing.CacheCreate) / 1_000_000
 }
 
 func (d *ClaudeDriver) GetUtilization(state json.RawMessage) []UtilWindow {

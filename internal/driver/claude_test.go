@@ -37,6 +37,12 @@ func TestClaudeCalcCost(t *testing.T) {
 			want:  0.008775,
 		},
 		{
+			name:  "fable",
+			model: "claude-fable-5",
+			usage: &Usage{InputTokens: 1000, OutputTokens: 200, CacheReadTokens: 300, CacheCreateTokens: 400},
+			want:  0.0253,
+		},
+		{
 			name:  "haiku cache",
 			model: "claude-haiku-4-5-20251001",
 			usage: &Usage{InputTokens: 3, OutputTokens: 13, CacheCreateTokens: 75436},
@@ -71,6 +77,23 @@ func TestClaudeModelsIncludesOpus48(t *testing.T) {
 		return
 	}
 	t.Fatal("claude-opus-4-8 missing from Claude model catalog")
+}
+
+func TestClaudeModelsIncludesFable5(t *testing.T) {
+	d := NewClaudeDriver(ClaudeConfig{}, NoopStainlessStore{}, 4)
+	for _, model := range d.Models() {
+		if model.ID == "claude-mythos-5" {
+			t.Fatal("restricted Claude Mythos 5 should not be advertised")
+		}
+		if model.ID != "claude-fable-5" {
+			continue
+		}
+		if model.ContextWindow != 1000000 {
+			t.Fatalf("claude-fable-5 context_window = %d, want 1000000", model.ContextWindow)
+		}
+		return
+	}
+	t.Fatal("claude-fable-5 missing from Claude model catalog")
 }
 
 func TestClaudeInterpret_400DisabledOrganizationBlocks(t *testing.T) {

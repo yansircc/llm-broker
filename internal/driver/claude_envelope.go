@@ -13,11 +13,8 @@ func normalizeClaudeMessageEnvelope(body map[string]interface{}) {
 
 func claudeNeedsCodeSystemEnvelope(body map[string]interface{}) bool {
 	model, _ := body["model"].(string)
-	model = strings.ToLower(model)
-	if model == "" {
-		return false
-	}
-	return strings.Contains(model, "claude-sonnet-4") || strings.Contains(model, "claude-opus-4")
+	entry, ok := claudeModelEntryForID(model)
+	return ok && entry.CodeSystemEnvelope
 }
 
 func normalizeClaudeSystemValue(system interface{}) []interface{} {

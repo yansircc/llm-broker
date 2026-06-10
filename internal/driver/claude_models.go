@@ -7,25 +7,42 @@ import (
 )
 
 type claudeModelEntry struct {
-	PublicID      string
-	UpstreamID    string
-	ContextWindow int
-	Advertise     bool
+	PublicID           string
+	UpstreamID         string
+	ContextWindow      int
+	Advertise          bool
+	CodeSystemEnvelope bool
+	Pricing            claudeModelPricing
 }
 
+type claudeModelPricing struct {
+	Input       float64
+	Output      float64
+	CacheRead   float64
+	CacheCreate float64
+}
+
+var (
+	claudeFablePricing  = claudeModelPricing{Input: 10, Output: 50, CacheRead: 1.00, CacheCreate: 12.50}
+	claudeOpusPricing   = claudeModelPricing{Input: 5, Output: 25, CacheRead: 0.50, CacheCreate: 6.25}
+	claudeSonnetPricing = claudeModelPricing{Input: 3, Output: 15, CacheRead: 0.30, CacheCreate: 3.75}
+	claudeHaikuPricing  = claudeModelPricing{Input: 1, Output: 5, CacheRead: 0.10, CacheCreate: 1.25}
+)
+
 var claudeModelEntries = []claudeModelEntry{
-	{PublicID: "claude-opus-4-8", UpstreamID: "claude-opus-4-8", ContextWindow: 1000000, Advertise: true},
-	{PublicID: "claude-opus-4-7", UpstreamID: "claude-opus-4-7", ContextWindow: 200000, Advertise: true},
-	{PublicID: "claude-opus-4-6", UpstreamID: "claude-opus-4-6", ContextWindow: 200000, Advertise: true},
-	{PublicID: "claude-opus-4-5", UpstreamID: "claude-opus-4-5", ContextWindow: 200000, Advertise: true},
-	{PublicID: "claude-opus-4-1", UpstreamID: "claude-opus-4-1", ContextWindow: 200000, Advertise: true},
-	{PublicID: "claude-opus-4", UpstreamID: "claude-opus-4", ContextWindow: 200000, Advertise: true},
-	{PublicID: "claude-sonnet-4-6", UpstreamID: "claude-sonnet-4-6", ContextWindow: 200000, Advertise: true},
-	{PublicID: "claude-sonnet-4-5", UpstreamID: "claude-sonnet-4-5", ContextWindow: 200000, Advertise: true},
-	{PublicID: "claude-sonnet-4", UpstreamID: "claude-sonnet-4", ContextWindow: 200000, Advertise: true},
-	{PublicID: "claude-haiku-4-5-20251001", UpstreamID: "claude-haiku-4-5-20251001", ContextWindow: 200000, Advertise: true},
-	{PublicID: "claude-haiku-4-5", UpstreamID: "claude-haiku-4-5-20251001", ContextWindow: 200000, Advertise: true},
-	{PublicID: "claude-haiku-4-6", UpstreamID: "claude-haiku-4-5-20251001", ContextWindow: 200000, Advertise: false},
+	{PublicID: "claude-fable-5", UpstreamID: "claude-fable-5", ContextWindow: 1000000, Advertise: true, CodeSystemEnvelope: true, Pricing: claudeFablePricing},
+	{PublicID: "claude-opus-4-8", UpstreamID: "claude-opus-4-8", ContextWindow: 1000000, Advertise: true, CodeSystemEnvelope: true, Pricing: claudeOpusPricing},
+	{PublicID: "claude-opus-4-7", UpstreamID: "claude-opus-4-7", ContextWindow: 200000, Advertise: true, CodeSystemEnvelope: true, Pricing: claudeOpusPricing},
+	{PublicID: "claude-opus-4-6", UpstreamID: "claude-opus-4-6", ContextWindow: 200000, Advertise: true, CodeSystemEnvelope: true, Pricing: claudeOpusPricing},
+	{PublicID: "claude-opus-4-5", UpstreamID: "claude-opus-4-5", ContextWindow: 200000, Advertise: true, CodeSystemEnvelope: true, Pricing: claudeOpusPricing},
+	{PublicID: "claude-opus-4-1", UpstreamID: "claude-opus-4-1", ContextWindow: 200000, Advertise: true, CodeSystemEnvelope: true, Pricing: claudeOpusPricing},
+	{PublicID: "claude-opus-4", UpstreamID: "claude-opus-4", ContextWindow: 200000, Advertise: true, CodeSystemEnvelope: true, Pricing: claudeOpusPricing},
+	{PublicID: "claude-sonnet-4-6", UpstreamID: "claude-sonnet-4-6", ContextWindow: 200000, Advertise: true, CodeSystemEnvelope: true, Pricing: claudeSonnetPricing},
+	{PublicID: "claude-sonnet-4-5", UpstreamID: "claude-sonnet-4-5", ContextWindow: 200000, Advertise: true, CodeSystemEnvelope: true, Pricing: claudeSonnetPricing},
+	{PublicID: "claude-sonnet-4", UpstreamID: "claude-sonnet-4", ContextWindow: 200000, Advertise: true, CodeSystemEnvelope: true, Pricing: claudeSonnetPricing},
+	{PublicID: "claude-haiku-4-5-20251001", UpstreamID: "claude-haiku-4-5-20251001", ContextWindow: 200000, Advertise: true, Pricing: claudeHaikuPricing},
+	{PublicID: "claude-haiku-4-5", UpstreamID: "claude-haiku-4-5-20251001", ContextWindow: 200000, Advertise: true, Pricing: claudeHaikuPricing},
+	{PublicID: "claude-haiku-4-6", UpstreamID: "claude-haiku-4-5-20251001", ContextWindow: 200000, Advertise: false, Pricing: claudeHaikuPricing},
 }
 
 func claudeSupportedModels() []Model {
@@ -52,10 +69,8 @@ func normalizeClaudeModelID(model string) (string, error) {
 	}
 
 	lower := strings.ToLower(trimmed)
-	for _, entry := range claudeModelEntries {
-		if lower == entry.PublicID {
-			return entry.UpstreamID, nil
-		}
+	if entry, ok := claudeModelEntryForID(lower); ok {
+		return entry.UpstreamID, nil
 	}
 
 	switch {
@@ -81,4 +96,14 @@ func normalizeClaudeModelField(body map[string]interface{}) error {
 	}
 	body["model"] = model
 	return nil
+}
+
+func claudeModelEntryForID(model string) (claudeModelEntry, bool) {
+	normalized := strings.ToLower(strings.TrimSpace(model))
+	for _, entry := range claudeModelEntries {
+		if normalized == entry.PublicID || normalized == entry.UpstreamID {
+			return entry, true
+		}
+	}
+	return claudeModelEntry{}, false
 }
