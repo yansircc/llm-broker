@@ -13,11 +13,11 @@ import (
 
 const (
 	claudeOAuthClientID     = "9d1c250a-e61b-44d9-88ed-5944d1962f5e"
-	claudeOAuthTokenURL     = "https://console.anthropic.com/v1/oauth/token"
+	claudeOAuthTokenURL     = "https://platform.claude.com/v1/oauth/token"
 	claudeOAuthRedirectURI  = "https://platform.claude.com/oauth/code/callback"
 	claudeOAuthScope        = "org:create_api_key user:profile user:inference user:sessions:claude_code"
-	claudeOAuthAuthorizeURL = "https://claude.ai/oauth/authorize"
-	claudeAIBaseURL         = "https://claude.ai"
+	claudeOAuthAuthorizeURL = "https://platform.claude.com/oauth/authorize"
+	claudeAIBaseURL         = "https://platform.claude.com"
 )
 
 type claudeOrgResponse struct {

@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"strings"
 
 	utls "github.com/refraction-networking/utls"
 	"github.com/yansircc/llm-broker/internal/domain"
@@ -70,12 +71,66 @@ func rawSocks5Dialer(pcfg *domain.ProxyConfig) func(ctx context.Context, network
 			return nil, fmt.Errorf("socks5 dialer: %w", err)
 		}
 
-		rawConn, err := dialer.Dial(network, addr)
+		targets, err := socks5TargetAddrs(ctx, network, addr, pcfg, net.DefaultResolver.LookupIPAddr)
 		if err != nil {
-			return nil, fmt.Errorf("socks5 dial: %w", err)
+			return nil, err
 		}
-		return rawConn, nil
+		var lastErr error
+		for _, target := range targets {
+			rawConn, err := dialer.Dial(network, target)
+			if err == nil {
+				return rawConn, nil
+			}
+			lastErr = err
+		}
+		return nil, fmt.Errorf("socks5 dial: %w", lastErr)
 	}
+}
+
+type ipLookupFunc func(context.Context, string) ([]net.IPAddr, error)
+
+func socks5TargetAddrs(ctx context.Context, network, addr string, pcg *domain.ProxyConfig, lookup ipLookupFunc) ([]string, error) {
+	if pcg == nil || !isLocalProxyHost(pcg.Host) {
+		return []string{addr}, nil
+	}
+	host, port, err := net.SplitHostPort(addr)
+	if err != nil {
+		return []string{addr}, nil
+	}
+	if net.ParseIP(host) != nil {
+		return []string{addr}, nil
+	}
+
+	ips, err := lookup(ctx, host)
+	if err != nil {
+		return nil, fmt.Errorf("resolve socks5 target %s: %w", host, err)
+	}
+	targets := make([]string, 0, len(ips))
+	for _, ip := range ips {
+		if ip.IP == nil {
+			continue
+		}
+		if network == "tcp4" && ip.IP.To4() == nil {
+			continue
+		}
+		if network == "tcp6" && ip.IP.To4() != nil {
+			continue
+		}
+		targets = append(targets, net.JoinHostPort(ip.IP.String(), port))
+	}
+	if len(targets) == 0 {
+		return nil, fmt.Errorf("resolve socks5 target %s: no %s addresses", host, network)
+	}
+	return targets, nil
+}
+
+func isLocalProxyHost(host string) bool {
+	host = strings.Trim(strings.ToLower(strings.TrimSpace(host)), "[]")
+	if host == "localhost" {
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
 }
 
 func rawHTTPConnectDialer(pcfg *domain.ProxyConfig) func(ctx context.Context, network, addr string) (net.Conn, error) {
