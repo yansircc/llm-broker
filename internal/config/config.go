@@ -21,6 +21,7 @@ type Config struct {
 	// Security
 	EncryptionKey string
 	StaticToken   string
+	AdminEmails   map[string]struct{}
 	SiteURL       string
 	SessionTTL    time.Duration
 
@@ -93,6 +94,7 @@ func Load() *Config {
 
 		EncryptionKey: os.Getenv("ENCRYPTION_KEY"),
 		StaticToken:   os.Getenv("API_TOKEN"),
+		AdminEmails:   envSet("ADMIN_EMAILS"),
 		SiteURL:       os.Getenv("SITE_URL"),
 		SessionTTL:    envDuration("CUSTOMER_SESSION_TTL", 30*24*time.Hour),
 
@@ -225,4 +227,25 @@ func envBool(key string, fallback bool) bool {
 		}
 	}
 	return fallback
+}
+
+func envSet(key string) map[string]struct{} {
+	raw := os.Getenv(key)
+	result := make(map[string]struct{})
+	for _, part := range strings.Split(raw, ",") {
+		value := strings.ToLower(strings.TrimSpace(part))
+		if value == "" {
+			continue
+		}
+		result[value] = struct{}{}
+	}
+	return result
+}
+
+func (c *Config) IsAdminEmail(email string) bool {
+	if c == nil || len(c.AdminEmails) == 0 {
+		return false
+	}
+	_, ok := c.AdminEmails[strings.ToLower(strings.TrimSpace(email))]
+	return ok
 }

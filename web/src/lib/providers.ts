@@ -6,5 +6,5 @@ export interface ProviderOption {
 }
 
 export function addAccountPath(base: string, providerID: string): string {
-	return `${base}/add-account/${providerID}`;
+	return `${base}/console/add-account/${providerID}`;
 }

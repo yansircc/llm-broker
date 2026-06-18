@@ -38,6 +38,9 @@ LOG_RETENTION_DAYS=7
 ENCRYPTION_KEY=
 API_TOKEN=
 
+# Browser admin users. Comma-separated lowercase email list.
+ADMIN_EMAILS=
+
 # Customer sessions
 CUSTOMER_SESSION_TTL=2592000000
 

@@ -85,7 +85,7 @@
 
 {#if error}
 	<p class="error-msg">{error}</p>
-	<p><a href="{base}/dashboard">&larr; back to ops</a></p>
+	<p><a href="{base}/console/dashboard">&larr; back to ops</a></p>
 {:else if loading || !cell}
 	<p class="loading">loading cell...</p>
 {:else}
@@ -175,7 +175,7 @@
 				<tbody>
 					{#each cellAccounts(cell) as account (account.id)}
 						<tr>
-							<td><a href="{base}/accounts/{account.id}">{account.email}</a></td>
+							<td><a href="{base}/console/accounts/{account.id}">{account.email}</a></td>
 							<td>{account.provider}</td>
 							<td><span class={dotClass(account.status)}>{account.status}</span></td>
 						</tr>
@@ -185,5 +185,5 @@
 		</div>
 	{/if}
 
-	<p class="sub"><a href="{base}/dashboard">back to ops</a></p>
+	<p class="sub"><a href="{base}/console/dashboard">back to ops</a></p>
 {/if}

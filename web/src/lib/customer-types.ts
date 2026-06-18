@@ -2,6 +2,7 @@ export interface CustomerUser {
 	id: string;
 	email: string;
 	name?: string;
+	role?: 'admin' | 'user';
 	status: string;
 	plan?: string;
 	email_verified_at?: string | null;
@@ -10,6 +11,10 @@ export interface CustomerUser {
 
 export interface CustomerMe {
 	user: CustomerUser;
+}
+
+export interface AuthResponse extends CustomerMe {
+	redirect_to?: string;
 }
 
 export interface CustomerApiKey {

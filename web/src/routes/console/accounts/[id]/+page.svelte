@@ -113,7 +113,7 @@
 		actionError = '';
 		try {
 			await api(`/accounts/${acct.id}`, { method: 'DELETE' });
-			goto(`${base}/accounts`);
+			goto(`${base}/console/accounts`);
 		} catch (e: any) {
 			actionError = e.message;
 		}
@@ -249,7 +249,7 @@
 
 {#if error}
 	<p class="error-msg">{error}</p>
-	<p><a href="{base}/accounts">&larr; back to accounts</a></p>
+	<p><a href="{base}/console/accounts">&larr; back to accounts</a></p>
 {:else if loading}
 	<p class="loading">loading account...</p>
 {:else if acct}
@@ -407,7 +407,7 @@
 				</button>
 			{:else}
 				{#if acct.cell_id}
-					<a href="{base}/cells/{acct.cell_id}">{acct.cell?.name ?? acct.cell_id}</a>
+					<a href="{base}/console/cells/{acct.cell_id}">{acct.cell?.name ?? acct.cell_id}</a>
 				{:else}
 					<span class="muted">legacy direct</span>
 				{/if}
@@ -418,7 +418,7 @@
 		<dt>cell</dt>
 		<dd>
 			{#if acct.cell_id}
-				<a href="{base}/cells/{acct.cell_id}">{acct.cell?.name ?? acct.cell_id}</a>
+				<a href="{base}/console/cells/{acct.cell_id}">{acct.cell?.name ?? acct.cell_id}</a>
 			{:else}
 				<span class="muted">legacy direct</span>
 			{/if}
@@ -527,5 +527,5 @@
 		</div>
 	{/if}
 
-	<p class="sub"><a href="{base}/accounts">back to accounts</a></p>
+	<p class="sub"><a href="{base}/console/accounts">back to accounts</a></p>
 {/if}

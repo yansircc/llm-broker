@@ -244,6 +244,90 @@ func TestCustomerSessionRejectsDisabledUser(t *testing.T) {
 	}
 }
 
+func TestUnifiedLoginRedirectsAdminEmailToConsole(t *testing.T) {
+	srv := newTestServer(t)
+	srv.cfg.AdminEmails = map[string]struct{}{"admin@example.com": {}}
+
+	registerBody := `{"email":"admin@example.com","password":"password-1"}`
+	req := httptest.NewRequest(http.MethodPost, "/api/auth/register", strings.NewReader(registerBody))
+	req.Header.Set("Content-Type", "application/json")
+	resp := httptest.NewRecorder()
+	srv.handleCustomerRegister(resp, req)
+	if resp.Code != http.StatusOK {
+		t.Fatalf("register status %d body %s", resp.Code, resp.Body.String())
+	}
+	var payload struct {
+		RedirectTo string `json:"redirect_to"`
+		User       struct {
+			Role string `json:"role"`
+		} `json:"user"`
+	}
+	if err := json.Unmarshal(resp.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("decode response: %v body=%s", err, resp.Body.String())
+	}
+	if payload.RedirectTo != "/console/dashboard" || payload.User.Role != "admin" {
+		t.Fatalf("redirect/role = %q/%q, want /console/dashboard/admin", payload.RedirectTo, payload.User.Role)
+	}
+}
+
+func TestAdminRoutesUseCustomerSessionRole(t *testing.T) {
+	srv := newTestServer(t)
+	srv.authMw = auth.NewMiddleware("admin-secret", srv.store)
+	srv.cfg.AdminEmails = map[string]struct{}{"admin@example.com": {}}
+	now := time.Now().UTC()
+	adminUser := &domain.User{
+		ID:             "admin-user",
+		Email:          "admin@example.com",
+		Name:           "admin",
+		Status:         "active",
+		AllowedSurface: domain.SurfaceNative,
+		ReferralCode:   "ADMIN1",
+		CreatedAt:      now,
+	}
+	normalUser := &domain.User{
+		ID:             "normal-user",
+		Email:          "normal@example.com",
+		Name:           "normal",
+		Status:         "active",
+		AllowedSurface: domain.SurfaceNative,
+		ReferralCode:   "NORMAL1",
+		CreatedAt:      now,
+	}
+	if err := srv.store.CreateUser(context.Background(), adminUser); err != nil {
+		t.Fatal(err)
+	}
+	if err := srv.store.CreateUser(context.Background(), normalUser); err != nil {
+		t.Fatal(err)
+	}
+	adminSession := httptest.NewRecorder()
+	if _, err := srv.createCustomerSession(adminSession, httptest.NewRequest(http.MethodPost, "/api/auth/login", nil), adminUser); err != nil {
+		t.Fatalf("create admin session: %v", err)
+	}
+	normalSession := httptest.NewRecorder()
+	if _, err := srv.createCustomerSession(normalSession, httptest.NewRequest(http.MethodPost, "/api/auth/login", nil), normalUser); err != nil {
+		t.Fatalf("create normal session: %v", err)
+	}
+
+	mux := http.NewServeMux()
+	srv.registerAdminRoutes(mux)
+
+	adminReq := httptest.NewRequest(http.MethodGet, "/admin/health", nil)
+	adminReq.AddCookie(customerCookie(t, adminSession))
+	adminResp := httptest.NewRecorder()
+	mux.ServeHTTP(adminResp, adminReq)
+	if adminResp.Code != http.StatusOK {
+		t.Fatalf("admin session status %d body %s", adminResp.Code, adminResp.Body.String())
+	}
+
+	normalReq := httptest.NewRequest(http.MethodGet, "/admin/health", nil)
+	normalReq.AddCookie(customerCookie(t, normalSession))
+	normalResp := httptest.NewRecorder()
+	mux.ServeHTTP(normalResp, normalReq)
+	if normalResp.Code != http.StatusForbidden {
+		t.Fatalf("normal session status %d, want %d body %s", normalResp.Code, http.StatusForbidden, normalResp.Body.String())
+	}
+}
+
 func TestCustomerSessionCookieSecureWhenSiteURLIsHTTPS(t *testing.T) {
 	srv := newTestServer(t)
 	srv.cfg.SiteURL = "https://relay.example.com"

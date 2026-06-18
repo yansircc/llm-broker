@@ -267,10 +267,10 @@
 				status: <b class="g">{result.status}</b><br>
 				route: <b>{selectedRouteLabel()}</b><br>
 				<br>
-				<a href="{base}/accounts/{result.id}">view account &rarr;</a>
+				<a href="{base}/console/accounts/{result.id}">view account &rarr;</a>
 			</div>
 		{/if}
 	{/if}
 {/if}
 
-<p class="sub"><a href="{base}/dashboard">back to ops</a></p>
+<p class="sub"><a href="{base}/console/dashboard">back to ops</a></p>

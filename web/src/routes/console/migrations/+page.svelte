@@ -200,7 +200,7 @@
 			<dt>account</dt>
 			<dd>
 				{#if selectedAccount()}
-					<a href="{base}/accounts/{selectedAccount()!.id}">{selectedAccount()!.email}</a>
+					<a href="{base}/console/accounts/{selectedAccount()!.id}">{selectedAccount()!.email}</a>
 				{:else}
 					-
 				{/if}
@@ -224,7 +224,7 @@
 			<dt>target cell</dt>
 			<dd>
 				{#if selectedCell()}
-					<a href="{base}/cells/{selectedCell()!.id}">{selectedCell()!.name ?? selectedCell()!.id}</a>
+					<a href="{base}/console/cells/{selectedCell()!.id}">{selectedCell()!.name ?? selectedCell()!.id}</a>
 				{:else}
 					{selectedCellID || '-'}
 				{/if}
@@ -288,12 +288,12 @@
 				<tbody>
 					{#each legacyAccounts() as account (account.id)}
 						<tr>
-							<td><a href="{base}/accounts/{account.id}">{account.email}</a></td>
+							<td><a href="{base}/console/accounts/{account.id}">{account.email}</a></td>
 							<td>{account.provider}</td>
 							<td><span class={dotClass(account.status)}>{account.status}</span></td>
 							<td>{account.weight}{#if account.weight_mode === 'auto'} <span class="muted">(auto)</span>{/if}</td>
 							<td>{timeAgo(account.last_used_at ?? '')}</td>
-							<td><a href="{base}/accounts/{account.id}">open</a></td>
+							<td><a href="{base}/console/accounts/{account.id}">open</a></td>
 						</tr>
 					{/each}
 				</tbody>
@@ -321,7 +321,7 @@
 				<tbody>
 					{#each cells as cell (cell.id)}
 						<tr>
-							<td><a href="{base}/cells/{cell.id}">{cell.name || cell.id}</a></td>
+							<td><a href="{base}/console/cells/{cell.id}">{cell.name || cell.id}</a></td>
 							<td>{region(cell)}</td>
 							<td class="num">{cellAccounts(cell).length}</td>
 							<td>
@@ -331,7 +331,7 @@
 									<span class={cell.status === 'active' ? 'g' : cell.status === 'error' ? 'r' : 'muted'}>{cell.status}</span>
 								{/if}
 							</td>
-							<td><a href="{base}/cells/{cell.id}">open</a></td>
+							<td><a href="{base}/console/cells/{cell.id}">open</a></td>
 						</tr>
 					{/each}
 				</tbody>

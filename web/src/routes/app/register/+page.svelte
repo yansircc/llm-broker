@@ -2,6 +2,7 @@
 	import { base } from '$app/paths';
 	import { page } from '$app/stores';
 	import { customerApi } from '$lib/customer-api';
+	import type { AuthResponse } from '$lib/customer-types';
 
 	let email = $state('');
 	let password = $state('');
@@ -29,11 +30,11 @@
 				name: name.trim() || undefined
 			};
 			if (referralCode.trim()) body.referral_code = referralCode.trim();
-			await customerApi('/auth/register', {
+			const res = await customerApi<AuthResponse>('/auth/register', {
 				method: 'POST',
 				body: JSON.stringify(body)
 			});
-			window.location.href = `${base}/app/dashboard`;
+			window.location.href = `${base}${res.redirect_to ?? '/app/dashboard'}`;
 		} catch (err: any) {
 			error = err.message || 'registration failed';
 		} finally {

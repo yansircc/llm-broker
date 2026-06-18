@@ -50,15 +50,15 @@ async function run() {
   }
 
   // 1. Visit dashboard and extract detail page links
-  const dashboard = await visit('/dashboard');
+  const dashboard = await visit('/console/dashboard');
   let detailPages = [];
   try {
     const links = await dashboard.$$eval('a[href]', (els) =>
       els.map((a) => a.getAttribute('href')).filter(Boolean)
     );
-    const addAccountLink = links.find((h) => h.match(/^\/add-account\/[^/]+$/));
-    const accountLink = links.find((h) => h.match(/^\/accounts\/[^/]+$/));
-    const userLink = links.find((h) => h.match(/^\/users\/[^/]+$/));
+    const addAccountLink = links.find((h) => h.match(/^\/console\/add-account\/[^/]+$/));
+    const accountLink = links.find((h) => h.match(/^\/console\/accounts\/[^/]+$/));
+    const userLink = links.find((h) => h.match(/^\/console\/users\/[^/]+$/));
     if (addAccountLink) detailPages.push(addAccountLink);
     if (accountLink) detailPages.push(accountLink);
     if (userLink) detailPages.push(userLink);

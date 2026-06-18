@@ -29,6 +29,8 @@
 	interface UserDetail {
 		id: string;
 		name: string;
+		email?: string;
+		role?: 'admin' | 'user';
 		token_prefix: string;
 		status: string;
 		allowed_surface: UserSurface;
@@ -108,7 +110,7 @@
 		actionError = '';
 		try {
 			await api(`/users/${user.id}`, { method: 'DELETE' });
-			goto(`${base}/users`);
+			goto(`${base}/console/users`);
 		} catch (e: any) {
 			actionError = e.message;
 		}
@@ -226,7 +228,7 @@
 
 {#if error}
 	<p class="error-msg">{error}</p>
-	<p><a href="{base}/users">&larr; back to users</a></p>
+	<p><a href="{base}/console/users">&larr; back to users</a></p>
 {:else if loading}
 	<p class="loading">loading user...</p>
 {:else if user}
@@ -263,6 +265,12 @@
 	{/if}
 
 	<dl>
+		<dt>email</dt>
+		<dd>{user.email ?? '-'}</dd>
+
+		<dt>role</dt>
+		<dd>{user.role ?? 'user'}</dd>
+
 		<dt>token prefix</dt>
 		<dd>{user.token_prefix} <span class="muted">(full token not stored)</span></dd>
 
@@ -447,7 +455,7 @@
 		</div>
 	{/if}
 
-	<p class="sub"><a href="{base}/users">back to users</a></p>
+	<p class="sub"><a href="{base}/console/users">back to users</a></p>
 {/if}
 
 <style>

@@ -51,6 +51,24 @@ func isReservedUIPath(path string) bool {
 	switch {
 	case path == "/admin" || strings.HasPrefix(path, "/admin/"):
 		return true
+	case path == "/console/login" || strings.HasPrefix(path, "/console/login/"):
+		return true
+	case path == "/dashboard" || strings.HasPrefix(path, "/dashboard/"):
+		return true
+	case path == "/accounts" || strings.HasPrefix(path, "/accounts/"):
+		return true
+	case path == "/users" || strings.HasPrefix(path, "/users/"):
+		return true
+	case path == "/activity" || strings.HasPrefix(path, "/activity/"):
+		return true
+	case path == "/migrations" || strings.HasPrefix(path, "/migrations/"):
+		return true
+	case path == "/cells" || strings.HasPrefix(path, "/cells/"):
+		return true
+	case path == "/admin-billing" || strings.HasPrefix(path, "/admin-billing/"):
+		return true
+	case path == "/login" || strings.HasPrefix(path, "/login/"):
+		return true
 	case path == "/api" || strings.HasPrefix(path, "/api/"):
 		return true
 	case path == "/v1" || strings.HasPrefix(path, "/v1/"):
@@ -61,7 +79,7 @@ func isReservedUIPath(path string) bool {
 		return true
 	case path == "/ui" || strings.HasPrefix(path, "/ui/"):
 		return true
-	case path == "/add-account" || path == "/add-account/":
+	case path == "/add-account" || strings.HasPrefix(path, "/add-account/"):
 		return true
 	case path == "/health":
 		return true

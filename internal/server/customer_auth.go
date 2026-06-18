@@ -83,7 +83,7 @@ func (s *Server) handleCustomerRegister(w http.ResponseWriter, r *http.Request) 
 		writeAdminError(w, http.StatusInternalServerError, "internal_error", "failed to fulfill referral")
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"user": customerUserView(user)})
+	writeJSON(w, http.StatusOK, s.authResponse(user))
 }
 
 func (s *Server) handleCustomerLogin(w http.ResponseWriter, r *http.Request) {
@@ -109,7 +109,7 @@ func (s *Server) handleCustomerLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	_ = s.store.UpdateUserLastLogin(r.Context(), user.ID)
-	writeJSON(w, http.StatusOK, map[string]any{"user": customerUserView(user)})
+	writeJSON(w, http.StatusOK, s.authResponse(user))
 }
 
 func (s *Server) handleCustomerLogout(w http.ResponseWriter, r *http.Request) {
@@ -125,7 +125,7 @@ func (s *Server) handleCustomerMe(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"user": customerUserView(cc.User)})
+	writeJSON(w, http.StatusOK, map[string]any{"user": s.customerUserView(cc.User)})
 }
 
 func (s *Server) createCustomerSession(w http.ResponseWriter, r *http.Request, user *domain.User) (*domain.WebSession, error) {
@@ -252,13 +252,39 @@ func sha256Hex(raw string) string {
 	return hex.EncodeToString(sum[:])
 }
 
-func customerUserView(user *domain.User) map[string]any {
+func (s *Server) authResponse(user *domain.User) map[string]any {
+	return map[string]any{
+		"user":        s.customerUserView(user),
+		"redirect_to": s.loginRedirectPath(user),
+	}
+}
+
+func (s *Server) customerUserView(user *domain.User) map[string]any {
 	return map[string]any{
 		"id":                user.ID,
 		"email":             user.Email,
 		"name":              user.Name,
+		"role":              s.userRole(user),
 		"status":            user.Status,
 		"email_verified_at": user.EmailVerifiedAt,
 		"created_at":        user.CreatedAt,
 	}
+}
+
+func (s *Server) userRole(user *domain.User) string {
+	if s.isAdminUser(user) {
+		return "admin"
+	}
+	return "user"
+}
+
+func (s *Server) isAdminUser(user *domain.User) bool {
+	return user != nil && s.cfg != nil && s.cfg.IsAdminEmail(user.Email)
+}
+
+func (s *Server) loginRedirectPath(user *domain.User) string {
+	if s.isAdminUser(user) {
+		return "/console/dashboard"
+	}
+	return "/app/dashboard"
 }

@@ -152,9 +152,13 @@ The project prefers fewer states over more defensive code.
 
 These are intentional and should not drift casually:
 
-- UI lives at `/` and `/dashboard`
-- onboarding lives at `/add-account/{provider}`
-- `/add-account` without a provider should 404
+- Public UI lives at `/`
+- Customer UI lives at `/app/*`
+- Admin UI lives at `/console/*`
+- Admin API lives at `/admin/*`
+- Unified browser login lives at `/app/login`; admin users enter `/console/dashboard` after login.
+- account onboarding lives at `/console/add-account/{provider}`
+- old admin UI paths such as `/dashboard`, `/accounts`, `/users`, `/activity`, `/migrations`, `/admin-billing`, `/login`, `/console/login`, and `/add-account/*` should 404
 - `/ui/*` should 404
 - `GET /v1/models` is authenticated
 - relay paths are registered from driver metadata, not hardcoded server constants

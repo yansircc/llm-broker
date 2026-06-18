@@ -202,6 +202,8 @@ func (s *Server) userSummaryViews(users []*domain.User) []DashboardUser {
 		views = append(views, DashboardUser{
 			ID:                user.ID,
 			Name:              user.Name,
+			Email:             user.Email,
+			Role:              s.userRole(user),
 			Status:            user.Status,
 			AllowedSurface:    user.AllowedSurface,
 			BoundAccountID:    user.BoundAccountID,

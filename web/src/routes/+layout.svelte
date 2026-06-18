@@ -8,13 +8,18 @@
 		children: import('svelte').Snippet;
 	}
 
-	const navItems = [
-		{ href: '/dashboard', label: 'ops' },
-		{ href: '/accounts', label: 'accounts' },
-		{ href: '/users', label: 'users' },
-		{ href: '/activity', label: 'activity' },
-		{ href: '/admin-billing', label: 'billing' },
-		{ href: '/migrations', label: 'migration' }
+	const consoleNavGroups = [
+		{ label: 'Overview', items: [{ href: '/console/dashboard', label: 'Dashboard' }] },
+		{
+			label: 'Accounts',
+			items: [
+				{ href: '/console/accounts', label: 'Account Pool' },
+				{ href: '/console/migrations', label: 'Migration' }
+			]
+		},
+		{ label: 'Customers', items: [{ href: '/console/users', label: 'Users' }] },
+		{ label: 'Billing', items: [{ href: '/console/billing', label: 'Billing' }] },
+		{ label: 'Activity', items: [{ href: '/console/activity', label: 'Events' }] }
 	];
 	const publicNavItems = [
 		{ href: '/pricing', label: '定价' },
@@ -49,10 +54,8 @@
 		return path === full || path.startsWith(full + '/');
 	}
 
-	function showAdminNav() {
-		const path = $page.url.pathname;
-		const adminPrefixes = ['/dashboard', '/accounts', '/users', '/activity', '/admin-billing', '/migrations', '/add-account', '/cells'];
-		return adminPrefixes.some((prefix) => path === `${base}${prefix}` || path.startsWith(`${base}${prefix}/`));
+	function showConsoleShell() {
+		return matchesPrefix('/console');
 	}
 
 	function showPublicShell() {
@@ -60,13 +63,13 @@
 	}
 </script>
 
-{#if showAdminNav()}
+{#if showConsoleShell()}
 	<div class="admin-shell">
 		<header class="top-glass">
 			<div class="nav-inner">
-				<Logo href={`${base}/dashboard`} label="CDX Admin" />
+				<Logo href={`${base}/console/dashboard`} label="CDX Console" />
 				<nav class="nav-links" aria-label="Admin navigation">
-					<a href="{base}/dashboard" class:active={activeNav('/dashboard')}>control</a>
+					<a href="{base}/console/dashboard" class:active={activeNav('/console/dashboard')}>control</a>
 					<a href="{base}/app/dashboard">customer app</a>
 					<a href="{base}/">site</a>
 				</nav>
@@ -74,10 +77,14 @@
 		</header>
 		<main class="admin-grid">
 			<aside class="admin-side">
-				<div class="eyebrow">operations</div>
-				<nav class="nav-links" aria-label="Operations navigation">
-					{#each navItems as item (item.href)}
-						<a href="{base}{item.href}" class:active={activeNav(item.href)}>{item.label}</a>
+				<nav class="admin-menu" aria-label="Console navigation">
+					{#each consoleNavGroups as group (group.label)}
+						<div class="admin-menu-group">
+							<div class="admin-menu-label">{group.label}</div>
+							{#each group.items as item (item.href)}
+								<a href="{base}{item.href}" class:active={activeNav(item.href)}>{item.label}</a>
+							{/each}
+						</div>
 					{/each}
 				</nav>
 			</aside>

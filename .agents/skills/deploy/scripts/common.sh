@@ -410,8 +410,12 @@ run_nonfatal_smoke_suite() {
     fi
 
     smoke_endpoint "GET /" "$SITE/" || smoke_fail=1
-    smoke_endpoint "GET /dashboard" "$SITE/dashboard" || smoke_fail=1
-    smoke_endpoint "GET /add-account/claude" "$SITE/add-account/claude" || smoke_fail=1
+    smoke_endpoint "GET /console/dashboard" "$SITE/console/dashboard" || smoke_fail=1
+    smoke_endpoint "GET /console/accounts" "$SITE/console/accounts" || smoke_fail=1
+    smoke_endpoint "GET /console/add-account/codex" "$SITE/console/add-account/codex" || smoke_fail=1
+    smoke_endpoint "GET /console/login" "$SITE/console/login" "" 404 || smoke_fail=1
+    smoke_endpoint "GET /dashboard" "$SITE/dashboard" "" 404 || smoke_fail=1
+    smoke_endpoint "GET /add-account/claude" "$SITE/add-account/claude" "" 404 || smoke_fail=1
     smoke_endpoint "GET /add-account" "$SITE/add-account" "" 404 || smoke_fail=1
     smoke_endpoint "GET /ui/" "$SITE/ui/" "" 404 || smoke_fail=1
     smoke_endpoint "GET /ui/add-account" "$SITE/ui/add-account" "" 404 || smoke_fail=1

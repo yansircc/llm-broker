@@ -1,10 +1,12 @@
 package server
 
 import (
-	"encoding/json"
+	"context"
 	"net/http"
+	"strings"
 
 	"github.com/yansircc/llm-broker/internal/auth"
+	"github.com/yansircc/llm-broker/internal/domain"
 )
 
 func requireAdmin(w http.ResponseWriter, r *http.Request) bool {
@@ -25,33 +27,44 @@ func requireAdminHandler(next http.Handler) http.Handler {
 	})
 }
 
-func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
-	var req struct {
-		Token string `json:"token"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Token == "" {
-		writeAdminError(w, http.StatusBadRequest, "invalid_request", "token is required")
-		return
-	}
-
-	ki, valid := s.authMw.ValidateToken(r.Context(), req.Token)
-	if !valid || ki == nil {
-		writeAdminError(w, http.StatusUnauthorized, "authentication_error", "invalid token")
-		return
-	}
-
-	http.SetCookie(w, &http.Cookie{
-		Name:     "cc_session",
-		Value:    req.Token,
-		Path:     "/",
-		HttpOnly: true,
-		Secure:   s.secureCookie(r),
-		SameSite: http.SameSiteLaxMode,
-		MaxAge:   86400 * 30,
+func (s *Server) adminAuth(handler http.HandlerFunc) http.Handler {
+	next := http.HandlerFunc(handler)
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if hasMachineAdminCredential(r) {
+			s.authMw.Authenticate(requireAdminHandler(next)).ServeHTTP(w, r)
+			return
+		}
+		cc, ok := s.requireCustomer(w, r)
+		if !ok {
+			return
+		}
+		if !s.isAdminUser(cc.User) {
+			writeAdminError(w, http.StatusForbidden, "forbidden", "admin access required")
+			return
+		}
+		ki := &auth.KeyInfo{
+			ID:             cc.User.ID,
+			CustomerID:     cc.User.ID,
+			CredentialKind: "web_session",
+			Name:           cc.User.Name,
+			Email:          cc.User.Email,
+			AllowedSurface: domain.SurfaceAll,
+			IsAdmin:        true,
+		}
+		ctx := context.WithValue(r.Context(), auth.KeyInfoKey, ki)
+		next.ServeHTTP(w, r.WithContext(ctx))
 	})
-	writeJSON(w, http.StatusOK, struct {
-		Status  string `json:"status"`
-		IsAdmin bool   `json:"is_admin"`
-		Name    string `json:"name"`
-	}{"ok", ki.IsAdmin, ki.Name})
+}
+
+func hasMachineAdminCredential(r *http.Request) bool {
+	if strings.TrimSpace(r.Header.Get("x-api-key")) != "" {
+		return true
+	}
+	if strings.HasPrefix(r.Header.Get("Authorization"), "Bearer ") {
+		return true
+	}
+	if c, err := r.Cookie("cc_session"); err == nil && c.Value != "" {
+		return true
+	}
+	return false
 }

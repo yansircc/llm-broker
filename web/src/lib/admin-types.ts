@@ -27,6 +27,8 @@ export interface HealthInfo {
 export interface UserSummary {
 	id: string;
 	name: string;
+	email?: string;
+	role?: 'admin' | 'user';
 	status: string;
 	allowed_surface: UserSurface;
 	bound_account_id?: string;

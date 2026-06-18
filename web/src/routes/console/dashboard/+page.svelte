@@ -229,7 +229,7 @@
 		<span>{data.health.version}</span>
 		<span>up {data.health.uptime}</span>
 		<span>sqlite <span class={data.health.sqlite === 'ok' ? 'g' : 'r'}>{data.health.sqlite}</span></span>
-		<span><a href="{base}/migrations">migration</a></span>
+		<span><a href="{base}/console/migrations">migration</a></span>
 	</div>
 
 	<div class="metric-grid">
@@ -283,7 +283,7 @@
 				<tbody>
 					{#each cells as cell (cell.id)}
 						<tr>
-							<td><a href="{base}/cells/{cell.id}">{cell.name || cell.id}</a></td>
+							<td><a href="{base}/console/cells/{cell.id}">{cell.name || cell.id}</a></td>
 							<td>{cellRegion(cell)}</td>
 							<td>{cellProxy(cell)}</td>
 							<td class="num">{cellAccounts(cell).length}</td>

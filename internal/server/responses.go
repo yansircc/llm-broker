@@ -86,6 +86,8 @@ type DashboardAccount struct {
 type DashboardUser struct {
 	ID                string         `json:"id"`
 	Name              string         `json:"name"`
+	Email             string         `json:"email"`
+	Role              string         `json:"role"`
 	Status            string         `json:"status"`
 	AllowedSurface    domain.Surface `json:"allowed_surface"`
 	BoundAccountID    string         `json:"bound_account_id,omitempty"`
@@ -239,6 +241,8 @@ type TestAccountResult struct {
 type UserDetailResponse struct {
 	ID                string                 `json:"id"`
 	Name              string                 `json:"name"`
+	Email             string                 `json:"email"`
+	Role              string                 `json:"role"`
 	TokenPrefix       string                 `json:"token_prefix"`
 	Status            string                 `json:"status"`
 	AllowedSurface    domain.Surface         `json:"allowed_surface"`

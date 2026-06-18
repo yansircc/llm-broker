@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { base } from '$app/paths';
 	import { customerApi } from '$lib/customer-api';
+	import type { AuthResponse } from '$lib/customer-types';
 
 	let email = $state('');
 	let password = $state('');
@@ -13,11 +14,11 @@
 		loading = true;
 		error = '';
 		try {
-			await customerApi('/auth/login', {
+			const res = await customerApi<AuthResponse>('/auth/login', {
 				method: 'POST',
 				body: JSON.stringify({ email: email.trim(), password })
 			});
-			window.location.href = `${base}/app/dashboard`;
+			window.location.href = `${base}${res.redirect_to ?? '/app/dashboard'}`;
 		} catch (err: any) {
 			error = err.message || 'login failed';
 		} finally {
@@ -46,7 +47,7 @@
 		<section class="rounded-xl border border-line bg-card/70 p-6 shadow-2xl">
 			<div>
 				<div class="font-mono text-xs uppercase tracking-wider text-brand">login</div>
-				<h2 class="mt-2 text-2xl font-bold">客户登录</h2>
+				<h2 class="mt-2 text-2xl font-bold">登录 CDX</h2>
 			</div>
 			<form class="mt-7 space-y-4" onsubmit={login}>
 				<div>

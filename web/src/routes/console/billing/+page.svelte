@@ -42,7 +42,7 @@
 		<p class="lede">Customer count, paid revenue, issued credits, and open recharge orders.</p>
 	</div>
 	<div class="page-actions">
-		<a class="secondary-btn fit" href="{base}/admin-billing/orders">orders</a>
+		<a class="secondary-btn fit" href="{base}/console/billing/orders">orders</a>
 		<button class="link" onclick={loadSummary}>refresh</button>
 		<span class="muted mono">{lastRefresh}</span>
 	</div>

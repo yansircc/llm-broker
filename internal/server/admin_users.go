@@ -390,6 +390,8 @@ func (s *Server) handleGetUser(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, UserDetailResponse{
 		ID:                user.ID,
 		Name:              user.Name,
+		Email:             user.Email,
+		Role:              s.userRole(user),
 		TokenPrefix:       tokenPrefix,
 		Status:            user.Status,
 		AllowedSurface:    user.AllowedSurface,

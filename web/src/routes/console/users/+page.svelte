@@ -192,8 +192,8 @@ curl -fsS "$BASE_URL/v1/models" \\
 
 	<div class="metric-grid">
 		<MetricCard label="users" value={users.length} sub={`${users.filter((user) => user.status === 'active').length} active`} />
+		<MetricCard label="admins" value={users.filter((user) => user.role === 'admin').length} sub="ADMIN_EMAILS matches" />
 		<MetricCard label="native" value={users.filter((user) => user.allowed_surface === 'native').length} sub="native-only users" />
-		<MetricCard label="compat" value={users.filter((user) => user.allowed_surface === 'compat').length} sub="compat-only users" />
 		<MetricCard label="all surfaces" value={users.filter((user) => user.allowed_surface === 'all').length} sub="unrestricted surface" />
 	</div>
 
@@ -259,6 +259,7 @@ curl -fsS "$BASE_URL/v1/models" \\
 				<thead>
 					<tr>
 						<th>name</th>
+						<th>role</th>
 						<th>status</th>
 						<th>surface</th>
 						<th>bound</th>
@@ -269,7 +270,8 @@ curl -fsS "$BASE_URL/v1/models" \\
 				<tbody>
 					{#each users as user (user.id)}
 						<tr>
-							<td><a href="{base}/users/{user.id}">{user.name}</a></td>
+							<td><a href="{base}/console/users/{user.id}">{user.name}</a></td>
+							<td>{user.role ?? 'user'}</td>
 							<td><StatusBadge status={user.status} /></td>
 							<td>{user.allowed_surface}</td>
 							<td class:muted={!user.bound_account_id}>{boundAccountText(user)}</td>

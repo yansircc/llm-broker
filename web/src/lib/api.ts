@@ -1,3 +1,5 @@
+import { base } from '$app/paths';
+
 class ApiError extends Error {
 	status: number;
 	constructor(status: number, message: string) {
@@ -28,8 +30,12 @@ export async function api<T = unknown>(path: string, opts: RequestInit & { timeo
 		});
 
 		if (res.status === 401) {
-			window.location.href = '/login';
+			window.location.href = `${base}/app/login`;
 			throw new ApiError(401, 'Unauthorized');
+		}
+		if (res.status === 403) {
+			window.location.href = `${base}/app/dashboard`;
+			throw new ApiError(403, 'Forbidden');
 		}
 
 		if (!res.ok) {

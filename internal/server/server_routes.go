@@ -40,9 +40,8 @@ func (s *Server) registerRelayRoutes(mux *http.ServeMux) {
 }
 
 func (s *Server) registerAdminRoutes(mux *http.ServeMux) {
-	auth := s.authMw.Authenticate
 	admin := func(handler http.HandlerFunc) http.Handler {
-		return auth(requireAdminHandler(http.HandlerFunc(handler)))
+		return s.adminAuth(handler)
 	}
 
 	mux.Handle("GET /admin/providers", admin(s.handleListProviders))
@@ -66,7 +65,6 @@ func (s *Server) registerAdminRoutes(mux *http.ServeMux) {
 	mux.Handle("POST /admin/egress/cells/{id}/test", admin(s.handleTestEgressCell))
 
 	mux.Handle("DELETE /admin/events", admin(s.handleClearEvents))
-	mux.HandleFunc("POST /admin/login", s.handleLogin)
 
 	mux.Handle("POST /admin/users", admin(s.handleCreateUser))
 	mux.Handle("GET /admin/users", admin(s.handleListUsers))

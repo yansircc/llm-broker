@@ -338,25 +338,25 @@
 			<div class="sub">static upstream accounts used after Codex capacity is unavailable</div>
 		</div>
 	</div>
-	<div class="form-panel">
+	<form class="form-panel" autocomplete="off" onsubmit={(e) => { e.preventDefault(); createStaticUpstream(); }}>
 		<div class="form-row wide">
 			<div>
 				<label for="static-name">name</label>
-				<input id="static-name" bind:value={staticName} placeholder="fallback-a">
+				<input id="static-name" name="fallback_account_label" bind:value={staticName} autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="fallback-a">
 			</div>
 			<div>
 				<label for="static-base-url">base URL</label>
-				<input id="static-base-url" bind:value={staticBaseURL} placeholder="https://third.example/v1">
+				<input id="static-base-url" name="fallback_upstream_url" bind:value={staticBaseURL} autocomplete="off" autocapitalize="off" spellcheck="false" inputmode="url" placeholder="https://third.example/v1">
 			</div>
 			<div>
 				<label for="static-api-key">API key</label>
-				<input id="static-api-key" bind:value={staticAPIKey} type="password" autocomplete="off" placeholder="sk-...">
+				<input id="static-api-key" name="fallback_upstream_secret" bind:value={staticAPIKey} type="password" autocomplete="new-password" autocapitalize="off" spellcheck="false" placeholder="sk-...">
 			</div>
 			<div>
 				<label for="static-models">models</label>
-				<input id="static-models" bind:value={staticModels} placeholder="gpt-5.5,gpt-5">
+				<input id="static-models" name="fallback_model_allowlist" bind:value={staticModels} autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="gpt-5.5,gpt-5">
 			</div>
-			<button class="link" onclick={createStaticUpstream} disabled={staticSubmitting || !staticName.trim() || !staticBaseURL.trim() || !staticAPIKey.trim() || staticModelList().length === 0}>
+			<button class="link" type="submit" disabled={staticSubmitting || !staticName.trim() || !staticBaseURL.trim() || !staticAPIKey.trim() || staticModelList().length === 0}>
 				{staticSubmitting ? 'adding...' : 'add'}
 			</button>
 		</div>
@@ -366,7 +366,7 @@
 		{#if staticResult}
 			<p class="g">created {staticResult.name} / {staticResult.base_url} / {staticResult.api_key_fingerprint}</p>
 		{/if}
-	</div>
+	</form>
 
 	{@const accountGroups = displayGroups(accounts, providers)}
 	{#if accountGroups.length === 0}
@@ -436,11 +436,11 @@
 						<tbody>
 							{#each group.accounts as account (account.id)}
 								<tr>
-									<td><a href="{base}/accounts/{account.id}">{account.email}</a></td>
+									<td><a href="{base}/console/accounts/{account.id}">{account.email}</a></td>
 									<td><span class={dotClass(account.status)}>{account.status}</span></td>
 									<td>
 										{#if account.cell_id}
-											<a href="{base}/cells/{account.cell_id}">{account.cell?.name ?? account.cell_id}</a>
+											<a href="{base}/console/cells/{account.cell_id}">{account.cell?.name ?? account.cell_id}</a>
 										{:else}
 											<span class="muted">legacy direct</span>
 										{/if}
