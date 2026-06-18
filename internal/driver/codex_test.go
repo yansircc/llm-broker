@@ -352,3 +352,65 @@ func TestDiscoverCodexFamilyPrefixes(t *testing.T) {
 		t.Errorf("prefixes = %v, want [\"\", \"bengalfox\"]", prefixes)
 	}
 }
+
+func TestCodexInterpretBadRequestRejects(t *testing.T) {
+	d := NewCodexDriver(CodexConfig{APIURL: "https://chatgpt.com/backend-api/codex"})
+	body := []byte(`{"detail":"The 'gpt-5.1-codex' model is not supported when using Codex with a ChatGPT account."}`)
+	eff := d.Interpret(http.StatusBadRequest, make(http.Header), body, "gpt-5.1-codex", nil)
+	if eff.Kind != EffectReject {
+		t.Fatalf("Interpret(400).Kind = %v, want EffectReject", eff.Kind)
+	}
+	if !eff.CooldownUntil.IsZero() {
+		t.Fatalf("Interpret(400) set cooldown %v, want zero (a 400 must not penalize the account)", eff.CooldownUntil)
+	}
+	if eff.UpstreamStatus != http.StatusBadRequest {
+		t.Fatalf("Interpret(400).UpstreamStatus = %d, want 400", eff.UpstreamStatus)
+	}
+}
+
+func TestCodexProbeModelFollowsObservedModel(t *testing.T) {
+	d := NewCodexDriver(CodexConfig{APIURL: "https://chatgpt.com/backend-api/codex"})
+
+	// Before any traffic, probe falls back to the catalog's primary model.
+	if got, want := d.probeModel(), d.Models()[0].ID; got != want {
+		t.Fatalf("probeModel() before traffic = %q, want catalog primary %q", got, want)
+	}
+
+	// A successful standard-family relay updates the observed model.
+	d.Interpret(http.StatusOK, make(http.Header), nil, "gpt-5.6", nil)
+	if got := d.probeModel(); got != "gpt-5.6" {
+		t.Fatalf("probeModel() after observing gpt-5.6 = %q, want gpt-5.6", got)
+	}
+
+	// Spark-family and empty models are ignored so probes keep eliciting full headers.
+	d.Interpret(http.StatusOK, make(http.Header), nil, "gpt-5.3-codex-spark", nil)
+	d.Interpret(http.StatusOK, make(http.Header), nil, "", nil)
+	if got := d.probeModel(); got != "gpt-5.6" {
+		t.Fatalf("probeModel() after spark/empty = %q, want unchanged gpt-5.6", got)
+	}
+}
+
+func TestCodexProbeUsesObservedModelInBody(t *testing.T) {
+	d := NewCodexDriver(CodexConfig{APIURL: "https://chatgpt.com/backend-api/codex"})
+	d.Interpret(http.StatusOK, make(http.Header), nil, "gpt-5.6", nil)
+
+	var sentBody string
+	client := &http.Client{
+		Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+			b, _ := io.ReadAll(req.Body)
+			sentBody = string(b)
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Body:       io.NopCloser(strings.NewReader("event: response.output_text.delta\n")),
+				Header:     make(http.Header),
+			}, nil
+		}),
+	}
+	acct := &domain.Account{Provider: domain.ProviderCodex, Subject: "subj-1"}
+	if _, err := d.Probe(context.Background(), acct, "tok", client); err != nil {
+		t.Fatalf("Probe() error = %v", err)
+	}
+	if !strings.Contains(sentBody, `"model":"gpt-5.6"`) {
+		t.Fatalf("probe body = %q, want it to use observed model gpt-5.6", sentBody)
+	}
+}

@@ -1,6 +1,10 @@
 package driver
 
-import "github.com/yansircc/llm-broker/internal/domain"
+import (
+	"sync/atomic"
+
+	"github.com/yansircc/llm-broker/internal/domain"
+)
 
 // CodexConfig holds the configuration needed by the Codex driver.
 type CodexConfig struct {
@@ -11,10 +15,40 @@ type CodexConfig struct {
 // CodexDriver implements Driver for Codex (OpenAI).
 type CodexDriver struct {
 	cfg CodexConfig
+
+	// lastGoodModel is the most recent standard-family model that a real relay
+	// request succeeded with, observed live in Interpret. Probe prefers it so
+	// health checks track whatever model clients currently use, instead of a
+	// hardcoded name that silently 400s once the provider drops it. Shared
+	// across all accounts (the driver is a singleton); empty until the first
+	// success after startup, where probeModel falls back to the catalog.
+	lastGoodModel atomic.Pointer[string]
 }
 
 func NewCodexDriver(cfg CodexConfig) *CodexDriver {
 	return &CodexDriver{cfg: cfg}
+}
+
+// probeModel returns the model to use for health-check probes: the live
+// observed model if known, else the catalog's primary entry.
+func (d *CodexDriver) probeModel() string {
+	if m := d.lastGoodModel.Load(); m != nil && *m != "" {
+		return *m
+	}
+	if models := d.Models(); len(models) > 0 {
+		return models[0].ID
+	}
+	return "gpt-5.5"
+}
+
+// noteGoodModel records a model that a real relay request succeeded with,
+// limited to the standard family so probes always elicit full rate-limit
+// headers (spark-family models can route differently).
+func (d *CodexDriver) noteGoodModel(model string) {
+	if model == "" || codexModelFamily(model) != "" {
+		return
+	}
+	d.lastGoodModel.Store(&model)
 }
 
 func (d *CodexDriver) Provider() domain.Provider { return domain.ProviderCodex }
