@@ -12,7 +12,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/yansircc/llm-broker/internal/admission"
 	"github.com/yansircc/llm-broker/internal/auth"
+	"github.com/yansircc/llm-broker/internal/billing"
 	"github.com/yansircc/llm-broker/internal/domain"
 	"github.com/yansircc/llm-broker/internal/driver"
 	"github.com/yansircc/llm-broker/internal/events"
@@ -29,6 +31,7 @@ type relayTestDriver struct {
 	buildRequestBody    string
 	buildRequestURL     string
 	buildRequestHeaders http.Header
+	parseJSONUsageFn    func([]byte) *driver.Usage
 }
 
 func (d *relayTestDriver) Provider() domain.Provider { return d.provider }
@@ -81,7 +84,12 @@ func (d *relayTestDriver) StreamResponse(_ context.Context, _ http.ResponseWrite
 
 func (d *relayTestDriver) ForwardResponse(_ http.ResponseWriter, _ *http.Response) {}
 
-func (d *relayTestDriver) ParseJSONUsage(_ []byte) *driver.Usage { return nil }
+func (d *relayTestDriver) ParseJSONUsage(body []byte) *driver.Usage {
+	if d.parseJSONUsageFn != nil {
+		return d.parseJSONUsageFn(body)
+	}
+	return nil
+}
 
 func (d *relayTestDriver) ShouldRetry(statusCode int) bool { return statusCode == 529 }
 
@@ -1130,5 +1138,169 @@ func TestExecuteRelayAttemptLogsCompatTraceEnvelope(t *testing.T) {
 	}
 	if logs[0].UpstreamErrorType != "invalid_request_error" {
 		t.Fatalf("UpstreamErrorType = %q, want invalid_request_error", logs[0].UpstreamErrorType)
+	}
+}
+
+func TestCommercialRelaySettlesUsageAndDebitsLedger(t *testing.T) {
+	mockStore, relaySvc, _ := newCommercialRelayTest(t, &relayTestDriver{
+		provider: domain.ProviderClaude,
+		parseJSONUsageFn: func(_ []byte) *driver.Usage {
+			return &driver.Usage{InputTokens: 1_000_000, OutputTokens: 1_000_000}
+		},
+	})
+	creditUserBalance(t, mockStore, "user-bill", 10_000_000)
+
+	w := httptest.NewRecorder()
+	relaySvc.HandleProviderSurface(domain.ProviderClaude, domain.SurfaceNative).ServeHTTP(
+		w,
+		commercialRelayRequest("req-bill-1", true),
+	)
+	relaySvc.WaitForLogFlush()
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s", w.Code, w.Body.String())
+	}
+	billable, err := mockStore.GetBillableRequest(context.Background(), "req-bill-1")
+	if err != nil || billable == nil {
+		t.Fatalf("GetBillableRequest: billable=%#v err=%v", billable, err)
+	}
+	if billable.Status != "settled" || billable.LedgerID == "" {
+		t.Fatalf("billable = %#v, want settled with ledger id", billable)
+	}
+	bal, _, err := billing.NewService(mockStore).Balance(context.Background(), "user-bill")
+	if err != nil {
+		t.Fatalf("Balance: %v", err)
+	}
+	if bal != 8_000_000 {
+		t.Fatalf("balance = %d, want 8000000", bal)
+	}
+}
+
+func TestCommercialRelayRejectsBeforeUpstreamWhenBalanceUnavailable(t *testing.T) {
+	_, relaySvc, upstreamCalls := newCommercialRelayTest(t, &relayTestDriver{provider: domain.ProviderClaude})
+
+	w := httptest.NewRecorder()
+	relaySvc.HandleProviderSurface(domain.ProviderClaude, domain.SurfaceNative).ServeHTTP(
+		w,
+		commercialRelayRequest("req-bill-reject", true),
+	)
+
+	if w.Code != http.StatusPaymentRequired {
+		t.Fatalf("status = %d body=%s", w.Code, w.Body.String())
+	}
+	if *upstreamCalls != 0 {
+		t.Fatalf("upstream calls = %d, want 0", *upstreamCalls)
+	}
+}
+
+func TestCommercialRelayMarksSuccessfulResponseWithoutUsage(t *testing.T) {
+	mockStore, relaySvc, _ := newCommercialRelayTest(t, &relayTestDriver{provider: domain.ProviderClaude})
+	creditUserBalance(t, mockStore, "user-bill", 10_000_000)
+
+	w := httptest.NewRecorder()
+	relaySvc.HandleProviderSurface(domain.ProviderClaude, domain.SurfaceNative).ServeHTTP(
+		w,
+		commercialRelayRequest("req-bill-no-usage", true),
+	)
+	relaySvc.WaitForLogFlush()
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s", w.Code, w.Body.String())
+	}
+	billable, err := mockStore.GetBillableRequest(context.Background(), "req-bill-no-usage")
+	if err != nil || billable == nil {
+		t.Fatalf("GetBillableRequest: billable=%#v err=%v", billable, err)
+	}
+	if billable.Status != "no_usage" {
+		t.Fatalf("billable status = %q, want no_usage", billable.Status)
+	}
+}
+
+func newCommercialRelayTest(t *testing.T, driverStub *relayTestDriver) (*store.MockStore, *Relay, *int) {
+	t.Helper()
+	mockStore := store.NewMockStore()
+	now := time.Now().UTC()
+	account := &domain.Account{
+		ID:        "acct-bill",
+		Email:     "acct-bill@example.com",
+		Provider:  domain.ProviderClaude,
+		Subject:   "subject-bill",
+		BucketKey: "claude:subject-bill",
+		Status:    domain.StatusActive,
+		CreatedAt: now,
+	}
+	saveRelayTestAccount(t, mockStore, account)
+	if err := mockStore.UpsertModelPrice(context.Background(), &domain.ModelPrice{
+		Model:                  "gpt-5",
+		InputMicrosPerMillion:  1_000_000,
+		OutputMicrosPerMillion: 1_000_000,
+		UpdatedAt:              now,
+	}); err != nil {
+		t.Fatalf("UpsertModelPrice: %v", err)
+	}
+
+	bus := events.NewBus(16)
+	p, err := pool.New(mockStore, bus)
+	if err != nil {
+		t.Fatalf("pool.New: %v", err)
+	}
+	if driverStub == nil {
+		driverStub = &relayTestDriver{provider: domain.ProviderClaude}
+	}
+	upstreamCalls := 0
+	transport := relayTestTransport{
+		client: &http.Client{Transport: roundTripFunc(func(_ *http.Request) (*http.Response, error) {
+			upstreamCalls++
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Header:     make(http.Header),
+				Body:       io.NopCloser(strings.NewReader(`{"ok":true}`)),
+			}, nil
+		})},
+	}
+	relaySvc := New(
+		p,
+		relayTestTokenProvider{},
+		mockStore,
+		Config{MaxRequestBodyMB: 1},
+		transport,
+		bus,
+		map[domain.Provider]driver.ExecutionDriver{domain.ProviderClaude: driverStub},
+	)
+	billingSvc := billing.NewService(mockStore)
+	relaySvc.SetCommercialServices(billingSvc, admission.NewService(mockStore, billingSvc))
+	return mockStore, relaySvc, &upstreamCalls
+}
+
+func commercialRelayRequest(requestID string, verified bool) *http.Request {
+	req := httptest.NewRequest(http.MethodPost, "/v1/messages", strings.NewReader(`{"model":"gpt-5","messages":[]}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Broker-Request-Id", requestID)
+	ki := &auth.KeyInfo{
+		ID:             "user-bill",
+		CustomerID:     "user-bill",
+		APIKeyID:       "key-bill",
+		CredentialKind: "api_key",
+		Name:           "bill",
+		EmailVerified:  verified,
+		AllowedSurface: domain.SurfaceNative,
+	}
+	return req.WithContext(context.WithValue(req.Context(), auth.KeyInfoKey, ki))
+}
+
+func creditUserBalance(t *testing.T, mockStore *store.MockStore, userID string, amountMicros int64) {
+	t.Helper()
+	if err := mockStore.InsertBillingLedgerEntry(context.Background(), &domain.BillingLedgerEntry{
+		ID:             "credit-" + userID,
+		UserID:         userID,
+		AmountMicros:   amountMicros,
+		Kind:           "test_credit",
+		SourceType:     "test",
+		SourceID:       userID,
+		IdempotencyKey: "credit:" + userID,
+		MetadataJSON:   "{}",
+		CreatedAt:      time.Now().UTC(),
+	}); err != nil {
+		t.Fatalf("InsertBillingLedgerEntry: %v", err)
 	}
 }

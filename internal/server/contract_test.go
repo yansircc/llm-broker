@@ -55,6 +55,25 @@ func tokenHash(token string) string {
 	return hex.EncodeToString(sum[:])
 }
 
+func createTestAPIKey(t *testing.T, s store.Store, userID, token string, surface domain.Surface) {
+	t.Helper()
+	if surface == "" {
+		surface = domain.SurfaceNative
+	}
+	if err := s.CreateAPIKey(context.Background(), &domain.APIKey{
+		ID:             "key-" + userID,
+		UserID:         userID,
+		Name:           "test",
+		TokenHash:      tokenHash(token),
+		TokenPrefix:    "tk_test...",
+		Status:         "active",
+		AllowedSurface: surface,
+		CreatedAt:      time.Now().UTC(),
+	}); err != nil {
+		t.Fatal(err)
+	}
+}
+
 // assertJSONArray checks that the JSON value at the given dot-separated path
 // is a JSON array ([]), not null.
 func assertJSONArray(t *testing.T, body []byte, path string) {
@@ -436,11 +455,11 @@ func TestListAccounts_IncludesSurfaceAvailability(t *testing.T) {
 	if got := byID["acct-native"]["available_native"]; got != true {
 		t.Fatalf("acct-native available_native = %#v, want true", got)
 	}
-	if got := byID["acct-native"]["available_compat"]; got != true {
-		t.Fatalf("acct-native available_compat = %#v, want true", got)
+	if got := byID["acct-native"]["available_compat"]; got != false {
+		t.Fatalf("acct-native available_compat = %#v, want false", got)
 	}
-	if got := byID["acct-compat"]["available_native"]; got != true {
-		t.Fatalf("acct-compat available_native = %#v, want true", got)
+	if got := byID["acct-compat"]["available_native"]; got != false {
+		t.Fatalf("acct-compat available_native = %#v, want false", got)
 	}
 	if got := byID["acct-compat"]["available_compat"]; got != true {
 		t.Fatalf("acct-compat available_compat = %#v, want true", got)
@@ -798,8 +817,6 @@ func TestListUsers_ReturnsUserSummaries(t *testing.T) {
 	user := &domain.User{
 		ID:             "u-1",
 		Name:           "alice",
-		TokenHash:      tokenHash("user-token"),
-		TokenPrefix:    "tk_alice_abcd...",
 		Status:         "active",
 		AllowedSurface: domain.SurfaceCompat,
 		BoundAccountID: acct.ID,
@@ -808,6 +825,7 @@ func TestListUsers_ReturnsUserSummaries(t *testing.T) {
 	if err := srv.store.CreateUser(context.Background(), user); err != nil {
 		t.Fatal(err)
 	}
+	createTestAPIKey(t, srv.store, user.ID, "user-token", domain.SurfaceCompat)
 
 	w := httptest.NewRecorder()
 	srv.handleListUsers(w, adminRequest("GET", "/admin/users"))
@@ -885,16 +903,15 @@ func TestAdminAccountsRoute_RequiresAdmin(t *testing.T) {
 	srv.authMw = auth.NewMiddleware("admin-secret", srv.store)
 
 	user := &domain.User{
-		ID:          "u-1",
-		Name:        "alice",
-		TokenHash:   tokenHash("user-token"),
-		TokenPrefix: "tk_alice_abcd...",
-		Status:      "active",
-		CreatedAt:   time.Now().UTC(),
+		ID:        "u-1",
+		Name:      "alice",
+		Status:    "active",
+		CreatedAt: time.Now().UTC(),
 	}
 	if err := srv.store.CreateUser(context.Background(), user); err != nil {
 		t.Fatal(err)
 	}
+	createTestAPIKey(t, srv.store, user.ID, "user-token", domain.SurfaceNative)
 
 	mux := http.NewServeMux()
 	srv.registerAdminRoutes(mux)
@@ -919,8 +936,6 @@ func TestCompatRoute_RejectsNativeOnlyUser(t *testing.T) {
 	user := &domain.User{
 		ID:             "u-native",
 		Name:           "native-user",
-		TokenHash:      tokenHash("native-token"),
-		TokenPrefix:    "tk_native_abcd...",
 		Status:         "active",
 		AllowedSurface: domain.SurfaceNative,
 		CreatedAt:      time.Now().UTC(),
@@ -928,6 +943,7 @@ func TestCompatRoute_RejectsNativeOnlyUser(t *testing.T) {
 	if err := srv.store.CreateUser(context.Background(), user); err != nil {
 		t.Fatal(err)
 	}
+	createTestAPIKey(t, srv.store, user.ID, "native-token", domain.SurfaceNative)
 
 	mux := http.NewServeMux()
 	srv.registerRelayRoutes(mux)
@@ -949,8 +965,6 @@ func TestNativeRoute_RejectsCompatOnlyUser(t *testing.T) {
 	user := &domain.User{
 		ID:             "u-compat",
 		Name:           "compat-user",
-		TokenHash:      tokenHash("compat-token"),
-		TokenPrefix:    "tk_compat_abcd...",
 		Status:         "active",
 		AllowedSurface: domain.SurfaceCompat,
 		CreatedAt:      time.Now().UTC(),
@@ -958,6 +972,7 @@ func TestNativeRoute_RejectsCompatOnlyUser(t *testing.T) {
 	if err := srv.store.CreateUser(context.Background(), user); err != nil {
 		t.Fatal(err)
 	}
+	createTestAPIKey(t, srv.store, user.ID, "compat-token", domain.SurfaceCompat)
 
 	mux := http.NewServeMux()
 	srv.registerRelayRoutes(mux)

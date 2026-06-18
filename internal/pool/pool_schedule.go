@@ -53,14 +53,6 @@ func (p *Pool) allowedOnSurfaceLocked(acct *domain.Account, surface domain.Surfa
 	if surface == "" || surface == domain.SurfaceAll {
 		return true
 	}
-	// Hotfix: Claude compat failures on legacy-direct accounts are caused by
-	// coupling surface eligibility to cell lane. Keep this provider-specific
-	// escape hatch only until surface/account policy is moved out of cell lane
-	// and user pins become provider-scoped.
-	if acct != nil && acct.Provider == domain.ProviderClaude {
-		return surface == domain.SurfaceNative || surface == domain.SurfaceCompat
-	}
-
 	cell := p.cellForAccountLocked(acct)
 	lane := cellLane(cell)
 

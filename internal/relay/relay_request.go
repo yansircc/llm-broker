@@ -8,11 +8,14 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"time"
 
+	"github.com/yansircc/llm-broker/internal/admission"
 	"github.com/yansircc/llm-broker/internal/auth"
 	"github.com/yansircc/llm-broker/internal/domain"
 	"github.com/yansircc/llm-broker/internal/driver"
 	"github.com/yansircc/llm-broker/internal/events"
+	"github.com/yansircc/llm-broker/internal/requestid"
 )
 
 type preparedRelayRequest struct {
@@ -23,6 +26,8 @@ type preparedRelayRequest struct {
 	sessionUUID           string
 	sessionBoundAccountID string
 	userRouteAccountID    string
+	billableRequest       *domain.BillableRequest
+	admissionRelease      func()
 }
 
 func (r *Relay) prepareRelayRequest(w http.ResponseWriter, req *http.Request, drv driver.ExecutionDriver, surface domain.Surface) (*preparedRelayRequest, bool) {
@@ -51,6 +56,10 @@ func (r *Relay) prepareRelayRequest(w http.ResponseWriter, req *http.Request, dr
 		return nil, true
 	}
 	userRouteAccountID := r.resolveUserRouteAccount(req.Context(), drv, keyInfo, input.Model, surface, sessionBoundAccountID)
+	billableRequest, release, ok := r.admitBillableRequest(w, req, drv, keyInfo, input, surface)
+	if !ok {
+		return nil, true
+	}
 
 	return &preparedRelayRequest{
 		keyInfo:               keyInfo,
@@ -60,7 +69,45 @@ func (r *Relay) prepareRelayRequest(w http.ResponseWriter, req *http.Request, dr
 		sessionUUID:           plan.SessionUUID,
 		sessionBoundAccountID: sessionBoundAccountID,
 		userRouteAccountID:    userRouteAccountID,
+		billableRequest:       billableRequest,
+		admissionRelease:      release,
 	}, false
+}
+
+func (r *Relay) admitBillableRequest(w http.ResponseWriter, req *http.Request, drv driver.ExecutionDriver, keyInfo *auth.KeyInfo, input *driver.RelayInput, surface domain.Surface) (*domain.BillableRequest, func(), bool) {
+	if keyInfo == nil || keyInfo.IsAdmin {
+		return nil, nil, true
+	}
+	if r.admission != nil {
+		_, release, err := r.admission.Admit(req.Context(), admission.Request{
+			UserID:        keyInfo.ID,
+			APIKeyID:      keyInfo.APIKeyID,
+			EmailVerified: keyInfo.EmailVerified,
+		})
+		if err != nil {
+			drv.WriteError(w, http.StatusPaymentRequired, "billing admission rejected")
+			return nil, nil, false
+		}
+		if r.billing == nil {
+			return nil, release, true
+		}
+		br := &domain.BillableRequest{
+			RequestID: requestid.FromRequest(req),
+			UserID:    keyInfo.ID,
+			APIKeyID:  keyInfo.APIKeyID,
+			Model:     input.Model,
+			Surface:   surface,
+			Status:    "in_progress",
+			CreatedAt: time.Now().UTC(),
+		}
+		if err := r.billing.ReserveRequest(req.Context(), br); err != nil {
+			release()
+			drv.WriteError(w, http.StatusServiceUnavailable, "billing reservation failed")
+			return nil, nil, false
+		}
+		return br, release, true
+	}
+	return nil, nil, true
 }
 
 func (r *Relay) parseRelayInput(w http.ResponseWriter, req *http.Request, drv driver.ExecutionDriver, keyInfo *auth.KeyInfo) (*driver.RelayInput, driver.RelayPlan, bool) {

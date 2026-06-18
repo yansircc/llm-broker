@@ -47,18 +47,35 @@ func (s *Server) handleCreateUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	u := &domain.User{
-		ID:             uuid.New().String(),
-		Name:           req.Name,
-		TokenHash:      hashStr,
-		TokenPrefix:    prefix,
-		Status:         "active",
-		AllowedSurface: allowedSurface,
-		BoundAccountID: req.BoundAccountID,
-		CreatedAt:      time.Now().UTC(),
+		ID:              uuid.New().String(),
+		Email:           adminCreatedUserEmail(req.Name),
+		Name:            req.Name,
+		PasswordHash:    "",
+		EmailVerifiedAt: ptrTime(time.Now().UTC()),
+		Status:          "active",
+		AllowedSurface:  allowedSurface,
+		BoundAccountID:  req.BoundAccountID,
+		ReferralCode:    generateReferralCode(),
+		CreatedAt:       time.Now().UTC(),
 	}
 	if err := s.store.CreateUser(r.Context(), u); err != nil {
 		slog.Error("create user failed", "error", err)
 		writeAdminError(w, http.StatusInternalServerError, "internal_error", "failed to create user")
+		return
+	}
+	apiKey := &domain.APIKey{
+		ID:             uuid.New().String(),
+		UserID:         u.ID,
+		Name:           "default",
+		TokenHash:      hashStr,
+		TokenPrefix:    prefix,
+		Status:         "active",
+		AllowedSurface: allowedSurface,
+		CreatedAt:      u.CreatedAt,
+	}
+	if err := s.store.CreateAPIKey(r.Context(), apiKey); err != nil {
+		slog.Error("create initial api key failed", "error", err, "userId", u.ID)
+		writeAdminError(w, http.StatusInternalServerError, "internal_error", "failed to create api key")
 		return
 	}
 
@@ -138,12 +155,18 @@ func (s *Server) handleRegenerateUserToken(w http.ResponseWriter, r *http.Reques
 		writeAdminError(w, http.StatusInternalServerError, "internal_error", "failed to generate token")
 		return
 	}
-	if err := s.store.UpdateUserToken(r.Context(), id, hashStr, prefix); err != nil {
-		if errors.Is(err, store.ErrNotFound) {
-			writeAdminError(w, http.StatusNotFound, "not_found", "user not found")
-			return
-		}
-		writeAdminError(w, http.StatusInternalServerError, "internal_error", "failed to update token")
+	apiKey := &domain.APIKey{
+		ID:             uuid.New().String(),
+		UserID:         id,
+		Name:           "regenerated",
+		TokenHash:      hashStr,
+		TokenPrefix:    prefix,
+		Status:         "active",
+		AllowedSurface: domain.SurfaceAll,
+		CreatedAt:      time.Now().UTC(),
+	}
+	if err := s.store.CreateAPIKey(r.Context(), apiKey); err != nil {
+		writeAdminError(w, http.StatusInternalServerError, "internal_error", "failed to create api key")
 		return
 	}
 
@@ -252,6 +275,37 @@ func generateUserToken(name string) (plaintext, hashStr, prefix string, err erro
 	return plaintext, hashStr, prefix, nil
 }
 
+func generateReferralCode() string {
+	b := make([]byte, 6)
+	if _, err := rand.Read(b); err != nil {
+		return "ref_" + uuid.NewString()[:8]
+	}
+	return "ref_" + hex.EncodeToString(b)
+}
+
+func adminCreatedUserEmail(name string) string {
+	var b strings.Builder
+	for _, r := range strings.ToLower(name) {
+		switch {
+		case r >= 'a' && r <= 'z':
+			b.WriteRune(r)
+		case r >= '0' && r <= '9':
+			b.WriteRune(r)
+		default:
+			b.WriteByte('_')
+		}
+	}
+	local := strings.Trim(b.String(), "_")
+	if local == "" {
+		local = "user"
+	}
+	return local + "@admin.local"
+}
+
+func ptrTime(t time.Time) *time.Time {
+	return &t
+}
+
 func parseCSVQuery(raw string) []string {
 	if raw == "" {
 		return nil
@@ -298,6 +352,14 @@ func (s *Server) handleGetUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	keys, err := s.store.ListAPIKeysByUser(ctx, id)
+	if err != nil {
+		slog.Warn("user detail: query api keys failed", "error", err, "userId", id)
+	}
+	tokenPrefix := ""
+	if len(keys) > 0 {
+		tokenPrefix = keys[len(keys)-1].TokenPrefix
+	}
 	loc := parseTZParam(r)
 	usage, err := s.store.QueryUsagePeriods(ctx, id, loc)
 	if err != nil {
@@ -328,13 +390,13 @@ func (s *Server) handleGetUser(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, UserDetailResponse{
 		ID:                user.ID,
 		Name:              user.Name,
-		TokenPrefix:       user.TokenPrefix,
+		TokenPrefix:       tokenPrefix,
 		Status:            user.Status,
 		AllowedSurface:    user.AllowedSurface,
 		BoundAccountID:    user.BoundAccountID,
 		BoundAccountEmail: s.boundAccountEmail(user.BoundAccountID),
 		CreatedAt:         user.CreatedAt,
-		LastActiveAt:      user.LastActiveAt,
+		LastActiveAt:      user.LastLoginAt,
 		Usage:             usage,
 		ModelUsage:        modelUsage,
 		RecentRequests:    recentRequests,

@@ -11,6 +11,7 @@ import (
 
 func (s *Server) registerRoutes(mux *http.ServeMux) {
 	s.registerRelayRoutes(mux)
+	s.registerCustomerRoutes(mux)
 	s.registerAdminRoutes(mux)
 	s.registerOperationalRoutes(mux)
 	s.mountUIRoutes(mux)
@@ -27,6 +28,7 @@ func (s *Server) registerRelayRoutes(mux *http.ServeMux) {
 
 	mux.Handle("GET /v1/models", native(http.HandlerFunc(s.handleListModels)))
 	mux.Handle("GET /compat/v1/models", compat(http.HandlerFunc(s.handleCompatListModels)))
+	mux.Handle("POST /v1/chat/completions", compat(http.HandlerFunc(s.handleCompatOpenAIChatCompletions)))
 	mux.Handle("POST /compat/v1/chat/completions", compat(http.HandlerFunc(s.handleCompatOpenAIChatCompletions)))
 
 	for _, provider := range sortedProviders(s.catalogDrivers) {
@@ -74,10 +76,30 @@ func (s *Server) registerAdminRoutes(mux *http.ServeMux) {
 	mux.Handle("POST /admin/users/{id}/policy", admin(s.handleUpdateUserPolicy))
 
 	mux.Handle("GET /admin/activity", admin(s.handleActivity))
+	mux.Handle("GET /admin/billing/summary", admin(s.handleAdminBillingSummary))
+	mux.Handle("GET /admin/billing/orders", admin(s.handleAdminBillingOrders))
 	mux.Handle("GET /admin/activity/usage", admin(s.handleActivityUsage))
 	mux.Handle("GET /admin/dashboard", admin(s.handleDashboard))
 	mux.Handle("GET /admin/health", admin(s.handleHealth))
 	mux.Handle("DELETE /admin/sessions/binding/{uuid}", admin(s.handleUnbindSession))
+}
+
+func (s *Server) registerCustomerRoutes(mux *http.ServeMux) {
+	mux.HandleFunc("POST /api/auth/register", s.handleCustomerRegister)
+	mux.HandleFunc("POST /api/auth/login", s.handleCustomerLogin)
+	mux.HandleFunc("POST /api/auth/logout", s.handleCustomerLogout)
+	mux.HandleFunc("GET /api/auth/verify-email", s.handleVerifyEmail)
+	mux.HandleFunc("POST /api/auth/email-verification/resend", s.handleResendEmailVerification)
+	mux.HandleFunc("GET /api/me", s.handleCustomerMe)
+	mux.HandleFunc("GET /api/keys", s.handleCustomerListKeys)
+	mux.HandleFunc("POST /api/keys", s.handleCustomerCreateKey)
+	mux.HandleFunc("DELETE /api/keys/{id}", s.handleCustomerDeleteKey)
+	mux.HandleFunc("GET /api/billing/summary", s.handleCustomerBillingSummary)
+	mux.HandleFunc("POST /api/payments/create", s.handleCreatePayment)
+	mux.HandleFunc("GET /api/payments/orders/{id}", s.handleCustomerPaymentOrder)
+	mux.HandleFunc("GET /api/payments/notify", s.handlePaymentNotify)
+	mux.HandleFunc("POST /api/payments/notify", s.handlePaymentNotify)
+	mux.HandleFunc("GET /api/referrals", s.handleCustomerReferrals)
 }
 
 func (s *Server) registerOperationalRoutes(mux *http.ServeMux) {

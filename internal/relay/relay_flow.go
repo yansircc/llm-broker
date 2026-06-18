@@ -16,6 +16,9 @@ func (r *Relay) handleWithDriver(w http.ResponseWriter, req *http.Request, drv d
 	if handled {
 		return
 	}
+	if prepared.admissionRelease != nil {
+		defer prepared.admissionRelease()
+	}
 
 	attempts := newRelayAttemptState()
 	for attempt := 0; attempt <= r.cfg.MaxRetryAccounts; attempt++ {

@@ -19,18 +19,18 @@ func (s *SQLiteStore) InsertRequestLog(ctx context.Context, l *domain.RequestLog
 	}
 	res, err := s.db.ExecContext(ctx,
 		`INSERT INTO request_log (
-			user_id, account_id, provider, surface, model, cell_id,
+			user_id, request_id, api_key_id, account_id, provider, surface, model, cell_id,
 			input_tokens, output_tokens, cache_read_tokens, cache_create_tokens, cost_usd,
 			status, effect_kind, upstream_status, upstream_error_type,
 			duration_ms, created_at
 		)
 		VALUES (
-			?, ?, ?, ?, ?, ?,
+			?, ?, ?, ?, ?, ?, ?, ?,
 			?, ?, ?, ?, ?,
 			?, ?, ?, ?,
 			?, ?
 		)`,
-		l.UserID, l.AccountID, l.Provider, l.Surface, l.Model, l.CellID,
+		l.UserID, l.RequestID, l.APIKeyID, l.AccountID, l.Provider, l.Surface, l.Model, l.CellID,
 		l.InputTokens, l.OutputTokens, l.CacheReadTokens, l.CacheCreateTokens, l.CostUSD,
 		l.Status, l.EffectKind, l.UpstreamStatus, l.UpstreamErrorType,
 		l.DurationMs, l.CreatedAt.Unix())
@@ -60,7 +60,7 @@ func (s *SQLiteStore) QueryRequestLogs(ctx context.Context, opts domain.RequestL
 	copy(fetchArgs, args)
 	fetchArgs = append(fetchArgs, limit, opts.Offset)
 
-	query := fmt.Sprintf(`SELECT id, user_id, account_id, provider, surface, model, cell_id,
+	query := fmt.Sprintf(`SELECT id, user_id, request_id, api_key_id, account_id, provider, surface, model, cell_id,
 		input_tokens, output_tokens, cache_read_tokens, cache_create_tokens, cost_usd,
 		status, effect_kind, upstream_status, upstream_error_type,
 		duration_ms, created_at
@@ -75,7 +75,7 @@ func (s *SQLiteStore) QueryRequestLogs(ctx context.Context, opts domain.RequestL
 	for rows.Next() {
 		l := &domain.RequestLog{}
 		var ts int64
-		if err := rows.Scan(&l.ID, &l.UserID, &l.AccountID, &l.Provider, &l.Surface, &l.Model, &l.CellID,
+		if err := rows.Scan(&l.ID, &l.UserID, &l.RequestID, &l.APIKeyID, &l.AccountID, &l.Provider, &l.Surface, &l.Model, &l.CellID,
 			&l.InputTokens, &l.OutputTokens, &l.CacheReadTokens, &l.CacheCreateTokens,
 			&l.CostUSD, &l.Status, &l.EffectKind, &l.UpstreamStatus, &l.UpstreamErrorType,
 			&l.DurationMs, &ts); err != nil {

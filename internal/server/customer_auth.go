@@ -1,0 +1,330 @@
+package server
+
+import (
+	"crypto/rand"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
+	"fmt"
+	"net/http"
+	"strings"
+	"time"
+
+	"github.com/google/uuid"
+	"github.com/yansircc/llm-broker/internal/billing"
+	"github.com/yansircc/llm-broker/internal/domain"
+	"github.com/yansircc/llm-broker/internal/email"
+	"github.com/yansircc/llm-broker/internal/store"
+	"golang.org/x/crypto/bcrypt"
+)
+
+const customerSessionCookie = "cc_customer_session"
+
+type customerContext struct {
+	User    *domain.User
+	Session *domain.WebSession
+}
+
+func (s *Server) handleCustomerRegister(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Email        string `json:"email"`
+		Password     string `json:"password"`
+		Name         string `json:"name"`
+		ReferralCode string `json:"referral_code"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeAdminError(w, http.StatusBadRequest, "invalid_request", "invalid JSON body")
+		return
+	}
+	req.Email = strings.TrimSpace(strings.ToLower(req.Email))
+	req.Name = strings.TrimSpace(req.Name)
+	if req.Email == "" || !strings.Contains(req.Email, "@") || len(req.Password) < 8 {
+		writeAdminError(w, http.StatusBadRequest, "invalid_request", "valid email and password length >= 8 required")
+		return
+	}
+	if req.Name == "" {
+		req.Name = strings.Split(req.Email, "@")[0]
+	}
+	hash, err := bcrypt.GenerateFromPassword([]byte(req.Password), bcrypt.DefaultCost)
+	if err != nil {
+		writeAdminError(w, http.StatusInternalServerError, "internal_error", "failed to hash password")
+		return
+	}
+	referredBy := ""
+	if req.ReferralCode != "" {
+		inviter, err := s.store.GetUserByReferralCode(r.Context(), req.ReferralCode)
+		if err != nil {
+			writeAdminError(w, http.StatusInternalServerError, "internal_error", "failed to check referral")
+			return
+		}
+		if inviter != nil {
+			referredBy = inviter.ID
+		}
+	}
+	now := time.Now().UTC()
+	user := &domain.User{
+		ID:               uuid.NewString(),
+		Email:            req.Email,
+		Name:             req.Name,
+		PasswordHash:     string(hash),
+		Status:           "active",
+		AllowedSurface:   domain.SurfaceNative,
+		ReferralCode:     generateReferralCode(),
+		ReferredByUserID: referredBy,
+		CreatedAt:        now,
+	}
+	if err := s.store.CreateUser(r.Context(), user); err != nil {
+		writeAdminError(w, http.StatusConflict, "conflict", "email already registered")
+		return
+	}
+	if _, err := s.createCustomerSession(w, r, user); err != nil {
+		writeAdminError(w, http.StatusInternalServerError, "internal_error", "failed to create session")
+		return
+	}
+	if err := s.sendEmailVerification(r, user); err != nil {
+		writeAdminError(w, http.StatusInternalServerError, "internal_error", "failed to send verification email")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"user": customerUserView(user), "verification_sent": true})
+}
+
+func (s *Server) handleCustomerLogin(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Email    string `json:"email"`
+		Password string `json:"password"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeAdminError(w, http.StatusBadRequest, "invalid_request", "invalid JSON body")
+		return
+	}
+	user, err := s.store.GetUserByEmail(r.Context(), strings.TrimSpace(strings.ToLower(req.Email)))
+	if err != nil || user == nil || bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(req.Password)) != nil {
+		writeAdminError(w, http.StatusUnauthorized, "authentication_error", "invalid email or password")
+		return
+	}
+	if user.Status != "active" {
+		writeAdminError(w, http.StatusForbidden, "forbidden", "user disabled")
+		return
+	}
+	if _, err := s.createCustomerSession(w, r, user); err != nil {
+		writeAdminError(w, http.StatusInternalServerError, "internal_error", "failed to create session")
+		return
+	}
+	_ = s.store.UpdateUserLastLogin(r.Context(), user.ID)
+	writeJSON(w, http.StatusOK, map[string]any{"user": customerUserView(user)})
+}
+
+func (s *Server) handleCustomerLogout(w http.ResponseWriter, r *http.Request) {
+	if c, err := r.Cookie(customerSessionCookie); err == nil && c.Value != "" {
+		_ = s.store.DeleteWebSessionByTokenHash(r.Context(), sha256Hex(c.Value))
+	}
+	http.SetCookie(w, &http.Cookie{Name: customerSessionCookie, Value: "", Path: "/", HttpOnly: true, Secure: s.secureCookie(r), SameSite: http.SameSiteLaxMode, MaxAge: -1})
+	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+}
+
+func (s *Server) handleCustomerMe(w http.ResponseWriter, r *http.Request) {
+	cc, ok := s.requireCustomer(w, r)
+	if !ok {
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"user": customerUserView(cc.User)})
+}
+
+func (s *Server) handleVerifyEmail(w http.ResponseWriter, r *http.Request) {
+	raw := r.URL.Query().Get("token")
+	if raw == "" {
+		http.Redirect(w, r, "/app/login?verified=0", http.StatusFound)
+		return
+	}
+	ev, err := s.store.GetEmailVerificationByTokenHash(r.Context(), sha256Hex(raw))
+	if err != nil || ev == nil || ev.ConsumedAt != nil || !ev.ExpiresAt.After(time.Now()) {
+		http.Redirect(w, r, "/app/login?verified=0", http.StatusFound)
+		return
+	}
+	now := time.Now().UTC()
+	if err := s.store.MarkUserEmailVerified(r.Context(), ev.UserID, now); err != nil {
+		http.Redirect(w, r, "/app/login?verified=0", http.StatusFound)
+		return
+	}
+	_ = s.store.ConsumeEmailVerification(r.Context(), ev.ID, now)
+	user, _ := s.store.GetUser(r.Context(), ev.UserID)
+	if user != nil {
+		user.EmailVerifiedAt = &now
+		_ = s.billingService().FulfillReferral(r.Context(), user)
+	}
+	http.Redirect(w, r, "/app/dashboard?verified=1", http.StatusFound)
+}
+
+func (s *Server) handleResendEmailVerification(w http.ResponseWriter, r *http.Request) {
+	cc, ok := s.requireCustomer(w, r)
+	if !ok {
+		return
+	}
+	if cc.User.EmailVerifiedAt != nil {
+		writeJSON(w, http.StatusOK, map[string]any{"verification_sent": false, "already_verified": true})
+		return
+	}
+	now := time.Now().UTC()
+	last, err := s.store.LastEmailVerification(r.Context(), cc.User.ID, "signup")
+	if err != nil {
+		writeAdminError(w, http.StatusInternalServerError, "internal_error", "failed to inspect verification state")
+		return
+	}
+	if last != nil && now.Sub(last.CreatedAt) < time.Minute {
+		writeAdminError(w, http.StatusTooManyRequests, "rate_limit", "resend cooldown")
+		return
+	}
+	count, err := s.store.CountEmailVerificationsSince(r.Context(), cc.User.ID, "signup", now.Add(-24*time.Hour))
+	if err != nil {
+		writeAdminError(w, http.StatusInternalServerError, "internal_error", "failed to inspect verification state")
+		return
+	}
+	if count >= 5 {
+		writeAdminError(w, http.StatusTooManyRequests, "rate_limit", "daily resend limit reached")
+		return
+	}
+	if err := s.store.DeletePendingEmailVerifications(r.Context(), cc.User.ID, "signup"); err != nil {
+		writeAdminError(w, http.StatusInternalServerError, "internal_error", "failed to reset verification")
+		return
+	}
+	if err := s.sendEmailVerification(r, cc.User); err != nil {
+		writeAdminError(w, http.StatusInternalServerError, "internal_error", "failed to send verification email")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]bool{"verification_sent": true})
+}
+
+func (s *Server) createCustomerSession(w http.ResponseWriter, r *http.Request, user *domain.User) (*domain.WebSession, error) {
+	raw, err := randomToken("sess")
+	if err != nil {
+		return nil, err
+	}
+	now := time.Now().UTC()
+	ttl := 30 * 24 * time.Hour
+	if s.cfg != nil && s.cfg.SessionTTL > 0 {
+		ttl = s.cfg.SessionTTL
+	}
+	session := &domain.WebSession{
+		ID:         uuid.NewString(),
+		UserID:     user.ID,
+		TokenHash:  sha256Hex(raw),
+		CreatedAt:  now,
+		LastSeenAt: now,
+		ExpiresAt:  now.Add(ttl),
+	}
+	if err := s.store.CreateWebSession(r.Context(), session); err != nil {
+		return nil, err
+	}
+	http.SetCookie(w, &http.Cookie{
+		Name:     customerSessionCookie,
+		Value:    raw,
+		Path:     "/",
+		HttpOnly: true,
+		Secure:   s.secureCookie(r),
+		SameSite: http.SameSiteLaxMode,
+		MaxAge:   int(ttl.Seconds()),
+	})
+	return session, nil
+}
+
+func (s *Server) requireCustomer(w http.ResponseWriter, r *http.Request) (*customerContext, bool) {
+	c, err := r.Cookie(customerSessionCookie)
+	if err != nil || c.Value == "" {
+		writeAdminError(w, http.StatusUnauthorized, "authentication_error", "login required")
+		return nil, false
+	}
+	session, user, err := s.store.GetWebSessionByTokenHash(r.Context(), sha256Hex(c.Value))
+	if err != nil || session == nil || user == nil {
+		writeAdminError(w, http.StatusUnauthorized, "authentication_error", "invalid session")
+		return nil, false
+	}
+	if user.Status != "active" {
+		writeAdminError(w, http.StatusForbidden, "forbidden", "user disabled")
+		return nil, false
+	}
+	_ = s.store.TouchWebSession(r.Context(), session.ID, time.Now().UTC())
+	return &customerContext{User: user, Session: session}, true
+}
+
+func (s *Server) sendEmailVerification(r *http.Request, user *domain.User) error {
+	raw, err := randomToken("verify")
+	if err != nil {
+		return err
+	}
+	now := time.Now().UTC()
+	ev := &domain.EmailVerification{
+		ID:        uuid.NewString(),
+		UserID:    user.ID,
+		Email:     user.Email,
+		TokenHash: sha256Hex(raw),
+		Purpose:   "signup",
+		CreatedAt: now,
+		ExpiresAt: now.Add(time.Hour),
+	}
+	if err := s.store.CreateEmailVerification(r.Context(), ev); err != nil {
+		return err
+	}
+	return s.emailSenderOrDefault().Send(r.Context(), email.VerificationMessage(user.Email, s.publicURL(r, "/api/auth/verify-email?token="+raw)))
+}
+
+func (s *Server) publicURL(r *http.Request, path string) string {
+	if s.cfg != nil && s.cfg.SiteURL != "" {
+		return strings.TrimRight(s.cfg.SiteURL, "/") + path
+	}
+	scheme := "http"
+	if r.TLS != nil {
+		scheme = "https"
+	}
+	return scheme + "://" + r.Host + path
+}
+
+func (s *Server) secureCookie(r *http.Request) bool {
+	if r != nil && r.TLS != nil {
+		return true
+	}
+	if r != nil && strings.EqualFold(strings.TrimSpace(r.Header.Get("X-Forwarded-Proto")), "https") {
+		return true
+	}
+	return s != nil && s.cfg != nil && strings.HasPrefix(strings.ToLower(strings.TrimSpace(s.cfg.SiteURL)), "https://")
+}
+
+func (s *Server) emailSenderOrDefault() email.Sender {
+	if s.emailSender != nil {
+		return s.emailSender
+	}
+	return email.StdoutSender{}
+}
+
+func (s *Server) billingService() *billing.Service {
+	if s.billing != nil {
+		return s.billing
+	}
+	s.billing = billing.NewService(s.store)
+	return s.billing
+}
+
+func randomToken(prefix string) (string, error) {
+	b := make([]byte, 24)
+	if _, err := rand.Read(b); err != nil {
+		return "", err
+	}
+	return fmt.Sprintf("%s_%s", prefix, hex.EncodeToString(b)), nil
+}
+
+func sha256Hex(raw string) string {
+	sum := sha256.Sum256([]byte(raw))
+	return hex.EncodeToString(sum[:])
+}
+
+func customerUserView(user *domain.User) map[string]any {
+	return map[string]any{
+		"id":                user.ID,
+		"email":             user.Email,
+		"name":              user.Name,
+		"status":            user.Status,
+		"email_verified_at": user.EmailVerifiedAt,
+		"created_at":        user.CreatedAt,
+	}
+}
+
+var _ = store.ErrNotFound

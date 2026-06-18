@@ -8,6 +8,8 @@ import "time"
 type RequestLog struct {
 	ID                int64     `json:"id"`
 	UserID            string    `json:"user_id"`
+	RequestID         string    `json:"request_id,omitempty"`
+	APIKeyID          string    `json:"api_key_id,omitempty"`
 	AccountID         string    `json:"account_id"`
 	Provider          string    `json:"provider"`
 	Surface           string    `json:"surface"`

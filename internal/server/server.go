@@ -9,10 +9,13 @@ import (
 	"time"
 
 	"github.com/yansircc/llm-broker/internal/auth"
+	"github.com/yansircc/llm-broker/internal/billing"
 	"github.com/yansircc/llm-broker/internal/config"
 	"github.com/yansircc/llm-broker/internal/domain"
 	"github.com/yansircc/llm-broker/internal/driver"
+	"github.com/yansircc/llm-broker/internal/email"
 	"github.com/yansircc/llm-broker/internal/events"
+	"github.com/yansircc/llm-broker/internal/payments/zpay"
 	"github.com/yansircc/llm-broker/internal/pool"
 	"github.com/yansircc/llm-broker/internal/relay"
 	"github.com/yansircc/llm-broker/internal/store"
@@ -41,6 +44,9 @@ type Server struct {
 	activeRequests sync.Map
 	connStates     sync.Map
 	logFlush       sync.WaitGroup
+	billing        *billing.Service
+	emailSender    email.Sender
+	zpayClient     *zpay.Client
 }
 
 // WaitForLogFlush blocks until pending compat-lifecycle request-log inserts +
@@ -80,6 +86,11 @@ func New(
 		catalogDrivers: drivers.Catalog,
 		oauthDrivers:   drivers.OAuth,
 		adminDrivers:   drivers.Admin,
+		billing:        billing.NewService(s),
+		emailSender:    emailSenderFromConfig(cfg),
+	}
+	if cfg.ZPayPID != "" && cfg.ZPayKey != "" {
+		srv.zpayClient = zpay.NewClient(zpay.Config{PID: cfg.ZPayPID, Key: cfg.ZPayKey, HTTPClient: http.DefaultClient})
 	}
 
 	mux := http.NewServeMux()
@@ -96,6 +107,18 @@ func New(
 	}
 
 	return srv
+}
+
+func emailSenderFromConfig(cfg *config.Config) email.Sender {
+	if cfg.SMTPAddr == "" || cfg.SMTPFrom == "" {
+		return email.StdoutSender{}
+	}
+	return email.SMTPSender{
+		Addr:     cfg.SMTPAddr,
+		Username: cfg.SMTPUsername,
+		Password: cfg.SMTPPassword,
+		From:     cfg.SMTPFrom,
+	}
 }
 
 type activeRequest struct {

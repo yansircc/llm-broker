@@ -223,7 +223,7 @@ func TestPick_SkipsUnavailableCell(t *testing.T) {
 	}
 }
 
-func TestPickForSurface_ClaudeIgnoresCellLanes(t *testing.T) {
+func TestPickForSurface_RespectsCellLanes(t *testing.T) {
 	native := activeAccount("native", "native@x")
 	native.Priority = 80
 	native.CellID = "cell-native"
@@ -262,8 +262,8 @@ func TestPickForSurface_ClaudeIgnoresCellLanes(t *testing.T) {
 	if err != nil {
 		t.Fatalf("PickForSurface(native): %v", err)
 	}
-	if gotNative.ID != "compat" {
-		t.Fatalf("PickForSurface(native) = %s, want compat", gotNative.ID)
+	if gotNative.ID != "native" {
+		t.Fatalf("PickForSurface(native) = %s, want native", gotNative.ID)
 	}
 
 	gotCompat, err := p.PickForSurface(testDriver, nil, "claude-haiku", "", domain.SurfaceCompat)
@@ -275,7 +275,7 @@ func TestPickForSurface_ClaudeIgnoresCellLanes(t *testing.T) {
 	}
 }
 
-func TestSurfaceAvailabilityMap_ClaudeIgnoresCellLanes(t *testing.T) {
+func TestSurfaceAvailabilityMap_RespectsCellLanes(t *testing.T) {
 	native := activeAccount("native-avail", "native@x")
 	compat := activeAccount("compat-avail", "compat@x")
 	compat.CellID = "cell-compat"
@@ -301,11 +301,11 @@ func TestSurfaceAvailabilityMap_ClaudeIgnoresCellLanes(t *testing.T) {
 	if !availability[native.ID].Native {
 		t.Fatal("native legacy-direct account should be native-available")
 	}
-	if !availability[native.ID].Compat {
-		t.Fatal("native legacy-direct account should be compat-available")
+	if availability[native.ID].Compat {
+		t.Fatal("native legacy-direct account should not be compat-available")
 	}
-	if !availability[compat.ID].Native {
-		t.Fatal("compat lane account should be native-available")
+	if availability[compat.ID].Native {
+		t.Fatal("compat lane account should not be native-available")
 	}
 	if !availability[compat.ID].Compat {
 		t.Fatal("compat lane account should be compat-available")

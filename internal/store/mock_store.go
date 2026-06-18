@@ -20,6 +20,18 @@ type MockStore struct {
 	oauthSessions   map[string]*domain.OAuthSessionState
 	refreshLocks    map[string]*domain.RefreshLock
 	users           map[string]*domain.User
+	apiKeys         map[string]*domain.APIKey
+	webSessions     map[string]*domain.WebSession
+	emailTokens     map[string]*domain.EmailVerification
+	ledger          []*domain.BillingLedgerEntry
+	checkpoints     map[string]*domain.BillingBalanceCheckpoint
+	modelPrices     map[string]*domain.ModelPrice
+	billingSettings map[string]string
+	billable        map[string]*domain.BillableRequest
+	paymentOrders   map[string]*domain.PaymentOrder
+	paymentEvents   []*domain.PaymentEvent
+	referrals       map[string]*domain.Referral
+	admissionLimits map[string]*domain.AdmissionLimit
 	logs            []*domain.RequestLog
 
 	// Error injection
@@ -42,6 +54,16 @@ func NewMockStore() *MockStore {
 		oauthSessions:   make(map[string]*domain.OAuthSessionState),
 		refreshLocks:    make(map[string]*domain.RefreshLock),
 		users:           make(map[string]*domain.User),
+		apiKeys:         make(map[string]*domain.APIKey),
+		webSessions:     make(map[string]*domain.WebSession),
+		emailTokens:     make(map[string]*domain.EmailVerification),
+		checkpoints:     make(map[string]*domain.BillingBalanceCheckpoint),
+		modelPrices:     make(map[string]*domain.ModelPrice),
+		billingSettings: make(map[string]string),
+		billable:        make(map[string]*domain.BillableRequest),
+		paymentOrders:   make(map[string]*domain.PaymentOrder),
+		referrals:       make(map[string]*domain.Referral),
+		admissionLimits: make(map[string]*domain.AdmissionLimit),
 	}
 }
 
@@ -396,11 +418,34 @@ func (m *MockStore) CreateUser(_ context.Context, u *domain.User) error {
 	return nil
 }
 
-func (m *MockStore) GetUserByTokenHash(_ context.Context, hash string) (*domain.User, error) {
+func (m *MockStore) GetUser(_ context.Context, id string) (*domain.User, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	u, ok := m.users[id]
+	if !ok {
+		return nil, nil
+	}
+	copy := *u
+	return &copy, nil
+}
+
+func (m *MockStore) GetUserByEmail(_ context.Context, email string) (*domain.User, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	for _, u := range m.users {
-		if u.TokenHash == hash {
+		if u.Email == email {
+			copy := *u
+			return &copy, nil
+		}
+	}
+	return nil, nil
+}
+
+func (m *MockStore) GetUserByReferralCode(_ context.Context, code string) (*domain.User, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for _, u := range m.users {
+		if u.ReferralCode == code {
 			copy := *u
 			return &copy, nil
 		}
@@ -445,18 +490,6 @@ func (m *MockStore) UpdateUserStatus(_ context.Context, id, status string) error
 	return nil
 }
 
-func (m *MockStore) UpdateUserToken(_ context.Context, id, tokenHash, tokenPrefix string) error {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	u, ok := m.users[id]
-	if !ok {
-		return ErrNotFound
-	}
-	u.TokenHash = tokenHash
-	u.TokenPrefix = tokenPrefix
-	return nil
-}
-
 func (m *MockStore) UpdateUserPolicy(_ context.Context, id string, allowedSurface domain.Surface, boundAccountID string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -472,14 +505,552 @@ func (m *MockStore) UpdateUserPolicy(_ context.Context, id string, allowedSurfac
 	return nil
 }
 
-func (m *MockStore) UpdateUserLastActive(_ context.Context, id string) error {
+func (m *MockStore) UpdateUserLastLogin(_ context.Context, id string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if u, ok := m.users[id]; ok {
 		now := time.Now()
-		u.LastActiveAt = &now
+		u.LastLoginAt = &now
 	}
 	return nil
+}
+
+func (m *MockStore) MarkUserEmailVerified(_ context.Context, id string, verifiedAt time.Time) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	u, ok := m.users[id]
+	if !ok {
+		return ErrNotFound
+	}
+	u.EmailVerifiedAt = &verifiedAt
+	return nil
+}
+
+func (m *MockStore) CreateAPIKey(_ context.Context, key *domain.APIKey) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	copy := *key
+	m.apiKeys[key.ID] = &copy
+	return nil
+}
+
+func (m *MockStore) GetAPIKeyByTokenHash(_ context.Context, tokenHash string) (*domain.APIKey, *domain.User, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for _, key := range m.apiKeys {
+		if key.TokenHash != tokenHash {
+			continue
+		}
+		user := m.users[key.UserID]
+		if user == nil {
+			return nil, nil, nil
+		}
+		keyCopy := *key
+		userCopy := *user
+		return &keyCopy, &userCopy, nil
+	}
+	return nil, nil, nil
+}
+
+func (m *MockStore) ListAPIKeysByUser(_ context.Context, userID string) ([]*domain.APIKey, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var keys []*domain.APIKey
+	for _, key := range m.apiKeys {
+		if key.UserID != userID {
+			continue
+		}
+		copy := *key
+		keys = append(keys, &copy)
+	}
+	return keys, nil
+}
+
+func (m *MockStore) DeleteAPIKey(_ context.Context, id string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if _, ok := m.apiKeys[id]; !ok {
+		return ErrNotFound
+	}
+	delete(m.apiKeys, id)
+	return nil
+}
+
+func (m *MockStore) UpdateAPIKeyStatus(_ context.Context, id, status string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	key, ok := m.apiKeys[id]
+	if !ok {
+		return ErrNotFound
+	}
+	key.Status = status
+	return nil
+}
+
+func (m *MockStore) UpdateAPIKeyLastUsed(_ context.Context, id string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if key, ok := m.apiKeys[id]; ok {
+		now := time.Now()
+		key.LastUsedAt = &now
+	}
+	return nil
+}
+
+func (m *MockStore) CreateWebSession(_ context.Context, session *domain.WebSession) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	copy := *session
+	m.webSessions[session.TokenHash] = &copy
+	return nil
+}
+
+func (m *MockStore) GetWebSessionByTokenHash(_ context.Context, tokenHash string) (*domain.WebSession, *domain.User, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	session := m.webSessions[tokenHash]
+	if session == nil || !session.ExpiresAt.After(time.Now()) {
+		return nil, nil, nil
+	}
+	user := m.users[session.UserID]
+	if user == nil {
+		return nil, nil, nil
+	}
+	sessionCopy := *session
+	userCopy := *user
+	return &sessionCopy, &userCopy, nil
+}
+
+func (m *MockStore) DeleteWebSessionByTokenHash(_ context.Context, tokenHash string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if _, ok := m.webSessions[tokenHash]; !ok {
+		return ErrNotFound
+	}
+	delete(m.webSessions, tokenHash)
+	return nil
+}
+
+func (m *MockStore) TouchWebSession(_ context.Context, id string, now time.Time) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for _, session := range m.webSessions {
+		if session.ID == id {
+			session.LastSeenAt = now
+			return nil
+		}
+	}
+	return nil
+}
+
+func (m *MockStore) CreateEmailVerification(_ context.Context, ev *domain.EmailVerification) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	copy := *ev
+	m.emailTokens[ev.TokenHash] = &copy
+	return nil
+}
+
+func (m *MockStore) GetEmailVerificationByTokenHash(_ context.Context, tokenHash string) (*domain.EmailVerification, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	ev := m.emailTokens[tokenHash]
+	if ev == nil {
+		return nil, nil
+	}
+	copy := *ev
+	return &copy, nil
+}
+
+func (m *MockStore) ConsumeEmailVerification(_ context.Context, id string, consumedAt time.Time) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for _, ev := range m.emailTokens {
+		if ev.ID == id {
+			ev.ConsumedAt = &consumedAt
+			return nil
+		}
+	}
+	return ErrNotFound
+}
+
+func (m *MockStore) DeletePendingEmailVerifications(_ context.Context, userID, purpose string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for token, ev := range m.emailTokens {
+		if ev.UserID == userID && ev.Purpose == purpose && ev.ConsumedAt == nil {
+			delete(m.emailTokens, token)
+		}
+	}
+	return nil
+}
+
+func (m *MockStore) CountEmailVerificationsSince(_ context.Context, userID, purpose string, since time.Time) (int, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	count := 0
+	for _, ev := range m.emailTokens {
+		if ev.UserID == userID && ev.Purpose == purpose && !ev.CreatedAt.Before(since) {
+			count++
+		}
+	}
+	return count, nil
+}
+
+func (m *MockStore) LastEmailVerification(_ context.Context, userID, purpose string) (*domain.EmailVerification, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var latest *domain.EmailVerification
+	for _, ev := range m.emailTokens {
+		if ev.UserID != userID || ev.Purpose != purpose {
+			continue
+		}
+		if latest == nil || ev.CreatedAt.After(latest.CreatedAt) {
+			copy := *ev
+			latest = &copy
+		}
+	}
+	return latest, nil
+}
+
+func (m *MockStore) UpsertBillingSetting(_ context.Context, key, value string, _ time.Time) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.billingSettings[key] = value
+	return nil
+}
+
+func (m *MockStore) GetBillingSetting(_ context.Context, key string) (string, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.billingSettings[key], nil
+}
+
+func (m *MockStore) UpsertModelPrice(_ context.Context, price *domain.ModelPrice) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	copy := *price
+	m.modelPrices[price.Model] = &copy
+	return nil
+}
+
+func (m *MockStore) GetModelPrice(_ context.Context, model string) (*domain.ModelPrice, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	price := m.modelPrices[model]
+	if price == nil {
+		return nil, nil
+	}
+	copy := *price
+	return &copy, nil
+}
+
+func (m *MockStore) ListModelPrices(_ context.Context) ([]*domain.ModelPrice, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var prices []*domain.ModelPrice
+	for _, price := range m.modelPrices {
+		copy := *price
+		prices = append(prices, &copy)
+	}
+	return prices, nil
+}
+
+func (m *MockStore) InsertBillingLedgerEntry(_ context.Context, entry *domain.BillingLedgerEntry) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for _, existing := range m.ledger {
+		if existing.IdempotencyKey == entry.IdempotencyKey || existing.ID == entry.ID {
+			return nil
+		}
+	}
+	copy := *entry
+	copy.Seq = int64(len(m.ledger) + 1)
+	m.ledger = append(m.ledger, &copy)
+	entry.Seq = copy.Seq
+	return nil
+}
+
+func (m *MockStore) GetBillingLedgerEntryByIdempotencyKey(_ context.Context, key string) (*domain.BillingLedgerEntry, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for _, entry := range m.ledger {
+		if entry.IdempotencyKey == key {
+			copy := *entry
+			return &copy, nil
+		}
+	}
+	return nil, nil
+}
+
+func (m *MockStore) SumBillingLedgerAfter(_ context.Context, userID string, afterSeq int64) (int64, int64, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var sum, maxSeq int64
+	maxSeq = afterSeq
+	for _, entry := range m.ledger {
+		if entry.UserID != userID || entry.Seq <= afterSeq {
+			continue
+		}
+		sum += entry.AmountMicros
+		if entry.Seq > maxSeq {
+			maxSeq = entry.Seq
+		}
+	}
+	return sum, maxSeq, nil
+}
+
+func (m *MockStore) GetBillingBalanceCheckpoint(_ context.Context, userID string) (*domain.BillingBalanceCheckpoint, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	checkpoint := m.checkpoints[userID]
+	if checkpoint == nil {
+		return nil, nil
+	}
+	copy := *checkpoint
+	return &copy, nil
+}
+
+func (m *MockStore) UpsertBillingBalanceCheckpoint(_ context.Context, checkpoint *domain.BillingBalanceCheckpoint) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	copy := *checkpoint
+	m.checkpoints[checkpoint.UserID] = &copy
+	return nil
+}
+
+func (m *MockStore) CreateBillableRequest(_ context.Context, br *domain.BillableRequest) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if _, ok := m.billable[br.RequestID]; ok {
+		return nil
+	}
+	copy := *br
+	m.billable[br.RequestID] = &copy
+	return nil
+}
+
+func (m *MockStore) GetBillableRequest(_ context.Context, requestID string) (*domain.BillableRequest, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	br := m.billable[requestID]
+	if br == nil {
+		return nil, nil
+	}
+	copy := *br
+	return &copy, nil
+}
+
+func (m *MockStore) UpdateBillableRequestUsage(_ context.Context, br *domain.BillableRequest) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	existing := m.billable[br.RequestID]
+	if existing == nil {
+		return ErrNotFound
+	}
+	existing.Status = br.Status
+	existing.InputTokens = br.InputTokens
+	existing.OutputTokens = br.OutputTokens
+	existing.CacheReadTokens = br.CacheReadTokens
+	existing.CacheCreateTokens = br.CacheCreateTokens
+	existing.PriceSnapshotJSON = br.PriceSnapshotJSON
+	existing.UsageObservedAt = br.UsageObservedAt
+	return nil
+}
+
+func (m *MockStore) MarkBillableRequestSettled(_ context.Context, requestID, ledgerID string, settledAt time.Time) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	br := m.billable[requestID]
+	if br == nil {
+		return ErrNotFound
+	}
+	br.Status = "settled"
+	br.LedgerID = ledgerID
+	br.SettledAt = &settledAt
+	return nil
+}
+
+func (m *MockStore) MarkBillableRequestStatus(_ context.Context, requestID, status, errMsg string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	br := m.billable[requestID]
+	if br == nil {
+		return ErrNotFound
+	}
+	br.Status = status
+	br.Error = errMsg
+	return nil
+}
+
+func (m *MockStore) ListUnsettledUsageObservedRequests(_ context.Context, limit int) ([]*domain.BillableRequest, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var out []*domain.BillableRequest
+	for _, br := range m.billable {
+		if br.Status != "usage_observed" || br.LedgerID != "" {
+			continue
+		}
+		copy := *br
+		out = append(out, &copy)
+		if limit > 0 && len(out) >= limit {
+			break
+		}
+	}
+	return out, nil
+}
+
+func (m *MockStore) SavePaymentOrder(_ context.Context, order *domain.PaymentOrder) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	copy := *order
+	m.paymentOrders[order.OutTradeNo] = &copy
+	return nil
+}
+
+func (m *MockStore) GetPaymentOrderByOutTradeNo(_ context.Context, outTradeNo string) (*domain.PaymentOrder, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	order := m.paymentOrders[outTradeNo]
+	if order == nil {
+		return nil, nil
+	}
+	copy := *order
+	return &copy, nil
+}
+
+func (m *MockStore) ListPaymentOrdersByUser(_ context.Context, userID string, limit int) ([]*domain.PaymentOrder, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var orders []*domain.PaymentOrder
+	for _, order := range m.paymentOrders {
+		if order.UserID != userID {
+			continue
+		}
+		copy := *order
+		orders = append(orders, &copy)
+		if limit > 0 && len(orders) >= limit {
+			break
+		}
+	}
+	return orders, nil
+}
+
+func (m *MockStore) MarkPaymentOrderPaid(_ context.Context, outTradeNo, zpayTradeNo, paymentType string, paidAt time.Time) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	order := m.paymentOrders[outTradeNo]
+	if order == nil {
+		return ErrNotFound
+	}
+	order.Status = "paid"
+	order.ZpayTradeNo = zpayTradeNo
+	order.PaymentType = paymentType
+	order.PaidAt = &paidAt
+	order.UpdatedAt = paidAt
+	return nil
+}
+
+func (m *MockStore) FulfillPaymentOrderWithCredit(_ context.Context, outTradeNo, zpayTradeNo, paymentType string, paidAt time.Time, credit *domain.BillingLedgerEntry) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	order := m.paymentOrders[outTradeNo]
+	if order == nil {
+		return ErrNotFound
+	}
+	if credit != nil && credit.AmountMicros != 0 {
+		exists := false
+		for _, existing := range m.ledger {
+			if existing.IdempotencyKey == credit.IdempotencyKey || existing.ID == credit.ID {
+				exists = true
+				break
+			}
+		}
+		if !exists {
+			entryCopy := *credit
+			entryCopy.Seq = int64(len(m.ledger) + 1)
+			m.ledger = append(m.ledger, &entryCopy)
+		}
+	}
+	if order.Status != "paid" {
+		order.Status = "paid"
+		order.ZpayTradeNo = zpayTradeNo
+		order.PaymentType = paymentType
+		order.PaidAt = &paidAt
+		order.UpdatedAt = paidAt
+	}
+	return nil
+}
+
+func (m *MockStore) SavePaymentEvent(_ context.Context, event *domain.PaymentEvent) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	copy := *event
+	m.paymentEvents = append(m.paymentEvents, &copy)
+	return nil
+}
+
+func (m *MockStore) CreateReferralWithCredits(_ context.Context, referral *domain.Referral, inviteeCredit, inviterCredit *domain.BillingLedgerEntry) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if _, ok := m.referrals[referral.InviteeUserID]; ok {
+		return nil
+	}
+	copy := *referral
+	m.referrals[referral.InviteeUserID] = &copy
+	for _, entry := range []*domain.BillingLedgerEntry{inviteeCredit, inviterCredit} {
+		if entry == nil || entry.AmountMicros == 0 {
+			continue
+		}
+		entryCopy := *entry
+		entryCopy.Seq = int64(len(m.ledger) + 1)
+		m.ledger = append(m.ledger, &entryCopy)
+	}
+	return nil
+}
+
+func (m *MockStore) GetReferralByInvitee(_ context.Context, inviteeUserID string) (*domain.Referral, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	referral := m.referrals[inviteeUserID]
+	if referral == nil {
+		return nil, nil
+	}
+	copy := *referral
+	return &copy, nil
+}
+
+func (m *MockStore) UpsertAdmissionLimit(_ context.Context, limit *domain.AdmissionLimit) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	copy := *limit
+	m.admissionLimits[limit.Scope+"|"+limit.ScopeID] = &copy
+	return nil
+}
+
+func (m *MockStore) GetAdmissionLimit(_ context.Context, scope, scopeID string) (*domain.AdmissionLimit, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	limit := m.admissionLimits[scope+"|"+scopeID]
+	if limit == nil && scopeID != "" {
+		limit = m.admissionLimits[scope+"|"]
+	}
+	if limit == nil {
+		return nil, nil
+	}
+	copy := *limit
+	return &copy, nil
+}
+
+func (m *MockStore) ListAdmissionLimits(_ context.Context) ([]*domain.AdmissionLimit, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var limits []*domain.AdmissionLimit
+	for _, limit := range m.admissionLimits {
+		copy := *limit
+		limits = append(limits, &copy)
+	}
+	return limits, nil
 }
 
 func (m *MockStore) InsertRequestLog(_ context.Context, log *domain.RequestLog) (int64, error) {

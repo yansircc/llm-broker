@@ -215,58 +215,31 @@ func buildCompatTarget(req *compatOpenAIChatRequest) (*compatTarget, error) {
 	if err != nil {
 		return nil, err
 	}
-
-	switch provider {
-	case domain.ProviderClaude:
-		claudeReq, _, err := compatOpenAIChatToClaudeRequest(req)
-		if err != nil {
-			return nil, err
-		}
-		upstreamBody, err := json.Marshal(claudeReq)
-		if err != nil {
-			return nil, errCompat("failed to marshal claude compat request")
-		}
-		return &compatTarget{
-			provider:        domain.ProviderClaude,
-			requestedModel:  requestedModel,
-			relayPath:       "/v1/messages",
-			upstreamBody:    upstreamBody,
-			upstreamAccept:  "text/event-stream",
-			upstreamHeaders: compatClaudeUpstreamHeaders(claudeReq.Model),
-			stream:          req.Stream,
-			convertResponse: compatClaudeToOpenAIChatResponse,
-			newStreamWriter: func(w http.ResponseWriter, requestedModel string) compatStreamWriter {
-				return newCompatOpenAIStreamWriter(w, requestedModel)
-			},
-		}, nil
-
-	case domain.ProviderGemini:
-		geminiReq, err := compatOpenAIChatToGeminiRequest(req)
-		if err != nil {
-			return nil, err
-		}
-		upstreamBody, err := json.Marshal(geminiReq)
-		if err != nil {
-			return nil, errCompat("failed to marshal gemini compat request")
-		}
-		relayPath := "/gemini/v1internal:generateContent"
-		if req.Stream {
-			relayPath = "/gemini/v1internal:streamGenerateContent"
-		}
-		return &compatTarget{
-			provider:        domain.ProviderGemini,
-			requestedModel:  requestedModel,
-			relayPath:       relayPath,
-			upstreamBody:    upstreamBody,
-			stream:          req.Stream,
-			convertResponse: compatGeminiToOpenAIChatResponse,
-			newStreamWriter: func(w http.ResponseWriter, requestedModel string) compatStreamWriter {
-				return newCompatGeminiStreamWriter(w, requestedModel)
-			},
-		}, nil
+	if provider != domain.ProviderCodex {
+		return nil, errCompat("only OpenAI/Codex models are supported")
 	}
-
-	return nil, errCompat("unsupported compat provider")
+	if req.Stream {
+		return nil, errCompat("stream is not supported on /v1/chat/completions compat; use /openai/responses")
+	}
+	codexReq, err := compatOpenAIChatToCodexResponsesRequest(req)
+	if err != nil {
+		return nil, err
+	}
+	upstreamBody, err := json.Marshal(codexReq)
+	if err != nil {
+		return nil, errCompat("failed to marshal codex compat request")
+	}
+	return &compatTarget{
+		provider:        domain.ProviderCodex,
+		requestedModel:  requestedModel,
+		relayPath:       "/openai/responses",
+		upstreamBody:    upstreamBody,
+		stream:          false,
+		convertResponse: compatCodexResponsesToOpenAIChatResponse,
+		newStreamWriter: func(w http.ResponseWriter, requestedModel string) compatStreamWriter {
+			return newCompatOpenAIStreamWriter(w, requestedModel)
+		},
+	}, nil
 }
 
 func compatClaudeUpstreamHeaders(model string) http.Header {
@@ -325,27 +298,25 @@ func resolveCompatModel(model string) (domain.Provider, string, string, error) {
 	}
 
 	switch {
-	case providerPrefix == "claude" || providerPrefix == "anthropic" || (providerPrefix == "" && strings.HasPrefix(baseModel, "claude-")):
-		baseModel = compatCanonicalClaudeModel(baseModel)
-		if !strings.HasPrefix(baseModel, "claude-") {
-			return "", "", "", errCompat("model must be a claude model, e.g. claude/claude-sonnet-4-5")
-		}
-		return domain.ProviderClaude, baseModel, "claude/" + baseModel, nil
+	case providerPrefix == "claude" || providerPrefix == "anthropic" || strings.HasPrefix(baseModel, "claude-"):
+		return "", "", "", errCompat("claude compat is not supported")
 
-	case providerPrefix == "gemini" || providerPrefix == "google" || (providerPrefix == "" && strings.HasPrefix(baseModel, "gemini-")):
-		if !strings.HasPrefix(baseModel, "gemini-") {
-			return "", "", "", errCompat("model must be a gemini model, e.g. gemini/gemini-2.5-flash")
+	case providerPrefix == "gemini" || providerPrefix == "google" || strings.HasPrefix(baseModel, "gemini-"):
+		return "", "", "", errCompat("gemini compat is not supported")
+
+	case providerPrefix == "openai" || providerPrefix == "codex" || providerPrefix == "":
+		if strings.TrimSpace(baseModel) == "" {
+			return "", "", "", errCompat("model is required")
 		}
-		return domain.ProviderGemini, baseModel, "gemini/" + baseModel, nil
+		return domain.ProviderCodex, baseModel, baseModel, nil
 	}
 
-	return "", "", "", errCompat("model must be a claude or gemini model, e.g. claude/claude-sonnet-4-5 or gemini/gemini-2.5-flash")
+	return "", "", "", errCompat("model must be an OpenAI/Codex model")
 }
 
 func compatSupportedProviders() []domain.Provider {
 	return []domain.Provider{
-		domain.ProviderClaude,
-		domain.ProviderGemini,
+		domain.ProviderCodex,
 	}
 }
 

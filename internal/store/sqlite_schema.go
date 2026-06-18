@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"slices"
 	"strings"
+	"time"
 )
 
 //go:embed schema.sql
@@ -47,19 +48,159 @@ var desiredEgressCellColumns = []string{
 
 var desiredUserColumns = []string{
 	"id",
+	"email",
+	"name",
+	"password_hash",
+	"email_verified_at",
+	"status",
+	"allowed_surface",
+	"bound_account_id",
+	"referral_code",
+	"referred_by_user_id",
+	"created_at",
+	"last_login_at",
+}
+
+var desiredAPIKeyColumns = []string{
+	"id",
+	"user_id",
 	"name",
 	"token_hash",
 	"token_prefix",
 	"status",
 	"allowed_surface",
-	"bound_account_id",
 	"created_at",
-	"last_active_at",
+	"last_used_at",
+}
+
+var desiredWebSessionColumns = []string{
+	"id",
+	"user_id",
+	"token_hash",
+	"created_at",
+	"last_seen_at",
+	"expires_at",
+}
+
+var desiredEmailVerificationColumns = []string{
+	"id",
+	"user_id",
+	"email",
+	"token_hash",
+	"purpose",
+	"created_at",
+	"expires_at",
+	"consumed_at",
+}
+
+var desiredBillingSettingColumns = []string{
+	"key",
+	"value",
+	"updated_at",
+}
+
+var desiredAdmissionLimitColumns = []string{
+	"scope",
+	"scope_id",
+	"max_concurrent",
+	"requests_per_minute",
+	"min_balance_micros",
+	"updated_at",
+}
+
+var desiredModelPriceColumns = []string{
+	"model",
+	"input_micros_per_million",
+	"output_micros_per_million",
+	"cache_read_micros_per_million",
+	"cache_create_micros_per_million",
+	"updated_at",
+}
+
+var desiredBillingLedgerColumns = []string{
+	"seq",
+	"id",
+	"user_id",
+	"amount_micros",
+	"kind",
+	"source_type",
+	"source_id",
+	"idempotency_key",
+	"description",
+	"price_snapshot_json",
+	"metadata_json",
+	"created_at",
+}
+
+var desiredBillingBalanceCheckpointColumns = []string{
+	"user_id",
+	"ledger_seq",
+	"balance_micros",
+	"created_at",
+}
+
+var desiredPaymentOrderColumns = []string{
+	"id",
+	"out_trade_no",
+	"user_id",
+	"gateway",
+	"status",
+	"product_name",
+	"amount_cny_fen",
+	"credit_micros",
+	"exchange_rate_micros",
+	"payment_type",
+	"zpay_trade_no",
+	"qrcode",
+	"qr_image",
+	"created_at",
+	"paid_at",
+	"updated_at",
+}
+
+var desiredPaymentEventColumns = []string{
+	"id",
+	"order_id",
+	"gateway",
+	"event_type",
+	"valid_signature",
+	"payload_json",
+	"created_at",
+}
+
+var desiredReferralColumns = []string{
+	"id",
+	"inviter_user_id",
+	"invitee_user_id",
+	"invite_code",
+	"created_at",
+	"credited_at",
+}
+
+var desiredBillableRequestColumns = []string{
+	"request_id",
+	"user_id",
+	"api_key_id",
+	"model",
+	"surface",
+	"status",
+	"input_tokens",
+	"output_tokens",
+	"cache_read_tokens",
+	"cache_create_tokens",
+	"price_snapshot_json",
+	"ledger_id",
+	"error",
+	"created_at",
+	"usage_observed_at",
+	"settled_at",
 }
 
 var desiredRequestLogColumns = []string{
 	"id",
 	"user_id",
+	"request_id",
+	"api_key_id",
 	"account_id",
 	"provider",
 	"surface",
@@ -152,6 +293,9 @@ func Migrate(dbPath string) error {
 	if err := s.ensureRequestLogIndexes(context.Background()); err != nil {
 		return err
 	}
+	if err := s.seedCommercialDefaults(context.Background()); err != nil {
+		return err
+	}
 	if err := s.validateCurrentSchema(context.Background()); err != nil {
 		return err
 	}
@@ -166,6 +310,18 @@ func (s *SQLiteStore) validateCurrentSchema(ctx context.Context) error {
 		{table: "accounts", want: desiredAccountColumns},
 		{table: "egress_cells", want: desiredEgressCellColumns},
 		{table: "users", want: desiredUserColumns},
+		{table: "api_keys", want: desiredAPIKeyColumns},
+		{table: "web_sessions", want: desiredWebSessionColumns},
+		{table: "email_verifications", want: desiredEmailVerificationColumns},
+		{table: "billing_settings", want: desiredBillingSettingColumns},
+		{table: "admission_limits", want: desiredAdmissionLimitColumns},
+		{table: "model_prices", want: desiredModelPriceColumns},
+		{table: "billing_ledger", want: desiredBillingLedgerColumns},
+		{table: "billing_balance_checkpoints", want: desiredBillingBalanceCheckpointColumns},
+		{table: "payment_orders", want: desiredPaymentOrderColumns},
+		{table: "payment_events", want: desiredPaymentEventColumns},
+		{table: "referrals", want: desiredReferralColumns},
+		{table: "billable_requests", want: desiredBillableRequestColumns},
 		{table: "request_log", want: desiredRequestLogColumns},
 		{table: "quota_buckets", want: desiredQuotaBucketColumns},
 		{table: "session_bindings", want: desiredSessionBindingColumns},
@@ -364,7 +520,10 @@ func (s *SQLiteStore) migrateUsersTable(ctx context.Context) error {
 	if sameColumns(cols, desiredUserColumns) {
 		return nil
 	}
-	if !hasColumns(cols, "id", "name", "token_hash", "token_prefix", "status", "created_at", "last_active_at") {
+	if hasColumns(cols, "email", "password_hash", "referral_code") {
+		return fmt.Errorf("users migration: unsupported schema %v", cols)
+	}
+	if !hasColumns(cols, "id", "name", "token_hash", "token_prefix", "status", "created_at") {
 		return fmt.Errorf("users migration: unsupported schema %v", cols)
 	}
 
@@ -386,43 +545,93 @@ func (s *SQLiteStore) migrateUsersTable(ctx context.Context) error {
 	if _, err := tx.ExecContext(ctx, `
 		CREATE TABLE users_new (
 			id TEXT PRIMARY KEY,
-			name TEXT NOT NULL UNIQUE,
-			token_hash TEXT NOT NULL UNIQUE,
-			token_prefix TEXT NOT NULL,
+			email TEXT NOT NULL UNIQUE,
+			name TEXT NOT NULL,
+			password_hash TEXT NOT NULL,
+			email_verified_at INTEGER,
 			status TEXT NOT NULL DEFAULT 'active',
 			allowed_surface TEXT NOT NULL DEFAULT 'native',
 			bound_account_id TEXT NOT NULL DEFAULT '',
+			referral_code TEXT NOT NULL UNIQUE,
+			referred_by_user_id TEXT NOT NULL DEFAULT '',
 			created_at INTEGER NOT NULL,
-			last_active_at INTEGER
+			last_login_at INTEGER
 		)
 	`); err != nil {
 		return fmt.Errorf("create users_new: %w", err)
 	}
+	if _, err := tx.ExecContext(ctx, `
+		CREATE TABLE api_keys_new (
+			id TEXT PRIMARY KEY,
+			user_id TEXT NOT NULL,
+			name TEXT NOT NULL,
+			token_hash TEXT NOT NULL UNIQUE,
+			token_prefix TEXT NOT NULL,
+			status TEXT NOT NULL DEFAULT 'active',
+			allowed_surface TEXT NOT NULL DEFAULT 'native',
+			created_at INTEGER NOT NULL,
+			last_used_at INTEGER
+		)
+	`); err != nil {
+		return fmt.Errorf("create api_keys_new: %w", err)
+	}
 
 	insertSQL := fmt.Sprintf(`
 		INSERT INTO users_new (
-			id, name, token_hash, token_prefix, status, allowed_surface, bound_account_id, created_at, last_active_at
+			id, email, name, password_hash, email_verified_at, status, allowed_surface,
+			bound_account_id, referral_code, referred_by_user_id, created_at, last_login_at
 		)
 		SELECT
 			id,
+			lower(replace(name, ' ', '_')) || '@local.invalid',
 			name,
+			'',
+			created_at,
+			status,
+			%s,
+			%s,
+			'ref_' || replace(id, '-', ''),
+			'',
+			created_at,
+			%s
+		FROM users
+	`, allowedSurfaceExpr, boundAccountExpr, firstPresentOr(cols, "last_active_at", "NULL"))
+	if _, err := tx.ExecContext(ctx, insertSQL); err != nil {
+		return fmt.Errorf("copy users: %w", err)
+	}
+	keySQL := fmt.Sprintf(`
+		INSERT INTO api_keys_new (
+			id, user_id, name, token_hash, token_prefix, status, allowed_surface, created_at, last_used_at
+		)
+		SELECT
+			'key_' || replace(id, '-', ''),
+			id,
+			'legacy',
 			token_hash,
 			token_prefix,
 			status,
 			%s,
-			%s,
 			created_at,
-			last_active_at
+			%s
 		FROM users
-	`, allowedSurfaceExpr, boundAccountExpr)
-	if _, err := tx.ExecContext(ctx, insertSQL); err != nil {
-		return fmt.Errorf("copy users: %w", err)
+	`, allowedSurfaceExpr, firstPresentOr(cols, "last_active_at", "NULL"))
+	if _, err := tx.ExecContext(ctx, keySQL); err != nil {
+		return fmt.Errorf("copy api keys: %w", err)
 	}
 	if _, err := tx.ExecContext(ctx, `DROP TABLE users`); err != nil {
 		return fmt.Errorf("drop old users: %w", err)
 	}
 	if _, err := tx.ExecContext(ctx, `ALTER TABLE users_new RENAME TO users`); err != nil {
 		return fmt.Errorf("rename users_new: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, `DROP TABLE IF EXISTS api_keys`); err != nil {
+		return fmt.Errorf("drop old api_keys: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, `ALTER TABLE api_keys_new RENAME TO api_keys`); err != nil {
+		return fmt.Errorf("rename api_keys_new: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, `CREATE INDEX idx_api_keys_user ON api_keys(user_id, created_at)`); err != nil {
+		return fmt.Errorf("create idx_api_keys_user: %w", err)
 	}
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("commit users migration: %w", err)
@@ -459,6 +668,8 @@ func (s *SQLiteStore) migrateRequestLogTable(ctx context.Context) error {
 		CREATE TABLE request_log_new (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
 			user_id TEXT NOT NULL,
+			request_id TEXT NOT NULL DEFAULT '',
+			api_key_id TEXT NOT NULL DEFAULT '',
 			account_id TEXT NOT NULL,
 			provider TEXT NOT NULL DEFAULT '',
 			surface TEXT NOT NULL DEFAULT '',
@@ -482,7 +693,7 @@ func (s *SQLiteStore) migrateRequestLogTable(ctx context.Context) error {
 
 	insertSQL := fmt.Sprintf(`
 		INSERT INTO request_log_new (
-			id, user_id, account_id, provider, surface, model, cell_id,
+			id, user_id, request_id, api_key_id, account_id, provider, surface, model, cell_id,
 			input_tokens, output_tokens, cache_read_tokens, cache_create_tokens, cost_usd,
 			status, effect_kind, upstream_status, upstream_error_type,
 			duration_ms, created_at
@@ -490,6 +701,8 @@ func (s *SQLiteStore) migrateRequestLogTable(ctx context.Context) error {
 		SELECT
 			id,
 			user_id,
+			%s,
+			%s,
 			account_id,
 			%s,
 			%s,
@@ -508,6 +721,8 @@ func (s *SQLiteStore) migrateRequestLogTable(ctx context.Context) error {
 			created_at
 		FROM request_log
 	`,
+		copyExpr("request_id", "''"),
+		copyExpr("api_key_id", "''"),
 		copyExpr("provider", "''"),
 		copyExpr("surface", "''"),
 		copyExpr("cell_id", "''"),
@@ -562,6 +777,72 @@ func (s *SQLiteStore) ensureRequestLogIndexes(ctx context.Context) error {
 	return nil
 }
 
+func (s *SQLiteStore) seedCommercialDefaults(ctx context.Context) error {
+	now := time.Now().Unix()
+	settings := map[string]string{
+		"cny_to_usd_rate_micros":         "1000000",
+		"referral_new_user_bonus_micros": "0",
+		"referral_inviter_bonus_micros":  "0",
+	}
+	for key, value := range settings {
+		if _, err := s.db.ExecContext(ctx, `
+			INSERT OR IGNORE INTO billing_settings (key, value, updated_at) VALUES (?, ?, ?)
+		`, key, value, now); err != nil {
+			return fmt.Errorf("seed billing setting %s: %w", key, err)
+		}
+	}
+
+	limits := []struct {
+		scope             string
+		maxConcurrent     int
+		requestsPerMinute int
+		minBalanceMicros  int64
+	}{
+		{scope: "global", maxConcurrent: 0, requestsPerMinute: 0, minBalanceMicros: 1},
+		{scope: "user", maxConcurrent: 0, requestsPerMinute: 0, minBalanceMicros: 1},
+		{scope: "api_key", maxConcurrent: 0, requestsPerMinute: 0, minBalanceMicros: 1},
+		{scope: "reward_only", maxConcurrent: 1, requestsPerMinute: 0, minBalanceMicros: 1},
+	}
+	for _, limit := range limits {
+		if _, err := s.db.ExecContext(ctx, `
+			INSERT OR IGNORE INTO admission_limits (
+				scope, scope_id, max_concurrent, requests_per_minute, min_balance_micros, updated_at
+			) VALUES (?, '', ?, ?, ?, ?)
+		`, limit.scope, limit.maxConcurrent, limit.requestsPerMinute, limit.minBalanceMicros, now); err != nil {
+			return fmt.Errorf("seed admission limit %s: %w", limit.scope, err)
+		}
+	}
+
+	models := []string{
+		"gpt-5.5",
+		"gpt-5.4",
+		"gpt-5.4-mini",
+		"gpt-5.3-codex",
+		"gpt-5.3-codex-spark",
+		"gpt-5.2-codex",
+		"gpt-5.2",
+		"gpt-5.1-codex-max",
+		"gpt-5.1-codex",
+		"gpt-5.1-codex-mini",
+		"gpt-5.1",
+		"gpt-5-codex",
+		"gpt-5-codex-mini",
+		"gpt-5",
+		"codex-1",
+	}
+	for _, model := range models {
+		if _, err := s.db.ExecContext(ctx, `
+			INSERT OR IGNORE INTO model_prices (
+				model, input_micros_per_million, output_micros_per_million,
+				cache_read_micros_per_million, cache_create_micros_per_million, updated_at
+			) VALUES (?, 1000000, 5000000, 250000, 1000000, ?)
+		`, model, now); err != nil {
+			return fmt.Errorf("seed model price %s: %w", model, err)
+		}
+	}
+	return nil
+}
+
 func (s *SQLiteStore) tableColumns(ctx context.Context, table string) ([]string, error) {
 	rows, err := s.db.QueryContext(ctx, "PRAGMA table_info("+table+")")
 	if err != nil {
@@ -607,4 +888,11 @@ func firstPresent(cols []string, names ...string) string {
 		}
 	}
 	return ""
+}
+
+func firstPresentOr(cols []string, name, fallback string) string {
+	if slices.Contains(cols, name) {
+		return name
+	}
+	return fallback
 }

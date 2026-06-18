@@ -1,8 +1,10 @@
 package config
 
 import (
+	"net/url"
 	"os"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/yansircc/llm-broker/internal/requestlog"
@@ -19,6 +21,19 @@ type Config struct {
 	// Security
 	EncryptionKey string
 	StaticToken   string
+	SiteURL       string
+	SessionTTL    time.Duration
+
+	// Email
+	SMTPAddr     string
+	SMTPUsername string
+	SMTPPassword string
+	SMTPFrom     string
+
+	// ZPay / 7pay
+	ZPayPID string
+	ZPayKey string
+	ZPayCID string
 
 	// Claude API
 	ClaudeAPIURL     string
@@ -78,6 +93,17 @@ func Load() *Config {
 
 		EncryptionKey: os.Getenv("ENCRYPTION_KEY"),
 		StaticToken:   os.Getenv("API_TOKEN"),
+		SiteURL:       os.Getenv("SITE_URL"),
+		SessionTTL:    envDuration("CUSTOMER_SESSION_TTL", 30*24*time.Hour),
+
+		SMTPAddr:     os.Getenv("SMTP_ADDR"),
+		SMTPUsername: os.Getenv("SMTP_USERNAME"),
+		SMTPPassword: os.Getenv("SMTP_PASSWORD"),
+		SMTPFrom:     os.Getenv("SMTP_FROM"),
+
+		ZPayPID: os.Getenv("ZPAY_PID"),
+		ZPayKey: os.Getenv("ZPAY_KEY"),
+		ZPayCID: os.Getenv("ZPAY_CID"),
 
 		ClaudeAPIURL:     envOr("CLAUDE_API_URL", "https://api.anthropic.com/v1/messages"),
 		ClaudeAPIVersion: envOr("CLAUDE_API_VERSION", "2023-06-01"),
@@ -127,11 +153,13 @@ func (c *Config) Validate() error {
 	if c.StaticToken == "" {
 		return errMissing("API_TOKEN")
 	}
-	if (c.GeminiOAuthClientID == "") != (c.GeminiOAuthClientSecret == "") {
-		if c.GeminiOAuthClientID == "" {
-			return errMissing("GEMINI_OAUTH_CLIENT_ID")
+	if c.requiresPublicURL() {
+		if strings.TrimSpace(c.SiteURL) == "" {
+			return errMissing("SITE_URL")
 		}
-		return errMissing("GEMINI_OAUTH_CLIENT_SECRET")
+		if !validSiteURL(c.SiteURL) {
+			return &configError{field: "SITE_URL (must include http(s) scheme and host)"}
+		}
 	}
 	switch c.BackgroundJobsMode {
 	case "all", "leader", "off":
@@ -139,6 +167,18 @@ func (c *Config) Validate() error {
 		return &configError{field: "BACKGROUND_JOBS_MODE (must be all, leader, or off)"}
 	}
 	return nil
+}
+
+func (c *Config) requiresPublicURL() bool {
+	return c.SMTPAddr != "" || c.SMTPFrom != "" || c.ZPayPID != "" || c.ZPayKey != ""
+}
+
+func validSiteURL(raw string) bool {
+	u, err := url.Parse(strings.TrimSpace(raw))
+	if err != nil {
+		return false
+	}
+	return (u.Scheme == "https" || u.Scheme == "http") && u.Host != ""
 }
 
 func (c *Config) GeminiEnabled() bool {

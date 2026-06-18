@@ -87,8 +87,10 @@ func (r *Relay) baseRequestLog(prepared *preparedRelayRequest, acct *domain.Acco
 	}
 	if prepared != nil && prepared.keyInfo != nil {
 		entry.UserID = prepared.keyInfo.ID
+		entry.APIKeyID = prepared.keyInfo.APIKeyID
 	}
 	if prepared != nil && prepared.input != nil {
+		entry.RequestID = prepared.billableRequestID()
 		entry.Surface = string(prepared.surface)
 		entry.Model = prepared.input.Model
 		obs.Path = requestLogPath(prepared)
@@ -436,9 +438,25 @@ func (r *Relay) finishRelaySuccess(
 			return
 		}
 		usage = drv.ParseJSONUsage(respBody)
+		if usage != nil {
+			r.settleBillableUsage(ctx, prepared, usage)
+		} else {
+			r.markBillableStatus(ctx, prepared, "no_usage", "")
+		}
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(resp.StatusCode)
 		w.Write(respBody)
+	}
+	if prepared.input.IsStream {
+		if usage != nil {
+			r.settleBillableUsage(ctx, prepared, usage)
+		} else {
+			status := "no_usage"
+			if !streamCompleted {
+				status = "aborted_no_usage"
+			}
+			r.markBillableStatus(ctx, prepared, status, "")
+		}
 	}
 
 	entry, obs := r.baseRequestLog(prepared, acct, attempt)
@@ -478,6 +496,37 @@ func (r *Relay) finishRelaySuccess(
 		entry.CostUSD = drv.CalcCost(prepared.input.Model, usage)
 	}
 	r.logRequestAsync(entry, obs)
+}
+
+func (p *preparedRelayRequest) billableRequestID() string {
+	if p == nil || p.billableRequest == nil {
+		return ""
+	}
+	return p.billableRequest.RequestID
+}
+
+func (r *Relay) settleBillableUsage(ctx context.Context, prepared *preparedRelayRequest, usage *driver.Usage) {
+	if r == nil || r.billing == nil || prepared == nil || prepared.billableRequest == nil || usage == nil {
+		return
+	}
+	if _, err := r.billing.SettleUsage(ctx, prepared.billableRequest.RequestID, usage); err != nil {
+		slog.Error("billing settlement failed",
+			"requestId", prepared.billableRequest.RequestID,
+			"userId", prepared.billableRequest.UserID,
+			"apiKeyId", prepared.billableRequest.APIKeyID,
+			"model", prepared.billableRequest.Model,
+			"error", err,
+		)
+	}
+}
+
+func (r *Relay) markBillableStatus(ctx context.Context, prepared *preparedRelayRequest, status, errMsg string) {
+	if r == nil || r.billing == nil || prepared == nil || prepared.billableRequest == nil {
+		return
+	}
+	if err := r.billing.MarkRequestStatus(ctx, prepared.billableRequest.RequestID, status, errMsg); err != nil {
+		slog.Warn("mark billable request status failed", "requestId", prepared.billableRequest.RequestID, "status", status, "error", err)
+	}
 }
 
 func (r *Relay) maybeSetUserRouteBinding(ctx context.Context, prepared *preparedRelayRequest, drv driver.ExecutionDriver, acct *domain.Account, effect driver.Effect) {
@@ -527,6 +576,7 @@ func (r *Relay) logRequestAsync(entry *domain.RequestLog, obs *requestlog.LogObs
 }
 
 func (r *Relay) finishRelayFailure(w http.ResponseWriter, drv driver.ExecutionDriver, prepared *preparedRelayRequest, state *relayAttemptState) {
+	r.markBillableStatus(context.Background(), prepared, "aborted_no_usage", "relay failed before usage")
 	if state.lastErr != nil {
 		slog.Error("all relay attempts failed", "error", state.lastErr, "provider", drv.Provider())
 		evt := events.Event{

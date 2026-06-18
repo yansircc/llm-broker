@@ -12,6 +12,7 @@
 		{ href: '/accounts', label: 'accounts' },
 		{ href: '/users', label: 'users' },
 		{ href: '/activity', label: 'activity' },
+		{ href: '/admin-billing', label: 'billing' },
 		{ href: '/migrations', label: 'migration' }
 	];
 
@@ -22,9 +23,14 @@
 		const full = `${base}${href}`;
 		return path === full || path.startsWith(full + '/');
 	}
+
+	function showAdminNav() {
+		const path = $page.url.pathname;
+		return !path.endsWith('/login') && path !== `${base}/app/login` && !path.startsWith(`${base}/app/`);
+	}
 </script>
 
-{#if !$page.url.pathname.endsWith('/login')}
+{#if showAdminNav()}
 	<h1><a href="{base}/dashboard" style="text-decoration:none;color:inherit;">broker</a></h1>
 	<div class="topnav">
 		{#each navItems as item (item.href)}

@@ -6,7 +6,9 @@ import (
 	"os"
 	"time"
 
+	"github.com/yansircc/llm-broker/internal/admission"
 	"github.com/yansircc/llm-broker/internal/auth"
+	"github.com/yansircc/llm-broker/internal/billing"
 	"github.com/yansircc/llm-broker/internal/config"
 	"github.com/yansircc/llm-broker/internal/crypto"
 	"github.com/yansircc/llm-broker/internal/domain"
@@ -96,26 +98,10 @@ func main() {
 		Pause529:        cfg.ErrorPause529,
 	}
 	drivers := map[domain.Provider]driver.Driver{
-		domain.ProviderClaude: driver.NewClaudeDriver(driver.ClaudeConfig{
-			APIURL:        cfg.ClaudeAPIURL,
-			APIVersion:    cfg.ClaudeAPIVersion,
-			BetaHeader:    cfg.ClaudeBetaHeader,
-			Pauses:        pauses,
-			PromptEnvHome: cfg.PromptEnvHome,
-		}, p, cfg.MaxCacheControls),
 		domain.ProviderCodex: driver.NewCodexDriver(driver.CodexConfig{
 			APIURL: cfg.CodexAPIURL,
 			Pauses: pauses,
 		}),
-	}
-	if cfg.GeminiEnabled() {
-		drivers[domain.ProviderGemini] = driver.NewGeminiDriver(driver.GeminiConfig{
-			APIURL:            cfg.GeminiAPIURL,
-			OAuthClientID:     cfg.GeminiOAuthClientID,
-			OAuthClientSecret: cfg.GeminiOAuthClientSecret,
-			OAuthRedirectURI:  cfg.GeminiOAuthRedirectURI,
-			Pauses:            pauses,
-		})
 	}
 
 	executionDrivers := make(map[domain.Provider]driver.ExecutionDriver, len(drivers))
@@ -161,14 +147,17 @@ func main() {
 	blobDir := requestlog.ResolveBlobDir(cfg.DBPath, cfg.LogBlobsMode)
 	s.SetLogBlobDir(blobDir)
 	r := relay.New(p, tokMgr, s, relay.Config{
-		MaxRequestBodyMB:  cfg.MaxRequestBodyMB,
-		MaxRetryAccounts:  cfg.MaxRetryAccounts,
+		MaxRequestBodyMB:   cfg.MaxRequestBodyMB,
+		MaxRetryAccounts:   cfg.MaxRetryAccounts,
 		SessionBindingTTL:  cfg.SessionBindingTTL,
 		CellErrorPause:     cfg.CellErrorPause,
 		TraceCompat:        cfg.TraceCompat,
 		RequestLogBlobDir:  blobDir,
 		RequestLogBlobMode: cfg.LogBlobsMode,
 	}, transportPool, bus, executionDrivers)
+	billingSvc := billing.NewService(s)
+	admissionSvc := admission.NewService(s, billingSvc)
+	r.SetCommercialServices(billingSvc, admissionSvc)
 
 	// Start server
 	ctx := context.Background()

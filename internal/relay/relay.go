@@ -6,6 +6,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/yansircc/llm-broker/internal/admission"
+	"github.com/yansircc/llm-broker/internal/billing"
 	"github.com/yansircc/llm-broker/internal/domain"
 	"github.com/yansircc/llm-broker/internal/driver"
 	"github.com/yansircc/llm-broker/internal/events"
@@ -40,6 +42,8 @@ type Relay struct {
 	bus       *events.Bus
 	drivers   map[domain.Provider]driver.ExecutionDriver
 	logFlush  sync.WaitGroup
+	billing   *billing.Service
+	admission *admission.Service
 }
 
 type TokenProvider interface {
@@ -64,6 +68,14 @@ func New(
 		bus:       bus,
 		drivers:   drivers,
 	}
+}
+
+func (r *Relay) SetCommercialServices(b *billing.Service, a *admission.Service) {
+	if r == nil {
+		return
+	}
+	r.billing = b
+	r.admission = a
 }
 
 func (r *Relay) driverFor(provider domain.Provider) driver.ExecutionDriver {

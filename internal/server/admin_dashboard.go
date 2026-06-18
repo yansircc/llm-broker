@@ -206,7 +206,7 @@ func (s *Server) userSummaryViews(users []*domain.User) []DashboardUser {
 			AllowedSurface:    user.AllowedSurface,
 			BoundAccountID:    user.BoundAccountID,
 			BoundAccountEmail: s.boundAccountEmail(user.BoundAccountID),
-			LastActiveAt:      user.LastActiveAt,
+			LastActiveAt:      user.LastLoginAt,
 		})
 	}
 	return views

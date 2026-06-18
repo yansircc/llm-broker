@@ -51,15 +51,66 @@ type Store interface {
 	ReleaseRefreshLock(ctx context.Context, accountID, lockID string) error
 	PurgeExpiredRefreshLocks(ctx context.Context, before time.Time) (int64, error)
 
-	// Users
+	// Customers
 	CreateUser(ctx context.Context, u *domain.User) error
-	GetUserByTokenHash(ctx context.Context, tokenHash string) (*domain.User, error)
+	GetUser(ctx context.Context, id string) (*domain.User, error)
+	GetUserByEmail(ctx context.Context, email string) (*domain.User, error)
+	GetUserByReferralCode(ctx context.Context, code string) (*domain.User, error)
 	ListUsers(ctx context.Context) ([]*domain.User, error)
 	DeleteUser(ctx context.Context, id string) error
 	UpdateUserStatus(ctx context.Context, id, status string) error
-	UpdateUserToken(ctx context.Context, id, tokenHash, tokenPrefix string) error
 	UpdateUserPolicy(ctx context.Context, id string, allowedSurface domain.Surface, boundAccountID string) error
-	UpdateUserLastActive(ctx context.Context, id string) error
+	UpdateUserLastLogin(ctx context.Context, id string) error
+	MarkUserEmailVerified(ctx context.Context, id string, verifiedAt time.Time) error
+
+	// API keys
+	CreateAPIKey(ctx context.Context, key *domain.APIKey) error
+	GetAPIKeyByTokenHash(ctx context.Context, tokenHash string) (*domain.APIKey, *domain.User, error)
+	ListAPIKeysByUser(ctx context.Context, userID string) ([]*domain.APIKey, error)
+	DeleteAPIKey(ctx context.Context, id string) error
+	UpdateAPIKeyStatus(ctx context.Context, id, status string) error
+	UpdateAPIKeyLastUsed(ctx context.Context, id string) error
+
+	// Customer browser sessions and email verification
+	CreateWebSession(ctx context.Context, session *domain.WebSession) error
+	GetWebSessionByTokenHash(ctx context.Context, tokenHash string) (*domain.WebSession, *domain.User, error)
+	DeleteWebSessionByTokenHash(ctx context.Context, tokenHash string) error
+	TouchWebSession(ctx context.Context, id string, now time.Time) error
+	CreateEmailVerification(ctx context.Context, ev *domain.EmailVerification) error
+	GetEmailVerificationByTokenHash(ctx context.Context, tokenHash string) (*domain.EmailVerification, error)
+	ConsumeEmailVerification(ctx context.Context, id string, consumedAt time.Time) error
+	DeletePendingEmailVerifications(ctx context.Context, userID, purpose string) error
+	CountEmailVerificationsSince(ctx context.Context, userID, purpose string, since time.Time) (int, error)
+	LastEmailVerification(ctx context.Context, userID, purpose string) (*domain.EmailVerification, error)
+
+	// Billing, payments, and admission
+	UpsertBillingSetting(ctx context.Context, key, value string, updatedAt time.Time) error
+	GetBillingSetting(ctx context.Context, key string) (string, error)
+	UpsertModelPrice(ctx context.Context, price *domain.ModelPrice) error
+	GetModelPrice(ctx context.Context, model string) (*domain.ModelPrice, error)
+	ListModelPrices(ctx context.Context) ([]*domain.ModelPrice, error)
+	InsertBillingLedgerEntry(ctx context.Context, entry *domain.BillingLedgerEntry) error
+	GetBillingLedgerEntryByIdempotencyKey(ctx context.Context, key string) (*domain.BillingLedgerEntry, error)
+	SumBillingLedgerAfter(ctx context.Context, userID string, afterSeq int64) (int64, int64, error)
+	GetBillingBalanceCheckpoint(ctx context.Context, userID string) (*domain.BillingBalanceCheckpoint, error)
+	UpsertBillingBalanceCheckpoint(ctx context.Context, checkpoint *domain.BillingBalanceCheckpoint) error
+	CreateBillableRequest(ctx context.Context, br *domain.BillableRequest) error
+	GetBillableRequest(ctx context.Context, requestID string) (*domain.BillableRequest, error)
+	UpdateBillableRequestUsage(ctx context.Context, br *domain.BillableRequest) error
+	MarkBillableRequestSettled(ctx context.Context, requestID, ledgerID string, settledAt time.Time) error
+	MarkBillableRequestStatus(ctx context.Context, requestID, status, errMsg string) error
+	ListUnsettledUsageObservedRequests(ctx context.Context, limit int) ([]*domain.BillableRequest, error)
+	SavePaymentOrder(ctx context.Context, order *domain.PaymentOrder) error
+	GetPaymentOrderByOutTradeNo(ctx context.Context, outTradeNo string) (*domain.PaymentOrder, error)
+	ListPaymentOrdersByUser(ctx context.Context, userID string, limit int) ([]*domain.PaymentOrder, error)
+	MarkPaymentOrderPaid(ctx context.Context, outTradeNo, zpayTradeNo, paymentType string, paidAt time.Time) error
+	FulfillPaymentOrderWithCredit(ctx context.Context, outTradeNo, zpayTradeNo, paymentType string, paidAt time.Time, credit *domain.BillingLedgerEntry) error
+	SavePaymentEvent(ctx context.Context, event *domain.PaymentEvent) error
+	CreateReferralWithCredits(ctx context.Context, referral *domain.Referral, inviteeCredit, inviterCredit *domain.BillingLedgerEntry) error
+	GetReferralByInvitee(ctx context.Context, inviteeUserID string) (*domain.Referral, error)
+	UpsertAdmissionLimit(ctx context.Context, limit *domain.AdmissionLimit) error
+	GetAdmissionLimit(ctx context.Context, scope, scopeID string) (*domain.AdmissionLimit, error)
+	ListAdmissionLimits(ctx context.Context) ([]*domain.AdmissionLimit, error)
 
 	// Request log
 	InsertRequestLog(ctx context.Context, log *domain.RequestLog) (int64, error)

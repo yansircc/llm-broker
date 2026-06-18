@@ -13,22 +13,56 @@ func (s *SQLiteStore) CreateUser(ctx context.Context, u *domain.User) error {
 	if allowedSurface == "" {
 		allowedSurface = domain.SurfaceNative
 	}
-	_, err := s.db.ExecContext(ctx,
-		`INSERT INTO users (id, name, token_hash, token_prefix, status, allowed_surface, bound_account_id, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-		u.ID, u.Name, u.TokenHash, u.TokenPrefix, u.Status, string(allowedSurface), u.BoundAccountID, u.CreatedAt.Unix())
+	_, err := s.db.ExecContext(ctx, `
+		INSERT INTO users (
+			id, email, name, password_hash, email_verified_at, status,
+			allowed_surface, bound_account_id, referral_code, referred_by_user_id,
+			created_at, last_login_at
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	`,
+		u.ID, u.Email, u.Name, u.PasswordHash, nullableUnix(u.EmailVerifiedAt), u.Status,
+		string(allowedSurface), u.BoundAccountID, u.ReferralCode, u.ReferredByUserID,
+		u.CreatedAt.Unix(), nullableUnix(u.LastLoginAt))
 	return err
 }
 
-func (s *SQLiteStore) GetUserByTokenHash(ctx context.Context, tokenHash string) (*domain.User, error) {
-	row := s.db.QueryRowContext(ctx,
-		`SELECT id, name, token_hash, token_prefix, status, allowed_surface, bound_account_id, created_at, last_active_at FROM users WHERE token_hash = ?`,
-		tokenHash)
+func (s *SQLiteStore) GetUser(ctx context.Context, id string) (*domain.User, error) {
+	row := s.db.QueryRowContext(ctx, `
+		SELECT id, email, name, password_hash, email_verified_at, status,
+			allowed_surface, bound_account_id, referral_code, referred_by_user_id,
+			created_at, last_login_at
+		FROM users WHERE id = ?
+	`, id)
+	return scanUser(row)
+}
+
+func (s *SQLiteStore) GetUserByEmail(ctx context.Context, email string) (*domain.User, error) {
+	row := s.db.QueryRowContext(ctx, `
+		SELECT id, email, name, password_hash, email_verified_at, status,
+			allowed_surface, bound_account_id, referral_code, referred_by_user_id,
+			created_at, last_login_at
+		FROM users WHERE lower(email) = lower(?)
+	`, email)
+	return scanUser(row)
+}
+
+func (s *SQLiteStore) GetUserByReferralCode(ctx context.Context, code string) (*domain.User, error) {
+	row := s.db.QueryRowContext(ctx, `
+		SELECT id, email, name, password_hash, email_verified_at, status,
+			allowed_surface, bound_account_id, referral_code, referred_by_user_id,
+			created_at, last_login_at
+		FROM users WHERE referral_code = ?
+	`, code)
 	return scanUser(row)
 }
 
 func (s *SQLiteStore) ListUsers(ctx context.Context) ([]*domain.User, error) {
-	rows, err := s.db.QueryContext(ctx,
-		`SELECT id, name, token_hash, token_prefix, status, allowed_surface, bound_account_id, created_at, last_active_at FROM users ORDER BY created_at`)
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT id, email, name, password_hash, email_verified_at, status,
+			allowed_surface, bound_account_id, referral_code, referred_by_user_id,
+			created_at, last_login_at
+		FROM users ORDER BY created_at
+	`)
 	if err != nil {
 		return nil, err
 	}
@@ -51,8 +85,15 @@ func (s *SQLiteStore) DeleteUser(ctx context.Context, id string) error {
 	}
 	defer tx.Rollback()
 
-	if _, err := tx.ExecContext(ctx, "DELETE FROM user_route_bindings WHERE user_id = ?", id); err != nil {
-		return err
+	for _, stmt := range []string{
+		"DELETE FROM user_route_bindings WHERE user_id = ?",
+		"DELETE FROM api_keys WHERE user_id = ?",
+		"DELETE FROM web_sessions WHERE user_id = ?",
+		"DELETE FROM email_verifications WHERE user_id = ?",
+	} {
+		if _, err := tx.ExecContext(ctx, stmt, id); err != nil {
+			return err
+		}
 	}
 	result, err := tx.ExecContext(ctx, "DELETE FROM users WHERE id = ?", id)
 	if err != nil {
@@ -72,15 +113,6 @@ func (s *SQLiteStore) UpdateUserStatus(ctx context.Context, id, status string) e
 	return ensureRowsAffected(result)
 }
 
-func (s *SQLiteStore) UpdateUserToken(ctx context.Context, id, tokenHash, tokenPrefix string) error {
-	result, err := s.db.ExecContext(ctx,
-		"UPDATE users SET token_hash = ?, token_prefix = ? WHERE id = ?", tokenHash, tokenPrefix, id)
-	if err != nil {
-		return err
-	}
-	return ensureRowsAffected(result)
-}
-
 func (s *SQLiteStore) UpdateUserPolicy(ctx context.Context, id string, allowedSurface domain.Surface, boundAccountID string) error {
 	if allowedSurface == "" {
 		allowedSurface = domain.SurfaceNative
@@ -94,19 +126,30 @@ func (s *SQLiteStore) UpdateUserPolicy(ctx context.Context, id string, allowedSu
 	return ensureRowsAffected(result)
 }
 
-func (s *SQLiteStore) UpdateUserLastActive(ctx context.Context, id string) error {
-	_, err := s.db.ExecContext(ctx,
-		"UPDATE users SET last_active_at = ? WHERE id = ?", time.Now().Unix(), id)
+func (s *SQLiteStore) UpdateUserLastLogin(ctx context.Context, id string) error {
+	_, err := s.db.ExecContext(ctx, "UPDATE users SET last_login_at = ? WHERE id = ?", time.Now().Unix(), id)
 	return err
+}
+
+func (s *SQLiteStore) MarkUserEmailVerified(ctx context.Context, id string, verifiedAt time.Time) error {
+	result, err := s.db.ExecContext(ctx, "UPDATE users SET email_verified_at = ? WHERE id = ?", verifiedAt.Unix(), id)
+	if err != nil {
+		return err
+	}
+	return ensureRowsAffected(result)
 }
 
 func scanUser(scanner interface{ Scan(...any) error }) (*domain.User, error) {
 	var (
-		id, name, tokenHash, tokenPrefix, status, allowedSurface, boundAccountID string
-		createdAt                                                                int64
-		lastActiveAt                                                             sql.NullInt64
+		id, email, name, passwordHash, status, allowedSurface, boundAccountID, referralCode, referredByUserID string
+		createdAt                                                                                             int64
+		emailVerifiedAt, lastLoginAt                                                                          sql.NullInt64
 	)
-	err := scanner.Scan(&id, &name, &tokenHash, &tokenPrefix, &status, &allowedSurface, &boundAccountID, &createdAt, &lastActiveAt)
+	err := scanner.Scan(
+		&id, &email, &name, &passwordHash, &emailVerifiedAt, &status,
+		&allowedSurface, &boundAccountID, &referralCode, &referredByUserID,
+		&createdAt, &lastLoginAt,
+	)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
@@ -114,21 +157,21 @@ func scanUser(scanner interface{ Scan(...any) error }) (*domain.User, error) {
 		return nil, err
 	}
 	u := &domain.User{
-		ID:             id,
-		Name:           name,
-		TokenHash:      tokenHash,
-		TokenPrefix:    tokenPrefix,
-		Status:         status,
-		AllowedSurface: domain.NormalizeSurface(allowedSurface),
-		BoundAccountID: boundAccountID,
-		CreatedAt:      time.Unix(createdAt, 0).UTC(),
+		ID:               id,
+		Email:            email,
+		Name:             name,
+		PasswordHash:     passwordHash,
+		Status:           status,
+		AllowedSurface:   domain.NormalizeSurface(allowedSurface),
+		BoundAccountID:   boundAccountID,
+		ReferralCode:     referralCode,
+		ReferredByUserID: referredByUserID,
+		CreatedAt:        time.Unix(createdAt, 0).UTC(),
+		EmailVerifiedAt:  scanNullableTime(emailVerifiedAt),
+		LastLoginAt:      scanNullableTime(lastLoginAt),
 	}
 	if u.AllowedSurface == "" {
 		u.AllowedSurface = domain.SurfaceNative
-	}
-	if lastActiveAt.Valid {
-		t := time.Unix(lastActiveAt.Int64, 0).UTC()
-		u.LastActiveAt = &t
 	}
 	return u, nil
 }
