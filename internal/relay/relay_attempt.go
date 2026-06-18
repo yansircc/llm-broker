@@ -32,6 +32,7 @@ type relayAttemptState struct {
 	lastErr            error
 	lastUpstreamStatus int
 	lastUpstreamBody   []byte
+	AllowFallback      bool
 }
 
 func relayEffectKind(kind driver.EffectKind) string {
@@ -192,6 +193,7 @@ func (r *Relay) executeRelayAttempt(
 	}
 	if err != nil {
 		state.lastErr = err
+		state.AllowFallback = true
 		return relayAttemptStop
 	}
 
@@ -200,6 +202,7 @@ func (r *Relay) executeRelayAttempt(
 		slog.Warn("token invalid, excluding account", "accountId", acct.ID, "error", err)
 		state.exclusions = append(state.exclusions, pool.ExcludeAccount(acct.ID))
 		state.lastErr = err
+		state.AllowFallback = true
 		return relayAttemptContinue
 	}
 
@@ -287,6 +290,7 @@ func (r *Relay) executeRelayAttempt(
 		)
 		state.exclusions = append(state.exclusions, pool.ExcludeAccount(acct.ID))
 		state.lastErr = err
+		state.AllowFallback = true
 		return relayAttemptContinue
 	}
 
@@ -332,6 +336,7 @@ func (r *Relay) executeRelayAttempt(
 
 		state.lastUpstreamStatus = resp.StatusCode
 		state.lastUpstreamBody = errBody
+		state.AllowFallback = true
 		entry, obs := r.baseRequestLog(prepared, acct, attempt)
 		entry.Status = fmt.Sprintf("upstream_%d", resp.StatusCode)
 		entry.UpstreamStatus = resp.StatusCode
@@ -377,6 +382,38 @@ func (r *Relay) executeRelayAttempt(
 		entry.DurationMs = time.Since(attemptStartedAt).Milliseconds()
 		setRequestLogUpstreamRequest(obs, upReq, upstreamReqBody)
 		setRequestLogUpstreamResponse(entry, obs, resp, errBody, &effect)
+
+		if drv.ShouldRetry(resp.StatusCode) {
+			if drv.ParseNonRetriable(resp.StatusCode, errBody) {
+				r.logRequestAsync(entry, obs)
+				drv.WriteUpstreamError(w, resp.StatusCode, errBody, prepared.input.IsStream)
+				return relayAttemptDone
+			}
+
+			entry.EffectKind = relayEffectKind(effect.Kind)
+			r.logRequestAsync(entry, obs)
+			r.pool.Observe(acct.ID, effect)
+			r.maybeSetUserRouteBinding(ctx, prepared, drv, acct, effect)
+			state.exclude(acct, effect)
+			state.lastUpstreamStatus = resp.StatusCode
+			state.lastUpstreamBody = errBody
+			state.lastErr = fmt.Errorf("upstream %d", resp.StatusCode)
+			state.AllowFallback = true
+
+			slog.Warn("retriable upstream error exhausted provider attempts",
+				"status", resp.StatusCode,
+				"accountId", acct.ID,
+				"userId", prepared.keyInfo.ID,
+				"userName", prepared.keyInfo.Name,
+				"model", prepared.input.Model,
+				"path", prepared.input.Path,
+				"sessionUUID", prepared.sessionUUID,
+				"clientRetryCount", prepared.input.Headers.Get("X-Stainless-Retry-Count"),
+				"body", truncate(string(errBody), 500),
+			)
+			return relayAttemptStop
+		}
+
 		r.logRequestAsync(entry, obs)
 		r.pool.Observe(acct.ID, effect)
 		r.maybeSetUserRouteBinding(ctx, prepared, drv, acct, effect)

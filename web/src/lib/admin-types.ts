@@ -145,6 +145,17 @@ export interface AccountListItem {
 	windows: UtilWindow[];
 }
 
+export interface OpenAICompatibleAccountResponse {
+	id: string;
+	name: string;
+	base_url: string;
+	models: string[];
+	api_key_fingerprint: string;
+	status: string;
+	weight: number;
+	subject: string;
+}
+
 export interface DashboardData {
 	health: HealthInfo;
 	usage: UsagePeriod[];

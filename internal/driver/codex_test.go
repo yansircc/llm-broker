@@ -161,7 +161,7 @@ func TestCanServe_PerFamily(t *testing.T) {
 		{"codex-1", false},            // standard family
 	}
 	for _, tt := range tests {
-		if got := d.CanServe(state, tt.model, now); got != tt.want {
+		if got := d.CanServe(nil, state, tt.model, now); got != tt.want {
 			t.Errorf("CanServe(%q) = %v, want %v", tt.model, got, tt.want)
 		}
 	}
@@ -178,7 +178,7 @@ func TestCanServe_ExpiredResetAllows(t *testing.T) {
 		},
 	})
 
-	if !d.CanServe(state, "gpt-5.3-codex", now) {
+	if !d.CanServe(nil, state, "gpt-5.3-codex", now) {
 		t.Error("CanServe should return true when reset time has passed")
 	}
 }

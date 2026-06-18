@@ -9,9 +9,10 @@ import (
 type Provider string
 
 const (
-	ProviderClaude Provider = "claude"
-	ProviderCodex  Provider = "codex"
-	ProviderGemini Provider = "gemini"
+	ProviderClaude           Provider = "claude"
+	ProviderCodex            Provider = "codex"
+	ProviderGemini           Provider = "gemini"
+	ProviderOpenAICompatible Provider = "openai_compatible"
 )
 
 // Status represents the lifecycle state of an account.

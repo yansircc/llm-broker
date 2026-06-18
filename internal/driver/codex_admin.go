@@ -258,7 +258,7 @@ func (d *CodexDriver) GetUtilization(state json.RawMessage) []UtilWindow {
 	return windows
 }
 
-func (d *CodexDriver) CanServe(state json.RawMessage, model string, now time.Time) bool {
+func (d *CodexDriver) CanServe(_ *domain.Account, state json.RawMessage, model string, now time.Time) bool {
 	var s CodexState
 	if json.Unmarshal(state, &s) != nil {
 		return true

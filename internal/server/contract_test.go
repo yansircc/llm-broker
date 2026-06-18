@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -13,11 +14,13 @@ import (
 
 	"github.com/yansircc/llm-broker/internal/auth"
 	"github.com/yansircc/llm-broker/internal/config"
+	"github.com/yansircc/llm-broker/internal/crypto"
 	"github.com/yansircc/llm-broker/internal/domain"
 	"github.com/yansircc/llm-broker/internal/driver"
 	"github.com/yansircc/llm-broker/internal/events"
 	"github.com/yansircc/llm-broker/internal/pool"
 	"github.com/yansircc/llm-broker/internal/store"
+	"github.com/yansircc/llm-broker/internal/tokens"
 )
 
 // ---------------------------------------------------------------------------
@@ -40,6 +43,17 @@ func newTestServer(t *testing.T) *Server {
 		version:   "test",
 		startTime: time.Now(),
 	}
+}
+
+func newStaticAccountTestServer(t *testing.T) *Server {
+	t.Helper()
+	srv := newTestServer(t)
+	c := crypto.New("test-encryption-key")
+	srv.tokens = tokens.NewManager(srv.pool, c, nil, time.Minute, 0, nil)
+	srv.adminDrivers = map[domain.Provider]driver.AdminDriver{
+		domain.ProviderOpenAICompatible: driver.NewOpenAICompatibleDriver(driver.ErrorPauses{}),
+	}
+	return srv
 }
 
 func adminRequest(method, path string) *http.Request {
@@ -266,6 +280,116 @@ func TestDashboard_EventsIncludeUpstreamStatus(t *testing.T) {
 	}
 	if got := result.Events[0]["upstream_status"]; got != float64(http.StatusForbidden) {
 		t.Fatalf("upstream_status = %#v, want %d", got, http.StatusForbidden)
+	}
+}
+
+func TestCreateOpenAICompatibleAccountStoresStaticSecretAndHidesKey(t *testing.T) {
+	srv := newStaticAccountTestServer(t)
+	if err := srv.store.UpsertModelPrice(context.Background(), &domain.ModelPrice{
+		Model:                  "gpt-5",
+		InputMicrosPerMillion:  1,
+		OutputMicrosPerMillion: 1,
+		UpdatedAt:              time.Now().UTC(),
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	w := httptest.NewRecorder()
+	req := adminRequest(http.MethodPost, "/admin/openai-compatible-accounts")
+	req.Body = io.NopCloser(strings.NewReader(`{"name":"fallback-a","base_url":"https://third.example/v1/","api_key":"sk-secret","models":["gpt-5"]}`))
+	srv.handleCreateOpenAICompatibleAccount(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s", w.Code, w.Body.String())
+	}
+	if strings.Contains(w.Body.String(), "sk-secret") {
+		t.Fatalf("response leaked api key: %s", w.Body.String())
+	}
+	var resp OpenAICompatibleAccountResponse
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("json.Unmarshal: %v", err)
+	}
+	if resp.ID == "" || resp.BaseURL != "https://third.example/v1" || resp.APIKeyFingerprint == "" {
+		t.Fatalf("response = %#v", resp)
+	}
+	acct := srv.pool.Get(resp.ID)
+	if acct == nil {
+		t.Fatal("account not persisted")
+	}
+	if acct.Provider != domain.ProviderOpenAICompatible {
+		t.Fatalf("provider = %q", acct.Provider)
+	}
+	if acct.RefreshTokenEnc != "" || acct.ExpiresAt != 0 {
+		t.Fatalf("static account refresh token/expires = %q/%d", acct.RefreshTokenEnc, acct.ExpiresAt)
+	}
+	token, err := srv.tokens.EnsureValidToken(context.Background(), acct.ID)
+	if err != nil {
+		t.Fatalf("EnsureValidToken: %v", err)
+	}
+	if token != "sk-secret" {
+		t.Fatalf("stored token = %q", token)
+	}
+}
+
+func TestCreateOpenAICompatibleAccountRejectsDuplicateSubject(t *testing.T) {
+	srv := newStaticAccountTestServer(t)
+	if err := srv.store.UpsertModelPrice(context.Background(), &domain.ModelPrice{
+		Model:                  "gpt-5",
+		InputMicrosPerMillion:  1,
+		OutputMicrosPerMillion: 1,
+		UpdatedAt:              time.Now().UTC(),
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	for i := 0; i < 2; i++ {
+		w := httptest.NewRecorder()
+		req := adminRequest(http.MethodPost, "/admin/openai-compatible-accounts")
+		req.Body = io.NopCloser(strings.NewReader(`{"name":"fallback-a","base_url":"https://third.example/v1","api_key":"sk-secret","models":["gpt-5"]}`))
+		srv.handleCreateOpenAICompatibleAccount(w, req)
+		if i == 0 && w.Code != http.StatusOK {
+			t.Fatalf("first status = %d body=%s", w.Code, w.Body.String())
+		}
+		if i == 1 && w.Code != http.StatusConflict {
+			t.Fatalf("second status = %d body=%s", w.Code, w.Body.String())
+		}
+	}
+	if got := len(srv.pool.List()); got != 1 {
+		t.Fatalf("accounts persisted = %d, want 1", got)
+	}
+}
+
+func TestCreateOpenAICompatibleAccountRejectsUnsoldModel(t *testing.T) {
+	srv := newStaticAccountTestServer(t)
+
+	w := httptest.NewRecorder()
+	req := adminRequest(http.MethodPost, "/admin/openai-compatible-accounts")
+	req.Body = io.NopCloser(strings.NewReader(`{"name":"fallback-a","base_url":"https://third.example/v1","api_key":"sk-secret","models":["gpt-not-sold"]}`))
+	srv.handleCreateOpenAICompatibleAccount(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d body=%s", w.Code, w.Body.String())
+	}
+	if len(srv.pool.List()) != 0 {
+		t.Fatalf("accounts persisted = %d, want 0", len(srv.pool.List()))
+	}
+}
+
+func TestListProvidersDoesNotExposeOpenAICompatibleStaticAccounts(t *testing.T) {
+	srv := newTestServer(t)
+	srv.oauthDrivers = map[domain.Provider]driver.OAuthDriver{}
+	srv.adminDrivers = map[domain.Provider]driver.AdminDriver{
+		domain.ProviderOpenAICompatible: driver.NewOpenAICompatibleDriver(driver.ErrorPauses{}),
+	}
+
+	w := httptest.NewRecorder()
+	srv.handleListProviders(w, adminRequest(http.MethodGet, "/admin/providers"))
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s", w.Code, w.Body.String())
+	}
+	if strings.Contains(w.Body.String(), string(domain.ProviderOpenAICompatible)) {
+		t.Fatalf("providers response exposed static provider: %s", w.Body.String())
 	}
 }
 

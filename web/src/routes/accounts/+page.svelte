@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { base } from '$app/paths';
 	import { api } from '$lib/api';
-	import type { AccountListItem } from '$lib/admin-types';
+	import type { AccountListItem, OpenAICompatibleAccountResponse } from '$lib/admin-types';
 	import MetricCard from '$lib/components/MetricCard.svelte';
 	import { remainClass, remainTime, timeAgo, dotClass } from '$lib/format';
 	import Countdown from '$lib/components/Countdown.svelte';
@@ -28,6 +28,13 @@
 	let providerError = $state('');
 	let lastRefresh = $state('');
 	let groupSorts = $state<Record<string, SortState>>({});
+	let staticName = $state('');
+	let staticBaseURL = $state('');
+	let staticAPIKey = $state('');
+	let staticModels = $state('');
+	let staticSubmitting = $state(false);
+	let staticError = $state('');
+	let staticResult = $state<OpenAICompatibleAccountResponse | null>(null);
 
 	$effect(() => {
 		loadAll();
@@ -207,7 +214,7 @@
 			if (!group) {
 				group = {
 					provider: account.provider,
-					label: account.provider,
+					label: providerLabel(account.provider),
 					accounts: [],
 					window_labels: []
 				};
@@ -253,12 +260,53 @@
 		return ordered;
 	}
 
+	function providerLabel(provider: string): string {
+		if (provider === 'openai_compatible') return 'OpenAI-compatible';
+		return provider;
+	}
+
+	function hasOAuthProvider(provider: string): boolean {
+		return providers.some((option) => option.id === provider);
+	}
+
 	function activeCount(items: AccountListItem[]): number {
 		return items.filter((account) => account.status === 'active').length;
 	}
 
 	function availableCount(items: AccountListItem[], surface: 'native' | 'compat'): number {
 		return items.filter((account) => surface === 'native' ? account.available_native : account.available_compat).length;
+	}
+
+	function staticModelList(): string[] {
+		return staticModels
+			.split(',')
+			.map((model) => model.trim())
+			.filter(Boolean);
+	}
+
+	async function createStaticUpstream() {
+		if (staticSubmitting) return;
+		staticSubmitting = true;
+		staticError = '';
+		staticResult = null;
+		try {
+			const result = await api<OpenAICompatibleAccountResponse>('/openai-compatible-accounts', {
+				method: 'POST',
+				body: JSON.stringify({
+					name: staticName.trim(),
+					base_url: staticBaseURL.trim(),
+					api_key: staticAPIKey.trim(),
+					models: staticModelList()
+				})
+			});
+			staticResult = result;
+			staticAPIKey = '';
+			await loadAll();
+		} catch (e: any) {
+			staticError = e.message;
+		} finally {
+			staticSubmitting = false;
+		}
 	}
 </script>
 
@@ -284,6 +332,42 @@
 		<MetricCard label="providers" value={providers.length} sub="registered drivers" />
 	</div>
 
+	<div class="section-header">
+		<div>
+			<h2>OpenAI-compatible Fallback</h2>
+			<div class="sub">static upstream accounts used after Codex capacity is unavailable</div>
+		</div>
+	</div>
+	<div class="form-panel">
+		<div class="form-row wide">
+			<div>
+				<label for="static-name">name</label>
+				<input id="static-name" bind:value={staticName} placeholder="fallback-a">
+			</div>
+			<div>
+				<label for="static-base-url">base URL</label>
+				<input id="static-base-url" bind:value={staticBaseURL} placeholder="https://third.example/v1">
+			</div>
+			<div>
+				<label for="static-api-key">API key</label>
+				<input id="static-api-key" bind:value={staticAPIKey} type="password" autocomplete="off" placeholder="sk-...">
+			</div>
+			<div>
+				<label for="static-models">models</label>
+				<input id="static-models" bind:value={staticModels} placeholder="gpt-5.5,gpt-5">
+			</div>
+			<button class="link" onclick={createStaticUpstream} disabled={staticSubmitting || !staticName.trim() || !staticBaseURL.trim() || !staticAPIKey.trim() || staticModelList().length === 0}>
+				{staticSubmitting ? 'adding...' : 'add'}
+			</button>
+		</div>
+		{#if staticError}
+			<p class="error-msg">{staticError}</p>
+		{/if}
+		{#if staticResult}
+			<p class="g">created {staticResult.name} / {staticResult.base_url} / {staticResult.api_key_fingerprint}</p>
+		{/if}
+	</div>
+
 	{@const accountGroups = displayGroups(accounts, providers)}
 	{#if accountGroups.length === 0}
 		<p class="muted">no providers available</p>
@@ -299,7 +383,9 @@
 						compat {availableCount(group.accounts, 'compat')}
 					</div>
 				</div>
-				<a href={addAccountPath(base, group.provider)} class="secondary-btn fit">add account</a>
+				{#if hasOAuthProvider(group.provider)}
+					<a href={addAccountPath(base, group.provider)} class="secondary-btn fit">add account</a>
+				{/if}
 			</div>
 			{#if group.accounts.length === 0}
 				<p class="muted">no {group.label} accounts</p>

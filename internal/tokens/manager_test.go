@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"strings"
 	"testing"
 	"time"
 
@@ -69,14 +70,18 @@ func (d *refreshStubDriver) IsStale(json.RawMessage, time.Time) bool            
 func (d *refreshStubDriver) ComputeExhaustedCooldown(json.RawMessage, time.Time) time.Time {
 	return time.Time{}
 }
-func (d *refreshStubDriver) CanServe(json.RawMessage, string, time.Time) bool { return true }
-func (d *refreshStubDriver) CalcCost(string, *driver.Usage) float64           { return 0 }
+func (d *refreshStubDriver) CanServe(*domain.Account, json.RawMessage, string, time.Time) bool {
+	return true
+}
+func (d *refreshStubDriver) CalcCost(string, *driver.Usage) float64 { return 0 }
 func (d *refreshStubDriver) GetUtilization(json.RawMessage) []driver.UtilWindow {
 	return nil
 }
 
 type refreshStubPool struct {
 	acct            *domain.Account
+	errorAccountID  string
+	errorMessage    string
 	cooledCellID    string
 	cooldownUntil   time.Time
 	cooldownMessage string
@@ -89,7 +94,10 @@ func (p *refreshStubPool) StoreTokens(_ string, accessTokenEnc, refreshTokenEnc 
 	p.acct.ExpiresAt = expiresAt
 	return nil
 }
-func (p *refreshStubPool) MarkError(string, string) {}
+func (p *refreshStubPool) MarkError(accountID, msg string) {
+	p.errorAccountID = accountID
+	p.errorMessage = msg
+}
 func (p *refreshStubPool) AcquireRefreshLock(context.Context, string, string) (bool, error) {
 	return true, nil
 }
@@ -191,5 +199,105 @@ func TestForceRefreshCooldownsCellOnTransportError(t *testing.T) {
 	}
 	if pool.cooldownMessage == "" {
 		t.Fatal("cooldownMessage is empty")
+	}
+}
+
+func TestEnsureValidTokenReturnsStaticOpenAICompatibleKeyWithoutRefresh(t *testing.T) {
+	c := crypto.New("test-encryption-key")
+	staticKeyEnc, err := c.Encrypt("sk-third-party", tokenSalt)
+	if err != nil {
+		t.Fatalf("Encrypt(static key) error = %v", err)
+	}
+
+	pool := &refreshStubPool{
+		acct: &domain.Account{
+			ID:             "acct-static-1",
+			Provider:       domain.ProviderOpenAICompatible,
+			AccessTokenEnc: staticKeyEnc,
+			ExpiresAt:      0,
+		},
+	}
+	mgr := NewManager(pool, c, nil, time.Minute, 0, map[domain.Provider]driver.RefreshDriver{
+		domain.ProviderGemini: &refreshStubDriver{err: errors.New("refresh should not be called")},
+	})
+
+	token, err := mgr.EnsureValidToken(context.Background(), "acct-static-1")
+	if err != nil {
+		t.Fatalf("EnsureValidToken() error = %v", err)
+	}
+	if token != "sk-third-party" {
+		t.Fatalf("EnsureValidToken() token = %q, want static key", token)
+	}
+}
+
+func TestEnsureValidTokenReturnsStaticBearerWhenAccountHasNoRefreshPath(t *testing.T) {
+	c := crypto.New("test-encryption-key")
+	staticKeyEnc, err := c.Encrypt("sk-static", tokenSalt)
+	if err != nil {
+		t.Fatalf("Encrypt(static key) error = %v", err)
+	}
+
+	pool := &refreshStubPool{
+		acct: &domain.Account{
+			ID:             "acct-static-1",
+			Provider:       domain.Provider("static_provider"),
+			AccessTokenEnc: staticKeyEnc,
+			ExpiresAt:      0,
+		},
+	}
+	mgr := NewManager(pool, c, nil, time.Minute, 0, nil)
+
+	token, err := mgr.EnsureValidToken(context.Background(), "acct-static-1")
+	if err != nil {
+		t.Fatalf("EnsureValidToken() error = %v", err)
+	}
+	if token != "sk-static" {
+		t.Fatalf("EnsureValidToken() token = %q, want static key", token)
+	}
+}
+
+func TestEnsureValidTokenRejectsEmptyStaticOpenAICompatibleKey(t *testing.T) {
+	c := crypto.New("test-encryption-key")
+	pool := &refreshStubPool{
+		acct: &domain.Account{
+			ID:       "acct-static-1",
+			Provider: domain.ProviderOpenAICompatible,
+		},
+	}
+	mgr := NewManager(pool, c, nil, time.Minute, 0, nil)
+
+	_, err := mgr.EnsureValidToken(context.Background(), "acct-static-1")
+	if err == nil {
+		t.Fatal("EnsureValidToken() error = nil, want empty static key error")
+	}
+	if !strings.Contains(err.Error(), "empty static token") {
+		t.Fatalf("EnsureValidToken() error = %v", err)
+	}
+}
+
+func TestForceRefreshFailsStaticOpenAICompatibleAccount(t *testing.T) {
+	c := crypto.New("test-encryption-key")
+	staticKeyEnc, err := c.Encrypt("sk-third-party", tokenSalt)
+	if err != nil {
+		t.Fatalf("Encrypt(static key) error = %v", err)
+	}
+	pool := &refreshStubPool{
+		acct: &domain.Account{
+			ID:             "acct-static-1",
+			Provider:       domain.ProviderOpenAICompatible,
+			AccessTokenEnc: staticKeyEnc,
+		},
+	}
+	mgr := NewManager(pool, c, nil, time.Minute, 0, nil)
+
+	_, err = mgr.ForceRefresh(context.Background(), "acct-static-1")
+	if err == nil {
+		t.Fatal("ForceRefresh() error = nil, want static refresh error")
+	}
+	if pool.errorAccountID != "acct-static-1" {
+		t.Fatalf("errorAccountID = %q", pool.errorAccountID)
+	}
+	if !strings.Contains(pool.errorMessage, "static token cannot refresh") {
+		t.Fatalf("errorMessage = %q", pool.errorMessage)
 	}
 }

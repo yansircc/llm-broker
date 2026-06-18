@@ -191,6 +191,17 @@ type AccountListItem struct {
 	Windows         []UtilizationWindowResponse `json:"windows"`
 }
 
+type OpenAICompatibleAccountResponse struct {
+	ID                string        `json:"id"`
+	Name              string        `json:"name"`
+	BaseURL           string        `json:"base_url"`
+	Models            []string      `json:"models"`
+	APIKeyFingerprint string        `json:"api_key_fingerprint"`
+	Status            domain.Status `json:"status"`
+	Weight            int           `json:"weight"`
+	Subject           string        `json:"subject"`
+}
+
 type EgressCellResponse struct {
 	ID            string                 `json:"id"`
 	Name          string                 `json:"name"`

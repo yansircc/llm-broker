@@ -32,6 +32,7 @@ type relayTestDriver struct {
 	buildRequestURL     string
 	buildRequestHeaders http.Header
 	parseJSONUsageFn    func([]byte) *driver.Usage
+	parseNonRetriableFn func(statusCode int, body []byte) bool
 }
 
 func (d *relayTestDriver) Provider() domain.Provider { return d.provider }
@@ -95,7 +96,12 @@ func (d *relayTestDriver) ShouldRetry(statusCode int) bool { return statusCode =
 
 func (d *relayTestDriver) RetrySameAccount(_ int, _ []byte, _ int) bool { return false }
 
-func (d *relayTestDriver) ParseNonRetriable(_ int, _ []byte) bool { return false }
+func (d *relayTestDriver) ParseNonRetriable(statusCode int, body []byte) bool {
+	if d.parseNonRetriableFn != nil {
+		return d.parseNonRetriableFn(statusCode, body)
+	}
+	return false
+}
 
 func (d *relayTestDriver) WriteError(w http.ResponseWriter, status int, msg string) {
 	http.Error(w, msg, status)
@@ -133,7 +139,9 @@ func (d *relayTestDriver) ComputeExhaustedCooldown(_ json.RawMessage, _ time.Tim
 	return time.Time{}
 }
 
-func (d *relayTestDriver) CanServe(_ json.RawMessage, _ string, _ time.Time) bool { return true }
+func (d *relayTestDriver) CanServe(_ *domain.Account, _ json.RawMessage, _ string, _ time.Time) bool {
+	return true
+}
 
 type relayTestTokenProvider struct{}
 
@@ -150,6 +158,39 @@ type relayTestTransport struct {
 }
 
 func (t relayTestTransport) ClientForAccount(_ *domain.Account) *http.Client { return t.client }
+
+type accountAwareRelayTestTransport struct {
+	mu          sync.Mutex
+	calls       []domain.Provider
+	codexStatus int
+}
+
+func (t *accountAwareRelayTestTransport) ClientForAccount(acct *domain.Account) *http.Client {
+	provider := acct.Provider
+	return &http.Client{Transport: roundTripFunc(func(_ *http.Request) (*http.Response, error) {
+		t.mu.Lock()
+		t.calls = append(t.calls, provider)
+		t.mu.Unlock()
+		if provider == domain.ProviderCodex && t.codexStatus != 0 && t.codexStatus != http.StatusOK {
+			return &http.Response{
+				StatusCode: t.codexStatus,
+				Header:     make(http.Header),
+				Body:       io.NopCloser(strings.NewReader(`{"error":{"message":"overloaded"}}`)),
+			}, nil
+		}
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     make(http.Header),
+			Body:       io.NopCloser(strings.NewReader(`{"ok":true}`)),
+		}, nil
+	})}
+}
+
+func (t *accountAwareRelayTestTransport) providers() []domain.Provider {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return append([]domain.Provider(nil), t.calls...)
+}
 
 type capturedRecord struct {
 	msg   string
@@ -1216,6 +1257,188 @@ func TestCommercialRelayMarksSuccessfulResponseWithoutUsage(t *testing.T) {
 	}
 }
 
+func TestRelayFallsBackToOpenAICompatibleWhenPrimaryPoolUnavailable(t *testing.T) {
+	mockStore := store.NewMockStore()
+	now := time.Now().UTC()
+	saveRelayTestAccount(t, mockStore, &domain.Account{
+		ID:        "fallback-acct",
+		Email:     "fallback@example.com",
+		Provider:  domain.ProviderOpenAICompatible,
+		Subject:   "fallback-subject",
+		BucketKey: "openai_compatible:fallback-subject",
+		Status:    domain.StatusActive,
+		CreatedAt: now,
+	})
+	bus := events.NewBus(16)
+	p, err := pool.New(mockStore, bus)
+	if err != nil {
+		t.Fatalf("pool.New: %v", err)
+	}
+	transport := &accountAwareRelayTestTransport{}
+	relaySvc := New(
+		p,
+		relayTestTokenProvider{},
+		mockStore,
+		Config{
+			MaxRequestBodyMB: 1,
+			FallbackProviders: map[domain.Provider][]domain.Provider{
+				domain.ProviderCodex: {domain.ProviderOpenAICompatible},
+			},
+		},
+		transport,
+		bus,
+		map[domain.Provider]driver.ExecutionDriver{
+			domain.ProviderCodex:            &relayTestDriver{provider: domain.ProviderCodex},
+			domain.ProviderOpenAICompatible: &relayTestDriver{provider: domain.ProviderOpenAICompatible},
+		},
+	)
+
+	w := httptest.NewRecorder()
+	relaySvc.HandleProviderSurface(domain.ProviderCodex, domain.SurfaceNative).ServeHTTP(
+		w,
+		relayRequestWithKey(`{"model":"gpt-5"}`),
+	)
+	relaySvc.WaitForLogFlush()
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s", w.Code, w.Body.String())
+	}
+	calls := transport.providers()
+	if len(calls) != 1 || calls[0] != domain.ProviderOpenAICompatible {
+		t.Fatalf("upstream providers = %v, want only openai_compatible", calls)
+	}
+	logs := waitRequestLogsCount(t, mockStore, 1)
+	if logs[0].Provider != string(domain.ProviderOpenAICompatible) {
+		t.Fatalf("request log provider = %q", logs[0].Provider)
+	}
+}
+
+func TestRelayUsesPrimaryWhenPrimaryPoolAvailable(t *testing.T) {
+	mockStore, relaySvc, transport := newFallbackRelayTest(t, nil)
+
+	w := httptest.NewRecorder()
+	relaySvc.HandleProviderSurface(domain.ProviderCodex, domain.SurfaceNative).ServeHTTP(
+		w,
+		relayRequestWithKey(`{"model":"gpt-5"}`),
+	)
+	relaySvc.WaitForLogFlush()
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s", w.Code, w.Body.String())
+	}
+	calls := transport.providers()
+	if len(calls) != 1 || calls[0] != domain.ProviderCodex {
+		t.Fatalf("upstream providers = %v, want only codex", calls)
+	}
+	logs := waitRequestLogsCount(t, mockStore, 1)
+	if logs[0].Provider != string(domain.ProviderCodex) {
+		t.Fatalf("request log provider = %q", logs[0].Provider)
+	}
+}
+
+func TestRelayFallsBackAfterPrimaryRetriableFailure(t *testing.T) {
+	_, relaySvc, transport := newFallbackRelayTest(t, nil)
+	relaySvc.cfg.MaxRetryAccounts = 1
+	transport.codexStatus = 529
+
+	w := httptest.NewRecorder()
+	relaySvc.HandleProviderSurface(domain.ProviderCodex, domain.SurfaceNative).ServeHTTP(
+		w,
+		relayRequestWithKey(`{"model":"gpt-5"}`),
+	)
+	relaySvc.WaitForLogFlush()
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s", w.Code, w.Body.String())
+	}
+	calls := transport.providers()
+	if len(calls) != 2 || calls[0] != domain.ProviderCodex || calls[1] != domain.ProviderOpenAICompatible {
+		t.Fatalf("upstream providers = %v, want codex then openai_compatible", calls)
+	}
+}
+
+func TestRelayFallsBackAfterPrimaryRetriableFailureWithNoPrimaryRetry(t *testing.T) {
+	_, relaySvc, transport := newFallbackRelayTest(t, nil)
+	relaySvc.cfg.MaxRetryAccounts = 0
+	transport.codexStatus = 529
+
+	w := httptest.NewRecorder()
+	relaySvc.HandleProviderSurface(domain.ProviderCodex, domain.SurfaceNative).ServeHTTP(
+		w,
+		relayRequestWithKey(`{"model":"gpt-5"}`),
+	)
+	relaySvc.WaitForLogFlush()
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s", w.Code, w.Body.String())
+	}
+	calls := transport.providers()
+	if len(calls) != 2 || calls[0] != domain.ProviderCodex || calls[1] != domain.ProviderOpenAICompatible {
+		t.Fatalf("upstream providers = %v, want codex then openai_compatible", calls)
+	}
+}
+
+func TestRelayDoesNotFallbackAfterPrimaryRequestLevelUpstreamError(t *testing.T) {
+	_, relaySvc, transport := newFallbackRelayTest(t, nil)
+	relaySvc.cfg.MaxRetryAccounts = 0
+	transport.codexStatus = 529
+	primary := relaySvc.drivers[domain.ProviderCodex].(*relayTestDriver)
+	primary.parseNonRetriableFn = func(statusCode int, body []byte) bool {
+		return statusCode == 529 && strings.Contains(string(body), "overloaded")
+	}
+
+	w := httptest.NewRecorder()
+	relaySvc.HandleProviderSurface(domain.ProviderCodex, domain.SurfaceNative).ServeHTTP(
+		w,
+		relayRequestWithKey(`{"model":"gpt-5"}`),
+	)
+	relaySvc.WaitForLogFlush()
+
+	if w.Code != 529 {
+		t.Fatalf("status = %d body=%s", w.Code, w.Body.String())
+	}
+	calls := transport.providers()
+	if len(calls) != 1 || calls[0] != domain.ProviderCodex {
+		t.Fatalf("upstream providers = %v, want only codex", calls)
+	}
+}
+
+func TestRelayDoesNotFallbackOnRequestValidationError(t *testing.T) {
+	_, relaySvc, transport := newFallbackRelayTest(t, driver.NewRequestValidationError(http.StatusBadRequest, "bad request"))
+
+	w := httptest.NewRecorder()
+	relaySvc.HandleProviderSurface(domain.ProviderCodex, domain.SurfaceNative).ServeHTTP(
+		w,
+		relayRequestWithKey(`{"model":"gpt-5"}`),
+	)
+
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d body=%s", w.Code, w.Body.String())
+	}
+	if calls := transport.providers(); len(calls) != 0 {
+		t.Fatalf("upstream providers = %v, want none", calls)
+	}
+}
+
+func TestCommercialRelayDoesNotFallbackWhenAdmissionRejects(t *testing.T) {
+	mockStore, relaySvc, transport := newFallbackRelayTest(t, nil)
+	billingSvc := billing.NewService(mockStore)
+	relaySvc.SetCommercialServices(billingSvc, admission.NewService(mockStore, billingSvc))
+
+	w := httptest.NewRecorder()
+	relaySvc.HandleProviderSurface(domain.ProviderCodex, domain.SurfaceNative).ServeHTTP(
+		w,
+		commercialRelayRequest("req-fallback-no-balance"),
+	)
+
+	if w.Code != http.StatusPaymentRequired {
+		t.Fatalf("status = %d body=%s", w.Code, w.Body.String())
+	}
+	if calls := transport.providers(); len(calls) != 0 {
+		t.Fatalf("upstream providers = %v, want none", calls)
+	}
+}
+
 func newCommercialRelayTest(t *testing.T, driverStub *relayTestDriver) (*store.MockStore, *Relay, *int) {
 	t.Helper()
 	mockStore := store.NewMockStore()
@@ -1270,6 +1493,80 @@ func newCommercialRelayTest(t *testing.T, driverStub *relayTestDriver) (*store.M
 	billingSvc := billing.NewService(mockStore)
 	relaySvc.SetCommercialServices(billingSvc, admission.NewService(mockStore, billingSvc))
 	return mockStore, relaySvc, &upstreamCalls
+}
+
+func newFallbackRelayTest(t *testing.T, primaryBuildErr error) (*store.MockStore, *Relay, *accountAwareRelayTestTransport) {
+	t.Helper()
+	mockStore := store.NewMockStore()
+	now := time.Now().UTC()
+	saveRelayTestAccount(t, mockStore, &domain.Account{
+		ID:        "codex-acct",
+		Email:     "codex@example.com",
+		Provider:  domain.ProviderCodex,
+		Subject:   "codex-subject",
+		BucketKey: "codex:codex-subject",
+		Status:    domain.StatusActive,
+		CreatedAt: now,
+	})
+	saveRelayTestAccount(t, mockStore, &domain.Account{
+		ID:        "fallback-acct",
+		Email:     "fallback@example.com",
+		Provider:  domain.ProviderOpenAICompatible,
+		Subject:   "fallback-subject",
+		BucketKey: "openai_compatible:fallback-subject",
+		Status:    domain.StatusActive,
+		CreatedAt: now,
+	})
+	if err := mockStore.UpsertModelPrice(context.Background(), &domain.ModelPrice{
+		Model:                  "gpt-5",
+		InputMicrosPerMillion:  1_000_000,
+		OutputMicrosPerMillion: 1_000_000,
+		UpdatedAt:              now,
+	}); err != nil {
+		t.Fatalf("UpsertModelPrice: %v", err)
+	}
+
+	bus := events.NewBus(16)
+	p, err := pool.New(mockStore, bus)
+	if err != nil {
+		t.Fatalf("pool.New: %v", err)
+	}
+	transport := &accountAwareRelayTestTransport{}
+	relaySvc := New(
+		p,
+		relayTestTokenProvider{},
+		mockStore,
+		Config{
+			MaxRequestBodyMB: 1,
+			FallbackProviders: map[domain.Provider][]domain.Provider{
+				domain.ProviderCodex: {domain.ProviderOpenAICompatible},
+			},
+		},
+		transport,
+		bus,
+		map[domain.Provider]driver.ExecutionDriver{
+			domain.ProviderCodex: &relayTestDriver{
+				provider:        domain.ProviderCodex,
+				buildRequestErr: primaryBuildErr,
+			},
+			domain.ProviderOpenAICompatible: &relayTestDriver{provider: domain.ProviderOpenAICompatible},
+		},
+	)
+	return mockStore, relaySvc, transport
+}
+
+func relayRequestWithKey(body string) *http.Request {
+	req := httptest.NewRequest(http.MethodPost, "/openai/responses", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	ki := &auth.KeyInfo{
+		ID:             "user-fallback",
+		CustomerID:     "user-fallback",
+		APIKeyID:       "key-fallback",
+		CredentialKind: "api_key",
+		Name:           "fallback-user",
+		AllowedSurface: domain.SurfaceNative,
+	}
+	return req.WithContext(context.WithValue(req.Context(), auth.KeyInfoKey, ki))
 }
 
 func commercialRelayRequest(requestID string) *http.Request {

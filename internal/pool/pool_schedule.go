@@ -24,7 +24,7 @@ func (p *Pool) isAvailable(acct *domain.Account, drv driver.SchedulerDriver, mod
 	if cooldownUntil := p.bucketCooldownLocked(acct); cooldownUntil != nil && now.Before(*cooldownUntil) {
 		return false
 	}
-	if !drv.CanServe(json.RawMessage(p.bucketStateLocked(acct)), model, now) {
+	if !drv.CanServe(acct, json.RawMessage(p.bucketStateLocked(acct)), model, now) {
 		return false
 	}
 	return true

@@ -103,7 +103,7 @@ func (d *ClaudeDriver) ComputeExhaustedCooldown(state json.RawMessage, now time.
 	return time.Time{}
 }
 
-func (d *ClaudeDriver) CanServe(state json.RawMessage, model string, now time.Time) bool {
+func (d *ClaudeDriver) CanServe(_ *domain.Account, state json.RawMessage, model string, now time.Time) bool {
 	if !isOpusModel(model) {
 		return true
 	}

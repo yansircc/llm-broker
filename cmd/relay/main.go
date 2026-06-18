@@ -97,26 +97,32 @@ func main() {
 		Pause429:        cfg.ErrorPause429,
 		Pause529:        cfg.ErrorPause529,
 	}
-	drivers := map[domain.Provider]driver.Driver{
-		domain.ProviderCodex: driver.NewCodexDriver(driver.CodexConfig{
-			APIURL: cfg.CodexAPIURL,
-			Pauses: pauses,
-		}),
-	}
+	codexDriver := driver.NewCodexDriver(driver.CodexConfig{
+		APIURL: cfg.CodexAPIURL,
+		Pauses: pauses,
+	})
+	openAICompatibleDriver := driver.NewOpenAICompatibleDriver(pauses)
 
-	executionDrivers := make(map[domain.Provider]driver.ExecutionDriver, len(drivers))
-	schedulerDrivers := make(map[domain.Provider]driver.SchedulerDriver, len(drivers))
-	refreshDrivers := make(map[domain.Provider]driver.RefreshDriver, len(drivers))
-	catalogDrivers := make(map[domain.Provider]driver.Descriptor, len(drivers))
-	oauthDrivers := make(map[domain.Provider]driver.OAuthDriver, len(drivers))
-	adminDrivers := make(map[domain.Provider]driver.AdminDriver, len(drivers))
-	for provider, drv := range drivers {
-		executionDrivers[provider] = drv
-		schedulerDrivers[provider] = drv
-		refreshDrivers[provider] = drv
-		catalogDrivers[provider] = drv
-		oauthDrivers[provider] = drv
-		adminDrivers[provider] = drv
+	executionDrivers := map[domain.Provider]driver.ExecutionDriver{
+		domain.ProviderCodex:            codexDriver,
+		domain.ProviderOpenAICompatible: openAICompatibleDriver,
+	}
+	schedulerDrivers := map[domain.Provider]driver.SchedulerDriver{
+		domain.ProviderCodex:            codexDriver,
+		domain.ProviderOpenAICompatible: openAICompatibleDriver,
+	}
+	refreshDrivers := map[domain.Provider]driver.RefreshDriver{
+		domain.ProviderCodex: codexDriver,
+	}
+	catalogDrivers := map[domain.Provider]driver.Descriptor{
+		domain.ProviderCodex: codexDriver,
+	}
+	oauthDrivers := map[domain.Provider]driver.OAuthDriver{
+		domain.ProviderCodex: codexDriver,
+	}
+	adminDrivers := map[domain.Provider]driver.AdminDriver{
+		domain.ProviderCodex:            codexDriver,
+		domain.ProviderOpenAICompatible: openAICompatibleDriver,
 	}
 
 	// Initialize token manager
@@ -154,6 +160,9 @@ func main() {
 		TraceCompat:        cfg.TraceCompat,
 		RequestLogBlobDir:  blobDir,
 		RequestLogBlobMode: cfg.LogBlobsMode,
+		FallbackProviders: map[domain.Provider][]domain.Provider{
+			domain.ProviderCodex: {domain.ProviderOpenAICompatible},
+		},
 	}, transportPool, bus, executionDrivers)
 	billingSvc := billing.NewService(s)
 	admissionSvc := admission.NewService(s, billingSvc)

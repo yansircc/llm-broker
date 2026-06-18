@@ -2,6 +2,7 @@ package tokens
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -64,8 +65,15 @@ func (tm *Manager) EnsureValidToken(ctx context.Context, accountID string) (stri
 		return "", fmt.Errorf("account %s not found", accountID)
 	}
 
-	now := time.Now().UnixMilli()
+	if tm.isStaticBearerAccount(acct) {
+		token, err := tm.staticAccessToken(acct)
+		if err != nil {
+			return "", err
+		}
+		return token, nil
+	}
 
+	now := time.Now().UnixMilli()
 	if acct.ExpiresAt > 0 && now < acct.ExpiresAt-tm.tokenRefreshAdvance.Milliseconds() {
 		if acct.AccessTokenEnc != "" {
 			token, err := tm.crypto.Decrypt(acct.AccessTokenEnc, tokenSalt)
@@ -114,6 +122,11 @@ func (tm *Manager) refresh(ctx context.Context, accountID string) (string, error
 	acct := tm.pool.Get(accountID)
 	if acct == nil {
 		return "", fmt.Errorf("account %s not found", accountID)
+	}
+	if tm.isStaticBearerAccount(acct) {
+		msg := "static token cannot refresh"
+		tm.markError(accountID, msg)
+		return "", errors.New(msg)
 	}
 
 	refreshToken, err := tm.crypto.Decrypt(acct.RefreshTokenEnc, tokenSalt)
@@ -176,6 +189,31 @@ func (tm *Manager) refresh(ctx context.Context, accountID string) (string, error
 
 	slog.Info("token refreshed", "accountId", accountID, "expiresIn", tokenResp.ExpiresIn)
 	return tokenResp.AccessToken, nil
+}
+
+func (tm *Manager) isStaticBearerAccount(acct *domain.Account) bool {
+	if acct == nil || acct.RefreshTokenEnc != "" || acct.ExpiresAt != 0 {
+		return false
+	}
+	_, refreshable := tm.drivers[acct.Provider]
+	return !refreshable
+}
+
+func (tm *Manager) staticAccessToken(acct *domain.Account) (string, error) {
+	if acct == nil {
+		return "", fmt.Errorf("missing static account")
+	}
+	if acct.AccessTokenEnc == "" {
+		return "", fmt.Errorf("empty static token for account %s", acct.ID)
+	}
+	token, err := tm.crypto.Decrypt(acct.AccessTokenEnc, tokenSalt)
+	if err != nil {
+		return "", fmt.Errorf("decrypt static token: %w", err)
+	}
+	if token == "" {
+		return "", fmt.Errorf("empty static token for account %s", acct.ID)
+	}
+	return token, nil
 }
 
 func (tm *Manager) markError(accountID, msg string) {

@@ -79,7 +79,7 @@ func (d *GeminiDriver) ComputeExhaustedCooldown(state json.RawMessage, now time.
 	return time.Time{}
 }
 
-func (d *GeminiDriver) CanServe(state json.RawMessage, _ string, now time.Time) bool {
+func (d *GeminiDriver) CanServe(_ *domain.Account, state json.RawMessage, _ string, now time.Time) bool {
 	s := parseGeminiState(state)
 	if s.ProjectID == "" {
 		return false

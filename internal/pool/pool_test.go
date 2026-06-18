@@ -80,7 +80,7 @@ func (m *mockDriver) IsStale(_ json.RawMessage, _ time.Time) bool             { 
 func (m *mockDriver) ComputeExhaustedCooldown(_ json.RawMessage, _ time.Time) time.Time {
 	return time.Time{}
 }
-func (m *mockDriver) CanServe(state json.RawMessage, model string, _ time.Time) bool {
+func (m *mockDriver) CanServe(_ *domain.Account, state json.RawMessage, model string, _ time.Time) bool {
 	if !strings.Contains(model, "opus") {
 		return true
 	}

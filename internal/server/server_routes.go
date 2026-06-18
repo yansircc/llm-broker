@@ -57,6 +57,8 @@ func (s *Server) registerAdminRoutes(mux *http.ServeMux) {
 	mux.Handle("POST /admin/accounts/{id}/cell", admin(s.handleBindAccountCell))
 	mux.Handle("POST /admin/accounts/{id}/refresh", admin(s.handleRefreshAccount))
 	mux.Handle("POST /admin/accounts/{id}/test", admin(s.handleTestAccount))
+	mux.Handle("POST /admin/openai-compatible-accounts", admin(s.handleCreateOpenAICompatibleAccount))
+	mux.Handle("POST /admin/openai-compatible-accounts/{id}", admin(s.handleUpdateOpenAICompatibleAccount))
 	mux.Handle("GET /admin/egress/cells", admin(s.handleListEgressCells))
 	mux.Handle("POST /admin/egress/cells", admin(s.handleUpsertEgressCell))
 	mux.Handle("POST /admin/egress/cells/test-proxy", admin(s.handleTestProxy))

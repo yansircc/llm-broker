@@ -31,6 +31,7 @@ type Config struct {
 	TraceCompat        bool
 	RequestLogBlobDir  string
 	RequestLogBlobMode requestlog.BlobMode
+	FallbackProviders  map[domain.Provider][]domain.Provider
 }
 
 type Relay struct {
@@ -80,6 +81,23 @@ func (r *Relay) SetCommercialServices(b *billing.Service, a *admission.Service) 
 
 func (r *Relay) driverFor(provider domain.Provider) driver.ExecutionDriver {
 	return r.drivers[provider]
+}
+
+func (r *Relay) fallbackDriversFor(provider domain.Provider) []driver.ExecutionDriver {
+	if r == nil || len(r.cfg.FallbackProviders) == 0 {
+		return nil
+	}
+	providers := r.cfg.FallbackProviders[provider]
+	if len(providers) == 0 {
+		return nil
+	}
+	drivers := make([]driver.ExecutionDriver, 0, len(providers))
+	for _, fallbackProvider := range providers {
+		if drv := r.driverFor(fallbackProvider); drv != nil {
+			drivers = append(drivers, drv)
+		}
+	}
+	return drivers
 }
 
 // WaitForLogFlush blocks until every pending request-log insert + on-disk

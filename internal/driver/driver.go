@@ -103,8 +103,8 @@ type SchedulerDriver interface {
 	// Returns zero time if no cooldown needed.
 	ComputeExhaustedCooldown(state json.RawMessage, now time.Time) time.Time
 
-	// CanServe reports whether the provider state allows serving the given model now.
-	CanServe(state json.RawMessage, model string, now time.Time) bool
+	// CanServe reports whether the account/provider state allows serving the given model now.
+	CanServe(acct *domain.Account, state json.RawMessage, model string, now time.Time) bool
 }
 
 type ExecutionDriver interface {
