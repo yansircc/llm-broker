@@ -71,7 +71,7 @@
 	<div>
 		<div class="font-mono text-xs uppercase tracking-wider text-brand">access</div>
 		<h1 class="mt-2 text-3xl font-bold tracking-tight sm:text-4xl">API 密钥</h1>
-		<p class="mt-2 text-sm text-muted">创建客户 relay key，用于 OpenAI Responses 和兼容客户端。</p>
+		<p class="mt-2 text-sm text-muted">创建客户 relay key，用于 OpenAI Responses。</p>
 	</div>
 	<button class="h-10 rounded-md border border-line bg-card px-4 text-sm hover:border-brand/50" onclick={loadKeys}>刷新</button>
 </div>
@@ -87,7 +87,7 @@
 			<p class="mt-1 text-sm text-faint">密钥只在创建后展示一次，请及时保存。</p>
 			<div class="mt-4 flex flex-col gap-3 sm:flex-row">
 				<input class="h-11 rounded-md border border-line bg-black/30 px-3 text-sm outline-none focus:border-brand" placeholder="default" bind:value={name} disabled={creating}>
-				<button class="h-11 rounded-md bg-brand px-5 text-sm font-semibold text-black disabled:opacity-50" onclick={createKey} disabled={creating}>
+				<button class="h-11 min-w-[96px] whitespace-nowrap rounded-md bg-brand px-5 text-sm font-semibold text-black disabled:opacity-50" onclick={createKey} disabled={creating}>
 					{creating ? '创建中...' : '创建'}
 				</button>
 			</div>
@@ -95,8 +95,7 @@
 		<div class="rounded-md border border-line bg-black/25 p-4">
 			<div class="text-xs text-faint">推荐接入地址</div>
 			<div class="mt-2 space-y-1 font-mono text-sm">
-				<div>Responses: <span class="text-brand">{origin}/v1/responses</span></div>
-				<div>OpenAI compatible: <span class="text-brand">{origin}/v1</span></div>
+				<div>Responses base_url: <span class="text-brand">{origin}/openai</span></div>
 			</div>
 		</div>
 	</div>

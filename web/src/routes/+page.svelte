@@ -50,7 +50,7 @@
 
 <section class="mx-auto max-w-6xl px-5 py-14">
 	<div class="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-		{#each [['1 RMB = 1 USD', '默认优惠比例'], ['PAYGO', '额度永不过期'], ['Responses', '主转发表面'], ['7pay', '扫码充值']] as stat}
+		{#each [['1 RMB = 1 USD', '默认优惠比例'], ['PAYGO', '额度永不过期'], ['Responses', '主转发表面'], ['扫码充值', '自动入账']] as stat}
 			<div class="rounded-lg border border-line bg-card/60 p-5 text-center">
 				<div class="font-mono text-lg font-semibold text-brand">{stat[0]}</div>
 				<div class="mt-1 text-sm text-faint">{stat[1]}</div>

@@ -10,6 +10,13 @@ import (
 	"github.com/yansircc/llm-broker/internal/requestlog"
 )
 
+const requestLogLedgerJoinSQL = `
+	LEFT JOIN billing_ledger bl
+		ON bl.idempotency_key = 'usage:' || rl.request_id
+		AND bl.kind = 'usage_debit'`
+
+const requestLogEffectiveCostSQL = `COALESCE((-bl.amount_micros) / 1000000.0, rl.cost_usd)`
+
 // InsertRequestLog persists the slim 18-column row and returns the assigned id.
 // Observation payload (headers/body/meta) is no longer stored in SQL — callers
 // should write the file via requestlog.WriteLogFile using the returned id.
@@ -46,11 +53,11 @@ func (s *SQLiteStore) InsertRequestLog(ctx context.Context, l *domain.RequestLog
 }
 
 func (s *SQLiteStore) QueryRequestLogs(ctx context.Context, opts domain.RequestLogQuery) ([]*domain.RequestLog, int, error) {
-	where, args := buildLogWhere(opts)
+	where, args := buildLogWhere(opts, "rl")
 
 	var total int
 	_ = s.db.QueryRowContext(ctx,
-		fmt.Sprintf("SELECT COUNT(*) FROM request_log WHERE %s", where), args...).Scan(&total)
+		fmt.Sprintf("SELECT COUNT(*) FROM request_log rl WHERE %s", where), args...).Scan(&total)
 
 	limit := opts.Limit
 	if limit <= 0 {
@@ -60,11 +67,12 @@ func (s *SQLiteStore) QueryRequestLogs(ctx context.Context, opts domain.RequestL
 	copy(fetchArgs, args)
 	fetchArgs = append(fetchArgs, limit, opts.Offset)
 
-	query := fmt.Sprintf(`SELECT id, user_id, request_id, api_key_id, account_id, provider, surface, model, cell_id,
-		input_tokens, output_tokens, cache_read_tokens, cache_create_tokens, cost_usd,
-		status, effect_kind, upstream_status, upstream_error_type,
-		duration_ms, created_at
-		FROM request_log WHERE %s ORDER BY created_at DESC LIMIT ? OFFSET ?`, where)
+	query := fmt.Sprintf(`SELECT rl.id, rl.user_id, rl.request_id, rl.api_key_id, rl.account_id, rl.provider, rl.surface, rl.model, rl.cell_id,
+		rl.input_tokens, rl.output_tokens, rl.cache_read_tokens, rl.cache_create_tokens, %s,
+		rl.status, rl.effect_kind, rl.upstream_status, rl.upstream_error_type,
+		rl.duration_ms, rl.created_at
+		FROM request_log rl %s WHERE %s ORDER BY rl.created_at DESC LIMIT ? OFFSET ?`,
+		requestLogEffectiveCostSQL, requestLogLedgerJoinSQL, where)
 
 	rows, err := s.db.QueryContext(ctx, query, fetchArgs...)
 	if err != nil {
@@ -194,35 +202,39 @@ func (s *SQLiteStore) PurgeOldLogs(ctx context.Context, before time.Time) (int64
 	return res.RowsAffected()
 }
 
-func buildLogWhere(opts domain.RequestLogQuery) (string, []interface{}) {
+func buildLogWhere(opts domain.RequestLogQuery, alias string) (string, []interface{}) {
 	where := "1=1"
 	var args []interface{}
+	prefix := ""
+	if alias != "" {
+		prefix = alias + "."
+	}
 	if opts.UserID != "" {
-		where += " AND user_id = ?"
+		where += " AND " + prefix + "user_id = ?"
 		args = append(args, opts.UserID)
 	}
 	if opts.APIKeyID != "" {
-		where += " AND api_key_id = ?"
+		where += " AND " + prefix + "api_key_id = ?"
 		args = append(args, opts.APIKeyID)
 	}
 	if opts.AccountID != "" {
-		where += " AND account_id = ?"
+		where += " AND " + prefix + "account_id = ?"
 		args = append(args, opts.AccountID)
 	}
 	if opts.Model != "" {
-		where += " AND model = ?"
+		where += " AND " + prefix + "model = ?"
 		args = append(args, opts.Model)
 	}
 	if opts.Since != nil {
-		where += " AND created_at >= ?"
+		where += " AND " + prefix + "created_at >= ?"
 		args = append(args, opts.Since.Unix())
 	}
 	if opts.Until != nil {
-		where += " AND created_at < ?"
+		where += " AND " + prefix + "created_at < ?"
 		args = append(args, opts.Until.Unix())
 	}
 	if opts.FailuresOnly {
-		where += " AND status <> 'ok'"
+		where += " AND " + prefix + "status <> 'ok'"
 	}
 	return where, args
 }
@@ -251,25 +263,25 @@ func (s *SQLiteStore) QueryUsagePeriods(ctx context.Context, userID string, loc 
 	selects := make([]string, 0, len(periods)*5)
 	for _, p := range periods {
 		selects = append(selects,
-			"COUNT(CASE WHEN created_at >= ? AND created_at < ? THEN 1 END)",
-			"COALESCE(SUM(CASE WHEN created_at >= ? AND created_at < ? THEN input_tokens ELSE 0 END),0)",
-			"COALESCE(SUM(CASE WHEN created_at >= ? AND created_at < ? THEN output_tokens ELSE 0 END),0)",
-			"COALESCE(SUM(CASE WHEN created_at >= ? AND created_at < ? THEN cache_read_tokens ELSE 0 END),0)",
-			"COALESCE(SUM(CASE WHEN created_at >= ? AND created_at < ? THEN cost_usd ELSE 0 END),0)",
+			"COUNT(CASE WHEN rl.created_at >= ? AND rl.created_at < ? THEN 1 END)",
+			"COALESCE(SUM(CASE WHEN rl.created_at >= ? AND rl.created_at < ? THEN rl.input_tokens ELSE 0 END),0)",
+			"COALESCE(SUM(CASE WHEN rl.created_at >= ? AND rl.created_at < ? THEN rl.output_tokens ELSE 0 END),0)",
+			"COALESCE(SUM(CASE WHEN rl.created_at >= ? AND rl.created_at < ? THEN rl.cache_read_tokens ELSE 0 END),0)",
+			fmt.Sprintf("COALESCE(SUM(CASE WHEN rl.created_at >= ? AND rl.created_at < ? THEN %s ELSE 0 END),0)", requestLogEffectiveCostSQL),
 		)
 		for i := 0; i < 5; i++ {
 			baseArgs = append(baseArgs, p.since.Unix(), p.until.Unix())
 		}
 	}
-	where := "status = 'ok' AND created_at >= ? AND created_at < ?"
+	where := "rl.status = 'ok' AND rl.created_at >= ? AND rl.created_at < ?"
 	baseArgs = append(baseArgs, periods[len(periods)-1].since.Unix(), now.Unix())
 	if userID != "" {
-		where += " AND user_id = ?"
+		where += " AND rl.user_id = ?"
 		baseArgs = append(baseArgs, userID)
 	}
 
 	row := s.db.QueryRowContext(ctx,
-		fmt.Sprintf("SELECT %s FROM request_log WHERE %s", strings.Join(selects, ", "), where),
+		fmt.Sprintf("SELECT %s FROM request_log rl %s WHERE %s", strings.Join(selects, ", "), requestLogLedgerJoinSQL, where),
 		baseArgs...,
 	)
 
@@ -293,9 +305,9 @@ func (s *SQLiteStore) QueryUsagePeriods(ctx context.Context, userID string, loc 
 
 func (s *SQLiteStore) QueryUserTotalCosts(ctx context.Context) (map[string]float64, error) {
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT user_id, COALESCE(SUM(cost_usd),0)
-		FROM request_log
-		WHERE status = 'ok' GROUP BY user_id`)
+		fmt.Sprintf(`SELECT rl.user_id, COALESCE(SUM(%s),0)
+		FROM request_log rl %s
+		WHERE rl.status = 'ok' GROUP BY rl.user_id`, requestLogEffectiveCostSQL, requestLogLedgerJoinSQL))
 	if err != nil {
 		return nil, err
 	}
@@ -323,11 +335,11 @@ func (s *SQLiteStore) QueryUserTotalCostsByIDs(ctx context.Context, userIDs []st
 		result[userID] = 0
 	}
 	query := fmt.Sprintf(
-		`SELECT user_id, COALESCE(SUM(cost_usd),0)
-		FROM request_log
-		WHERE user_id IN (%s) AND status = 'ok'
-		GROUP BY user_id`,
-		strings.Join(placeholders, ","),
+		`SELECT rl.user_id, COALESCE(SUM(%s),0)
+		FROM request_log rl %s
+		WHERE rl.user_id IN (%s) AND rl.status = 'ok'
+		GROUP BY rl.user_id`,
+		requestLogEffectiveCostSQL, requestLogLedgerJoinSQL, strings.Join(placeholders, ","),
 	)
 	rows, err := s.db.QueryContext(ctx, query, args...)
 	if err != nil {
@@ -350,16 +362,17 @@ func (s *SQLiteStore) QueryModelUsage(ctx context.Context, userID string) ([]dom
 	var where string
 	var args []interface{}
 	if userID != "" {
-		where = "user_id = ? AND status = 'ok' AND created_at >= ?"
+		where = "rl.user_id = ? AND rl.status = 'ok' AND rl.created_at >= ?"
 		args = []interface{}{userID, sevenDaysAgo}
 	} else {
-		where = "status = 'ok' AND created_at >= ?"
+		where = "rl.status = 'ok' AND rl.created_at >= ?"
 		args = []interface{}{sevenDaysAgo}
 	}
 	rows, err := s.db.QueryContext(ctx, fmt.Sprintf(
-		`SELECT model, COUNT(*), COALESCE(SUM(input_tokens),0), COALESCE(SUM(output_tokens),0),
-		COALESCE(SUM(cache_read_tokens),0), COALESCE(SUM(cost_usd),0)
-		FROM request_log WHERE %s GROUP BY model ORDER BY SUM(input_tokens + output_tokens) DESC`, where), args...)
+		`SELECT rl.model, COUNT(*), COALESCE(SUM(rl.input_tokens),0), COALESCE(SUM(rl.output_tokens),0),
+		COALESCE(SUM(rl.cache_read_tokens),0), COALESCE(SUM(%s),0)
+		FROM request_log rl %s WHERE %s GROUP BY rl.model ORDER BY SUM(rl.input_tokens + rl.output_tokens) DESC`,
+		requestLogEffectiveCostSQL, requestLogLedgerJoinSQL, where), args...)
 	if err != nil {
 		return nil, err
 	}

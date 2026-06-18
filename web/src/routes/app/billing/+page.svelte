@@ -115,7 +115,7 @@
 	<div class="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
 		<div>
 			<h2 class="m-0 text-base font-semibold">支付方式</h2>
-			<p class="mt-1 text-sm text-faint">7pay 扫码支付，支付成功后自动入账。</p>
+			<p class="mt-1 text-sm text-faint">选择支付方式，扫码完成后自动入账。</p>
 		</div>
 		<div class="flex gap-2">
 			{#each methods as item}

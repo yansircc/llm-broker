@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"math"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -90,6 +91,96 @@ func TestLogAnalyticsIgnoreFailedAttempts(t *testing.T) {
 	}
 	if totalCosts["user-1"] != 1.25 {
 		t.Fatalf("totalCosts[user-1] = %v, want 1.25", totalCosts["user-1"])
+	}
+}
+
+func TestLogAnalyticsPreferSettledLedgerCost(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "ledger-costs.db")
+	if err := Migrate(dbPath); err != nil {
+		t.Fatalf("Migrate: %v", err)
+	}
+
+	store, err := New(dbPath)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	defer store.Close()
+
+	now := time.Now().UTC().Add(-2 * time.Second)
+	entry := &domain.RequestLog{
+		UserID:          "user-1",
+		RequestID:       "req-ledger",
+		Model:           "gpt-5.5",
+		InputTokens:     1000,
+		OutputTokens:    20,
+		CacheReadTokens: 500,
+		CostUSD:         0.12,
+		Status:          "ok",
+		CreatedAt:       now,
+	}
+	if _, err := store.InsertRequestLog(context.Background(), entry); err != nil {
+		t.Fatalf("InsertRequestLog: %v", err)
+	}
+	if err := store.InsertBillingLedgerEntry(context.Background(), &domain.BillingLedgerEntry{
+		ID:             "ledger-req-ledger",
+		UserID:         "user-1",
+		AmountMicros:   -60_000,
+		Kind:           "usage_debit",
+		SourceType:     "request",
+		SourceID:       "req-ledger",
+		IdempotencyKey: "usage:req-ledger",
+		Description:    "usage charge",
+		MetadataJSON:   "{}",
+		CreatedAt:      now,
+	}); err != nil {
+		t.Fatalf("InsertBillingLedgerEntry: %v", err)
+	}
+
+	logs, total, err := store.QueryRequestLogs(context.Background(), domain.RequestLogQuery{
+		UserID: "user-1",
+		Limit:  10,
+	})
+	if err != nil {
+		t.Fatalf("QueryRequestLogs: %v", err)
+	}
+	if total != 1 || len(logs) != 1 {
+		t.Fatalf("request logs total=%d len=%d, want 1", total, len(logs))
+	}
+	assertFloat64Near(t, logs[0].CostUSD, 0.06, "request log cost")
+
+	usage, err := store.QueryUsagePeriods(context.Background(), "user-1", time.UTC)
+	if err != nil {
+		t.Fatalf("QueryUsagePeriods: %v", err)
+	}
+	var today domain.UsagePeriod
+	for _, period := range usage {
+		if period.Label == "today" {
+			today = period
+			break
+		}
+	}
+	assertFloat64Near(t, today.CostUSD, 0.06, "today cost")
+
+	modelUsage, err := store.QueryModelUsage(context.Background(), "user-1")
+	if err != nil {
+		t.Fatalf("QueryModelUsage: %v", err)
+	}
+	if len(modelUsage) != 1 {
+		t.Fatalf("len(modelUsage) = %d, want 1", len(modelUsage))
+	}
+	assertFloat64Near(t, modelUsage[0].CostUSD, 0.06, "model cost")
+
+	totalCosts, err := store.QueryUserTotalCostsByIDs(context.Background(), []string{"user-1"})
+	if err != nil {
+		t.Fatalf("QueryUserTotalCostsByIDs: %v", err)
+	}
+	assertFloat64Near(t, totalCosts["user-1"], 0.06, "user total cost")
+}
+
+func assertFloat64Near(t *testing.T, got, want float64, label string) {
+	t.Helper()
+	if math.Abs(got-want) > 0.0000001 {
+		t.Fatalf("%s = %v, want %v", label, got, want)
 	}
 }
 
