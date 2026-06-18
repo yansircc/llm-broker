@@ -94,6 +94,55 @@ func (s *SQLiteStore) GetBillingLedgerEntryByIdempotencyKey(ctx context.Context,
 	return scanBillingLedgerEntry(row)
 }
 
+func (s *SQLiteStore) ListBillingLedgerByUser(ctx context.Context, userID string, limit, offset int) ([]*domain.BillingLedgerEntry, int, error) {
+	if limit <= 0 || limit > 200 {
+		limit = 50
+	}
+	if offset < 0 {
+		offset = 0
+	}
+	var total int
+	if err := s.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM billing_ledger WHERE user_id = ?", userID).Scan(&total); err != nil {
+		return nil, 0, err
+	}
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT seq, id, user_id, amount_micros, kind, source_type, source_id, idempotency_key,
+			description, price_snapshot_json, metadata_json, created_at
+		FROM billing_ledger
+		WHERE user_id = ?
+		ORDER BY seq DESC
+		LIMIT ? OFFSET ?
+	`, userID, limit, offset)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer rows.Close()
+	var entries []*domain.BillingLedgerEntry
+	for rows.Next() {
+		entry, err := scanBillingLedgerEntry(rows)
+		if err != nil {
+			return nil, 0, err
+		}
+		entries = append(entries, entry)
+	}
+	return entries, total, rows.Err()
+}
+
+func (s *SQLiteStore) SummarizeBillingLedgerByUser(ctx context.Context, userID string) (*domain.BillingLedgerSummary, error) {
+	var summary domain.BillingLedgerSummary
+	err := s.db.QueryRowContext(ctx, `
+		SELECT
+			COALESCE(SUM(CASE WHEN amount_micros > 0 THEN amount_micros ELSE 0 END), 0),
+			COALESCE(SUM(CASE WHEN kind = 'usage_debit' THEN -amount_micros ELSE 0 END), 0)
+		FROM billing_ledger
+		WHERE user_id = ?
+	`, userID).Scan(&summary.CreditMicros, &summary.UsageMicros)
+	if err != nil {
+		return nil, err
+	}
+	return &summary, nil
+}
+
 func (s *SQLiteStore) SumBillingLedgerAfter(ctx context.Context, userID string, afterSeq int64) (int64, int64, error) {
 	var sum sql.NullInt64
 	var maxSeq sql.NullInt64
@@ -248,6 +297,25 @@ func (s *SQLiteStore) GetReferralByInvitee(ctx context.Context, inviteeUserID st
 		FROM referrals WHERE invitee_user_id = ?
 	`, inviteeUserID)
 	return scanReferral(row)
+}
+
+func (s *SQLiteStore) ReferralStatsByInviter(ctx context.Context, inviterUserID string) (*domain.ReferralStats, error) {
+	var stats domain.ReferralStats
+	err := s.db.QueryRowContext(ctx, `
+		SELECT
+			COUNT(r.id),
+			COUNT(DISTINCT CASE WHEN reward.id IS NOT NULL THEN r.invitee_user_id END),
+			COALESCE(SUM(CASE WHEN reward.id IS NOT NULL THEN reward.amount_micros ELSE 0 END), 0)
+		FROM referrals r
+		LEFT JOIN billing_ledger reward
+			ON reward.user_id = r.inviter_user_id
+			AND reward.idempotency_key = 'referral:inviter:' || r.invitee_user_id
+		WHERE r.inviter_user_id = ?
+	`, inviterUserID).Scan(&stats.Signups, &stats.PaidInvitees, &stats.CreditMicros)
+	if err != nil {
+		return nil, err
+	}
+	return &stats, nil
 }
 
 func scanModelPrice(scanner interface{ Scan(...any) error }) (*domain.ModelPrice, error) {

@@ -41,7 +41,9 @@ export async function customerApi<T = unknown>(
 				throw new CustomerApiError(res.status, message || res.statusText);
 			}
 			const text = await res.text();
-			throw new CustomerApiError(res.status, text || res.statusText);
+			const trimmed = text.trim();
+			const message = trimmed.startsWith('<!doctype') || trimmed.startsWith('<html') ? res.statusText : trimmed;
+			throw new CustomerApiError(res.status, message || res.statusText);
 		}
 
 		if (res.status === 204) {

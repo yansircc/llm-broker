@@ -91,6 +91,8 @@ type Store interface {
 	ListModelPrices(ctx context.Context) ([]*domain.ModelPrice, error)
 	InsertBillingLedgerEntry(ctx context.Context, entry *domain.BillingLedgerEntry) error
 	GetBillingLedgerEntryByIdempotencyKey(ctx context.Context, key string) (*domain.BillingLedgerEntry, error)
+	ListBillingLedgerByUser(ctx context.Context, userID string, limit, offset int) ([]*domain.BillingLedgerEntry, int, error)
+	SummarizeBillingLedgerByUser(ctx context.Context, userID string) (*domain.BillingLedgerSummary, error)
 	SumBillingLedgerAfter(ctx context.Context, userID string, afterSeq int64) (int64, int64, error)
 	GetBillingBalanceCheckpoint(ctx context.Context, userID string) (*domain.BillingBalanceCheckpoint, error)
 	UpsertBillingBalanceCheckpoint(ctx context.Context, checkpoint *domain.BillingBalanceCheckpoint) error
@@ -108,6 +110,7 @@ type Store interface {
 	SavePaymentEvent(ctx context.Context, event *domain.PaymentEvent) error
 	CreateReferralWithCredits(ctx context.Context, referral *domain.Referral, inviteeCredit, inviterCredit *domain.BillingLedgerEntry) error
 	GetReferralByInvitee(ctx context.Context, inviteeUserID string) (*domain.Referral, error)
+	ReferralStatsByInviter(ctx context.Context, inviterUserID string) (*domain.ReferralStats, error)
 	UpsertAdmissionLimit(ctx context.Context, limit *domain.AdmissionLimit) error
 	GetAdmissionLimit(ctx context.Context, scope, scopeID string) (*domain.AdmissionLimit, error)
 	ListAdmissionLimits(ctx context.Context) ([]*domain.AdmissionLimit, error)

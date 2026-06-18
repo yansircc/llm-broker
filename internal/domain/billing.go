@@ -34,6 +34,11 @@ type BillingLedgerEntry struct {
 	CreatedAt         time.Time `json:"created_at"`
 }
 
+type BillingLedgerSummary struct {
+	CreditMicros int64 `json:"credit_micros"`
+	UsageMicros  int64 `json:"usage_micros"`
+}
+
 type BillingBalanceCheckpoint struct {
 	UserID        string    `json:"user_id"`
 	LedgerSeq     int64     `json:"ledger_seq"`
@@ -67,4 +72,10 @@ type Referral struct {
 	InviteCode    string    `json:"invite_code"`
 	CreatedAt     time.Time `json:"created_at"`
 	CreditedAt    time.Time `json:"credited_at"`
+}
+
+type ReferralStats struct {
+	Signups      int   `json:"signups"`
+	PaidInvitees int   `json:"paid_invitees"`
+	CreditMicros int64 `json:"credit_micros"`
 }

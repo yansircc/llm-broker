@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"sort"
 	"sync"
 	"time"
 
@@ -783,6 +784,53 @@ func (m *MockStore) GetBillingLedgerEntryByIdempotencyKey(_ context.Context, key
 	return nil, nil
 }
 
+func (m *MockStore) ListBillingLedgerByUser(_ context.Context, userID string, limit, offset int) ([]*domain.BillingLedgerEntry, int, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if limit <= 0 || limit > 200 {
+		limit = 50
+	}
+	if offset < 0 {
+		offset = 0
+	}
+	var entries []*domain.BillingLedgerEntry
+	for _, entry := range m.ledger {
+		if entry.UserID != userID {
+			continue
+		}
+		copy := *entry
+		entries = append(entries, &copy)
+	}
+	sort.Slice(entries, func(i, j int) bool { return entries[i].Seq > entries[j].Seq })
+	total := len(entries)
+	if offset >= total {
+		return []*domain.BillingLedgerEntry{}, total, nil
+	}
+	end := offset + limit
+	if end > total {
+		end = total
+	}
+	return entries[offset:end], total, nil
+}
+
+func (m *MockStore) SummarizeBillingLedgerByUser(_ context.Context, userID string) (*domain.BillingLedgerSummary, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var summary domain.BillingLedgerSummary
+	for _, entry := range m.ledger {
+		if entry.UserID != userID {
+			continue
+		}
+		if entry.AmountMicros > 0 {
+			summary.CreditMicros += entry.AmountMicros
+		}
+		if entry.Kind == "usage_debit" {
+			summary.UsageMicros -= entry.AmountMicros
+		}
+	}
+	return &summary, nil
+}
+
 func (m *MockStore) SumBillingLedgerAfter(_ context.Context, userID string, afterSeq int64) (int64, int64, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -1020,6 +1068,27 @@ func (m *MockStore) GetReferralByInvitee(_ context.Context, inviteeUserID string
 	return &copy, nil
 }
 
+func (m *MockStore) ReferralStatsByInviter(_ context.Context, inviterUserID string) (*domain.ReferralStats, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var stats domain.ReferralStats
+	for _, referral := range m.referrals {
+		if referral.InviterUserID != inviterUserID {
+			continue
+		}
+		stats.Signups++
+		idempotency := "referral:inviter:" + referral.InviteeUserID
+		for _, entry := range m.ledger {
+			if entry.UserID == inviterUserID && entry.IdempotencyKey == idempotency {
+				stats.PaidInvitees++
+				stats.CreditMicros += entry.AmountMicros
+				break
+			}
+		}
+	}
+	return &stats, nil
+}
+
 func (m *MockStore) UpsertAdmissionLimit(_ context.Context, limit *domain.AdmissionLimit) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -1076,7 +1145,19 @@ func (m *MockStore) QueryRequestLogs(_ context.Context, opts domain.RequestLogQu
 		if opts.UserID != "" && entry.UserID != opts.UserID {
 			continue
 		}
+		if opts.APIKeyID != "" && entry.APIKeyID != opts.APIKeyID {
+			continue
+		}
 		if opts.AccountID != "" && entry.AccountID != opts.AccountID {
+			continue
+		}
+		if opts.Model != "" && entry.Model != opts.Model {
+			continue
+		}
+		if opts.Since != nil && entry.CreatedAt.Before(*opts.Since) {
+			continue
+		}
+		if opts.Until != nil && !entry.CreatedAt.Before(*opts.Until) {
 			continue
 		}
 		if opts.FailuresOnly && entry.Status == "ok" {
@@ -1085,7 +1166,20 @@ func (m *MockStore) QueryRequestLogs(_ context.Context, opts domain.RequestLogQu
 		copy := *entry
 		logs = append(logs, &copy)
 	}
-	return logs, len(logs), nil
+	sort.Slice(logs, func(i, j int) bool { return logs[i].CreatedAt.After(logs[j].CreatedAt) })
+	total := len(logs)
+	limit := opts.Limit
+	if limit <= 0 {
+		limit = 50
+	}
+	if opts.Offset >= total {
+		return []*domain.RequestLog{}, total, nil
+	}
+	end := opts.Offset + limit
+	if end > total {
+		end = total
+	}
+	return logs[opts.Offset:end], total, nil
 }
 
 func (m *MockStore) QueryRelayOutcomeStats(_ context.Context, since time.Time) ([]domain.RelayOutcomeStat, error) {
@@ -1199,8 +1293,48 @@ func (m *MockStore) PurgeOldLogs(_ context.Context, _ time.Time) (int64, error) 
 	return 0, nil
 }
 
-func (m *MockStore) QueryUsagePeriods(_ context.Context, _ string, _ *time.Location) ([]domain.UsagePeriod, error) {
-	return nil, nil
+func (m *MockStore) QueryUsagePeriods(_ context.Context, userID string, loc *time.Location) ([]domain.UsagePeriod, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if loc == nil {
+		loc = time.UTC
+	}
+	now := time.Now().In(loc)
+	todayStart := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, loc)
+	periods := []struct {
+		label string
+		since time.Time
+		until time.Time
+	}{
+		{"today", todayStart, now},
+		{"yesterday", todayStart.Add(-24 * time.Hour), todayStart},
+		{"3 days", now.Add(-3 * 24 * time.Hour), now},
+		{"7 days", now.Add(-7 * 24 * time.Hour), now},
+		{"30 days", now.Add(-30 * 24 * time.Hour), now},
+	}
+	out := make([]domain.UsagePeriod, len(periods))
+	matched := false
+	for i, p := range periods {
+		out[i].Label = p.label
+		for _, entry := range m.logs {
+			if userID != "" && entry.UserID != userID {
+				continue
+			}
+			if entry.Status != "ok" || entry.CreatedAt.Before(p.since) || !entry.CreatedAt.Before(p.until) {
+				continue
+			}
+			out[i].Requests++
+			out[i].InputTokens += int64(entry.InputTokens)
+			out[i].OutputTokens += int64(entry.OutputTokens)
+			out[i].CacheReadTokens += int64(entry.CacheReadTokens)
+			out[i].CostUSD += entry.CostUSD
+			matched = true
+		}
+	}
+	if !matched {
+		return nil, nil
+	}
+	return out, nil
 }
 
 func (m *MockStore) QueryUserTotalCosts(_ context.Context) (map[string]float64, error) {
@@ -1237,6 +1371,35 @@ func (m *MockStore) QueryUserTotalCostsByIDs(_ context.Context, userIDs []string
 	return result, nil
 }
 
-func (m *MockStore) QueryModelUsage(_ context.Context, _ string) ([]domain.ModelUsageRow, error) {
-	return nil, nil
+func (m *MockStore) QueryModelUsage(_ context.Context, userID string) ([]domain.ModelUsageRow, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	byModel := map[string]*domain.ModelUsageRow{}
+	since := time.Now().UTC().Add(-7 * 24 * time.Hour)
+	for _, entry := range m.logs {
+		if userID != "" && entry.UserID != userID {
+			continue
+		}
+		if entry.Status != "ok" || entry.CreatedAt.Before(since) {
+			continue
+		}
+		row := byModel[entry.Model]
+		if row == nil {
+			row = &domain.ModelUsageRow{Model: entry.Model}
+			byModel[entry.Model] = row
+		}
+		row.Requests++
+		row.InputTokens += int64(entry.InputTokens)
+		row.OutputTokens += int64(entry.OutputTokens)
+		row.CacheReadTokens += int64(entry.CacheReadTokens)
+		row.CostUSD += entry.CostUSD
+	}
+	out := make([]domain.ModelUsageRow, 0, len(byModel))
+	for _, row := range byModel {
+		out = append(out, *row)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		return out[i].InputTokens+out[i].OutputTokens > out[j].InputTokens+out[j].OutputTokens
+	})
+	return out, nil
 }

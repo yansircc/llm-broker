@@ -25,13 +25,36 @@ func (s *Server) handleCustomerBillingSummary(w http.ResponseWriter, r *http.Req
 		writeAdminError(w, http.StatusInternalServerError, "internal_error", "failed to load balance")
 		return
 	}
+	summary, err := s.store.SummarizeBillingLedgerByUser(r.Context(), cc.User.ID)
+	if err != nil {
+		writeAdminError(w, http.StatusInternalServerError, "internal_error", "failed to load billing summary")
+		return
+	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"plan":        "prepaid",
 		"status":      cc.User.Status,
 		"balance_usd": microsToUSD(balance),
-		"credits_usd": microsToUSD(maxInt64Local(balance, 0)),
-		"usage_usd":   0,
+		"credits_usd": microsToUSD(summary.CreditMicros),
+		"usage_usd":   microsToUSD(summary.UsageMicros),
 	})
+}
+
+func (s *Server) handleCustomerBillingLedger(w http.ResponseWriter, r *http.Request) {
+	cc, ok := s.requireCustomer(w, r)
+	if !ok {
+		return
+	}
+	limit, offset := limitOffset(r, 50)
+	entries, total, err := s.store.ListBillingLedgerByUser(r.Context(), cc.User.ID, limit, offset)
+	if err != nil {
+		writeAdminError(w, http.StatusInternalServerError, "internal_error", "failed to load billing ledger")
+		return
+	}
+	out := make([]map[string]any, 0, len(entries))
+	for _, entry := range entries {
+		out = append(out, billingLedgerEntryView(entry))
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"entries": out, "total": total})
 }
 
 func (s *Server) handleCreatePayment(w http.ResponseWriter, r *http.Request) {
@@ -157,16 +180,82 @@ func (s *Server) handleCustomerPaymentOrder(w http.ResponseWriter, r *http.Reque
 	writeJSON(w, http.StatusOK, paymentOrderView(order, ""))
 }
 
+func (s *Server) handleCustomerPaymentOrders(w http.ResponseWriter, r *http.Request) {
+	cc, ok := s.requireCustomer(w, r)
+	if !ok {
+		return
+	}
+	limit, _ := limitOffset(r, 50)
+	orders, err := s.store.ListPaymentOrdersByUser(r.Context(), cc.User.ID, limit)
+	if err != nil {
+		writeAdminError(w, http.StatusInternalServerError, "internal_error", "failed to load payment orders")
+		return
+	}
+	out := make([]map[string]any, 0, len(orders))
+	for _, order := range orders {
+		out = append(out, paymentOrderView(order, ""))
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
 func (s *Server) handleCustomerReferrals(w http.ResponseWriter, r *http.Request) {
 	cc, ok := s.requireCustomer(w, r)
 	if !ok {
 		return
 	}
+	stats, err := s.store.ReferralStatsByInviter(r.Context(), cc.User.ID)
+	if err != nil {
+		writeAdminError(w, http.StatusInternalServerError, "internal_error", "failed to load referrals")
+		return
+	}
 	writeJSON(w, http.StatusOK, map[string]any{
-		"code":        cc.User.ReferralCode,
-		"url":         s.publicURL(r, "/app/register?ref="+cc.User.ReferralCode),
-		"signups":     0,
-		"credits_usd": 0,
+		"code":          cc.User.ReferralCode,
+		"url":           s.publicURL(r, "/app/register?ref="+cc.User.ReferralCode),
+		"signups":       stats.Signups,
+		"paid_invitees": stats.PaidInvitees,
+		"credits_usd":   microsToUSD(stats.CreditMicros),
+	})
+}
+
+func (s *Server) handleCustomerUsage(w http.ResponseWriter, r *http.Request) {
+	cc, ok := s.requireCustomer(w, r)
+	if !ok {
+		return
+	}
+	limit, offset := limitOffset(r, 50)
+	since, until := usageRange(r)
+	logs, total, err := s.store.QueryRequestLogs(r.Context(), domain.RequestLogQuery{
+		UserID:   cc.User.ID,
+		APIKeyID: strings.TrimSpace(r.URL.Query().Get("key_id")),
+		Model:    strings.TrimSpace(r.URL.Query().Get("model")),
+		Since:    since,
+		Until:    until,
+		Limit:    limit,
+		Offset:   offset,
+	})
+	if err != nil {
+		writeAdminError(w, http.StatusInternalServerError, "internal_error", "failed to load usage")
+		return
+	}
+	periods, err := s.store.QueryUsagePeriods(r.Context(), cc.User.ID, time.Local)
+	if err != nil {
+		writeAdminError(w, http.StatusInternalServerError, "internal_error", "failed to load usage periods")
+		return
+	}
+	modelUsage, err := s.store.QueryModelUsage(r.Context(), cc.User.ID)
+	if err != nil {
+		writeAdminError(w, http.StatusInternalServerError, "internal_error", "failed to load model usage")
+		return
+	}
+	out := make([]map[string]any, 0, len(logs))
+	for _, log := range logs {
+		out = append(out, requestLogView(log))
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"logs":        out,
+		"total":       total,
+		"periods":     periods,
+		"model_usage": modelUsage,
 	})
 }
 
@@ -233,6 +322,75 @@ func paymentOrderView(order *domain.PaymentOrder, checkoutURL string) map[string
 	}
 }
 
+func billingLedgerEntryView(entry *domain.BillingLedgerEntry) map[string]any {
+	return map[string]any{
+		"seq":         entry.Seq,
+		"id":          entry.ID,
+		"amount_usd":  microsToUSD(entry.AmountMicros),
+		"kind":        entry.Kind,
+		"source_type": entry.SourceType,
+		"source_id":   entry.SourceID,
+		"description": entry.Description,
+		"created_at":  entry.CreatedAt,
+	}
+}
+
+func requestLogView(log *domain.RequestLog) map[string]any {
+	return map[string]any{
+		"id":                  log.ID,
+		"request_id":          log.RequestID,
+		"api_key_id":          log.APIKeyID,
+		"model":               log.Model,
+		"surface":             log.Surface,
+		"status":              log.Status,
+		"input_tokens":        log.InputTokens,
+		"output_tokens":       log.OutputTokens,
+		"cache_read_tokens":   log.CacheReadTokens,
+		"cache_create_tokens": log.CacheCreateTokens,
+		"cost_usd":            log.CostUSD,
+		"duration_ms":         log.DurationMs,
+		"created_at":          log.CreatedAt,
+	}
+}
+
+func limitOffset(r *http.Request, defaultLimit int) (int, int) {
+	limit := defaultLimit
+	if raw := strings.TrimSpace(r.URL.Query().Get("limit")); raw != "" {
+		if parsed, err := strconv.Atoi(raw); err == nil && parsed > 0 {
+			limit = parsed
+		}
+	}
+	if limit > 200 {
+		limit = 200
+	}
+	offset := 0
+	if raw := strings.TrimSpace(r.URL.Query().Get("offset")); raw != "" {
+		if parsed, err := strconv.Atoi(raw); err == nil && parsed > 0 {
+			offset = parsed
+		}
+	}
+	return limit, offset
+}
+
+func usageRange(r *http.Request) (*time.Time, *time.Time) {
+	now := time.Now().UTC()
+	until := now
+	switch strings.TrimSpace(strings.ToLower(r.URL.Query().Get("range"))) {
+	case "today":
+		local := now.In(time.Local)
+		start := time.Date(local.Year(), local.Month(), local.Day(), 0, 0, 0, 0, time.Local).UTC()
+		return &start, &until
+	case "30d":
+		since := now.Add(-30 * 24 * time.Hour)
+		return &since, &until
+	case "7d", "":
+		since := now.Add(-7 * 24 * time.Hour)
+		return &since, &until
+	default:
+		return nil, nil
+	}
+}
+
 func microsToUSD(micros int64) float64 {
 	return float64(micros) / 1_000_000
 }
@@ -285,11 +443,4 @@ func (s *Server) zpayCID() string {
 		return ""
 	}
 	return s.cfg.ZPayCID
-}
-
-func maxInt64Local(a, b int64) int64 {
-	if a > b {
-		return a
-	}
-	return b
 }

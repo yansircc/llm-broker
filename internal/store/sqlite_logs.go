@@ -46,7 +46,7 @@ func (s *SQLiteStore) InsertRequestLog(ctx context.Context, l *domain.RequestLog
 }
 
 func (s *SQLiteStore) QueryRequestLogs(ctx context.Context, opts domain.RequestLogQuery) ([]*domain.RequestLog, int, error) {
-	where, args := buildLogWhere(opts.UserID, opts.AccountID, opts.FailuresOnly)
+	where, args := buildLogWhere(opts)
 
 	var total int
 	_ = s.db.QueryRowContext(ctx,
@@ -194,18 +194,34 @@ func (s *SQLiteStore) PurgeOldLogs(ctx context.Context, before time.Time) (int64
 	return res.RowsAffected()
 }
 
-func buildLogWhere(userID, accountID string, failuresOnly bool) (string, []interface{}) {
+func buildLogWhere(opts domain.RequestLogQuery) (string, []interface{}) {
 	where := "1=1"
 	var args []interface{}
-	if userID != "" {
+	if opts.UserID != "" {
 		where += " AND user_id = ?"
-		args = append(args, userID)
+		args = append(args, opts.UserID)
 	}
-	if accountID != "" {
+	if opts.APIKeyID != "" {
+		where += " AND api_key_id = ?"
+		args = append(args, opts.APIKeyID)
+	}
+	if opts.AccountID != "" {
 		where += " AND account_id = ?"
-		args = append(args, accountID)
+		args = append(args, opts.AccountID)
 	}
-	if failuresOnly {
+	if opts.Model != "" {
+		where += " AND model = ?"
+		args = append(args, opts.Model)
+	}
+	if opts.Since != nil {
+		where += " AND created_at >= ?"
+		args = append(args, opts.Since.Unix())
+	}
+	if opts.Until != nil {
+		where += " AND created_at < ?"
+		args = append(args, opts.Until.Unix())
+	}
+	if opts.FailuresOnly {
 		where += " AND status <> 'ok'"
 	}
 	return where, args

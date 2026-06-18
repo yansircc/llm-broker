@@ -31,8 +31,12 @@ type RequestLog struct {
 // RequestLogQuery is a paginated request log query.
 type RequestLogQuery struct {
 	UserID       string
+	APIKeyID     string
 	AccountID    string
+	Model        string
 	FailuresOnly bool
+	Since        *time.Time
+	Until        *time.Time
 	Limit        int
 	Offset       int
 }

@@ -27,7 +27,8 @@
 
 	function showAdminNav() {
 		const path = $page.url.pathname;
-		return path !== `${base}/` && path !== base && !path.endsWith('/login') && !path.startsWith(`${base}/app/`);
+		const adminPrefixes = ['/dashboard', '/accounts', '/users', '/activity', '/admin-billing', '/migrations', '/add-account', '/cells'];
+		return adminPrefixes.some((prefix) => path === `${base}${prefix}` || path.startsWith(`${base}${prefix}/`));
 	}
 </script>
 

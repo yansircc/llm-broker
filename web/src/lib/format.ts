@@ -5,6 +5,7 @@ export function fmtNum(n: number): string {
 }
 
 export function fmtCost(n: number): string {
+	if (n < 0) return '-$' + fmtCost(-n).slice(1);
 	if (n >= 100) return '$' + Math.round(n).toLocaleString();
 	if (n >= 10) return '$' + n.toFixed(1);
 	return '$' + n.toFixed(2);

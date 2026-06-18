@@ -93,11 +93,14 @@ func (s *Server) registerCustomerRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/keys", s.handleCustomerCreateKey)
 	mux.HandleFunc("DELETE /api/keys/{id}", s.handleCustomerDeleteKey)
 	mux.HandleFunc("GET /api/billing/summary", s.handleCustomerBillingSummary)
+	mux.HandleFunc("GET /api/billing/ledger", s.handleCustomerBillingLedger)
 	mux.HandleFunc("POST /api/payments/create", s.handleCreatePayment)
+	mux.HandleFunc("GET /api/payments/orders", s.handleCustomerPaymentOrders)
 	mux.HandleFunc("GET /api/payments/orders/{id}", s.handleCustomerPaymentOrder)
 	mux.HandleFunc("GET /api/payments/notify", s.handlePaymentNotify)
 	mux.HandleFunc("POST /api/payments/notify", s.handlePaymentNotify)
 	mux.HandleFunc("GET /api/referrals", s.handleCustomerReferrals)
+	mux.HandleFunc("GET /api/usage", s.handleCustomerUsage)
 }
 
 func (s *Server) registerOperationalRoutes(mux *http.ServeMux) {

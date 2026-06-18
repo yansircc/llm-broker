@@ -302,6 +302,141 @@ func TestPublicURLUsesForwardedHost(t *testing.T) {
 	}
 }
 
+func TestCustomerDataEndpointsExposeLedgerOrdersUsageAndReferralStats(t *testing.T) {
+	srv := newTestServer(t)
+	now := time.Now().UTC()
+	user := &domain.User{
+		ID:             "customer-data-user",
+		Email:          "data@example.com",
+		Name:           "data",
+		Status:         "active",
+		AllowedSurface: domain.SurfaceNative,
+		ReferralCode:   "DATA1",
+		CreatedAt:      now,
+	}
+	if err := srv.store.CreateUser(context.Background(), user); err != nil {
+		t.Fatal(err)
+	}
+	resp := httptest.NewRecorder()
+	if _, err := srv.createCustomerSession(resp, httptest.NewRequest(http.MethodPost, "/api/auth/login", nil), user); err != nil {
+		t.Fatal(err)
+	}
+	cookie := customerCookie(t, resp)
+
+	if _, err := srv.billingService().Credit(context.Background(), user.ID, "payment_credit", "payment_order", "out-data", "payment:out-data", "payment recharge", 5_000_000); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := srv.billingService().Credit(context.Background(), user.ID, "usage_debit", "request", "req-data-1", "usage:req-data-1", "usage charge", -1_250_000); err != nil {
+		t.Fatal(err)
+	}
+	order := &domain.PaymentOrder{
+		ID:                 "order-data-1",
+		OutTradeNo:         "out-data",
+		UserID:             user.ID,
+		Gateway:            "zpay",
+		Status:             "paid",
+		ProductName:        "credit",
+		AmountCNYFen:       500,
+		CreditMicros:       5_000_000,
+		ExchangeRateMicros: 1_000_000,
+		PaymentType:        "alipay",
+		CreatedAt:          now,
+		UpdatedAt:          now,
+	}
+	if err := srv.store.SavePaymentOrder(context.Background(), order); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := srv.store.InsertRequestLog(context.Background(), &domain.RequestLog{
+		UserID:       user.ID,
+		RequestID:    "req-data-1",
+		APIKeyID:     "key-1",
+		AccountID:    "acct-1",
+		Provider:     "openai",
+		Surface:      string(domain.SurfaceNative),
+		Model:        "gpt-5",
+		Status:       "ok",
+		InputTokens:  1000,
+		OutputTokens: 250,
+		CostUSD:      1.25,
+		DurationMs:   900,
+		CreatedAt:    now,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	invitee := &domain.User{
+		ID:               "customer-data-invitee",
+		Email:            "invitee-data@example.com",
+		Name:             "invitee",
+		Status:           "active",
+		AllowedSurface:   domain.SurfaceNative,
+		ReferralCode:     "INVITEE1",
+		ReferredByUserID: user.ID,
+		CreatedAt:        now,
+	}
+	if err := srv.store.CreateUser(context.Background(), invitee); err != nil {
+		t.Fatal(err)
+	}
+	_ = srv.store.UpsertBillingSetting(context.Background(), "referral_inviter_bonus_micros", "2000000", now)
+	if err := srv.billingService().FulfillReferralSignup(context.Background(), invitee); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := srv.billingService().FulfillReferralInviterAfterPayment(context.Background(), invitee.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	summaryResp := httptest.NewRecorder()
+	summaryReq := httptest.NewRequest(http.MethodGet, "/api/billing/summary", nil)
+	summaryReq.AddCookie(cookie)
+	srv.handleCustomerBillingSummary(summaryResp, summaryReq)
+	if summaryResp.Code != http.StatusOK {
+		t.Fatalf("summary status %d body %s", summaryResp.Code, summaryResp.Body.String())
+	}
+	var summary struct {
+		BalanceUSD float64 `json:"balance_usd"`
+		CreditsUSD float64 `json:"credits_usd"`
+		UsageUSD   float64 `json:"usage_usd"`
+	}
+	if err := json.Unmarshal(summaryResp.Body.Bytes(), &summary); err != nil {
+		t.Fatal(err)
+	}
+	if summary.BalanceUSD != 5.75 || summary.CreditsUSD != 7 || summary.UsageUSD != 1.25 {
+		t.Fatalf("summary = %+v, want balance=5.75 credits=7 usage=1.25", summary)
+	}
+
+	ledgerResp := httptest.NewRecorder()
+	ledgerReq := httptest.NewRequest(http.MethodGet, "/api/billing/ledger", nil)
+	ledgerReq.AddCookie(cookie)
+	srv.handleCustomerBillingLedger(ledgerResp, ledgerReq)
+	if ledgerResp.Code != http.StatusOK || !strings.Contains(ledgerResp.Body.String(), "usage_debit") {
+		t.Fatalf("ledger status=%d body=%s", ledgerResp.Code, ledgerResp.Body.String())
+	}
+
+	ordersResp := httptest.NewRecorder()
+	ordersReq := httptest.NewRequest(http.MethodGet, "/api/payments/orders", nil)
+	ordersReq.AddCookie(cookie)
+	srv.handleCustomerPaymentOrders(ordersResp, ordersReq)
+	if ordersResp.Code != http.StatusOK || !strings.Contains(ordersResp.Body.String(), "out-data") {
+		t.Fatalf("orders status=%d body=%s", ordersResp.Code, ordersResp.Body.String())
+	}
+
+	usageResp := httptest.NewRecorder()
+	usageReq := httptest.NewRequest(http.MethodGet, "/api/usage?key_id=key-1&model=gpt-5", nil)
+	usageReq.AddCookie(cookie)
+	srv.handleCustomerUsage(usageResp, usageReq)
+	if usageResp.Code != http.StatusOK || !strings.Contains(usageResp.Body.String(), "req-data-1") {
+		t.Fatalf("usage status=%d body=%s", usageResp.Code, usageResp.Body.String())
+	}
+
+	refResp := httptest.NewRecorder()
+	refReq := httptest.NewRequest(http.MethodGet, "/api/referrals", nil)
+	refReq.AddCookie(cookie)
+	srv.handleCustomerReferrals(refResp, refReq)
+	if refResp.Code != http.StatusOK || !strings.Contains(refResp.Body.String(), `"paid_invitees":1`) {
+		t.Fatalf("referrals status=%d body=%s", refResp.Code, refResp.Body.String())
+	}
+}
+
 func customerCookie(t *testing.T, w *httptest.ResponseRecorder) *http.Cookie {
 	t.Helper()
 	for _, cookie := range w.Result().Cookies() {
