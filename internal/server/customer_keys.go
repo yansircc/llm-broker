@@ -31,10 +31,6 @@ func (s *Server) handleCustomerCreateKey(w http.ResponseWriter, r *http.Request)
 	if !ok {
 		return
 	}
-	if cc.User.EmailVerifiedAt == nil {
-		writeAdminError(w, http.StatusForbidden, "email_unverified", "verify email before creating api keys")
-		return
-	}
 	var req struct {
 		Name string `json:"name"`
 	}

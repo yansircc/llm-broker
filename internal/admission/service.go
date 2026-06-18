@@ -26,10 +26,9 @@ type Service struct {
 }
 
 type Request struct {
-	UserID        string
-	APIKeyID      string
-	EmailVerified bool
-	RewardOnly    bool
+	UserID     string
+	APIKeyID   string
+	RewardOnly bool
 }
 
 type Decision struct {
@@ -52,9 +51,6 @@ func NewService(s store.Store, billing BalanceReader) *Service {
 func (s *Service) Admit(ctx context.Context, req Request) (Decision, ReleaseFunc, error) {
 	if req.UserID == "" || req.APIKeyID == "" {
 		return Decision{Reason: "missing_principal"}, nil, fmt.Errorf("missing principal")
-	}
-	if !req.EmailVerified {
-		return Decision{Reason: "email_unverified"}, nil, fmt.Errorf("email not verified")
 	}
 	balance, _, err := s.billing.Balance(ctx, req.UserID)
 	if err != nil {

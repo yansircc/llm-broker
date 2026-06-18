@@ -7,6 +7,7 @@ source "$SCRIPT_DIR/common.sh"
 cd "$REPO_ROOT"
 
 echo "==> repo: $REPO_ROOT"
+echo "==> target: $DEPLOY_TARGET_NAME ($SITE via $REMOTE)"
 
 SNAPSHOT_ID=""
 RESTORING=0

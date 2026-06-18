@@ -26,7 +26,6 @@ type KeyInfo struct {
 	CredentialKind string
 	Name           string
 	Email          string
-	EmailVerified  bool
 	AllowedSurface domain.Surface
 	BoundAccountID string
 	IsAdmin        bool
@@ -117,7 +116,6 @@ func (m *Middleware) validateToken(ctx context.Context, token, source string) (*
 		CredentialKind: "api_key",
 		Name:           user.Name,
 		Email:          user.Email,
-		EmailVerified:  user.EmailVerifiedAt != nil,
 		AllowedSurface: allowedSurface,
 		BoundAccountID: user.BoundAccountID,
 	}, nil

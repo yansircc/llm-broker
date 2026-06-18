@@ -179,7 +179,10 @@ func (s *Server) fulfillPaidOrder(r *http.Request, outTradeNo, zpayTradeNo, paym
 	if err != nil || paidFen != order.AmountCNYFen {
 		return fmt.Errorf("amount mismatch")
 	}
-	_, err = s.billingService().FulfillPaymentOrder(r.Context(), order, zpayTradeNo, paymentType, time.Now().UTC())
+	if _, err := s.billingService().FulfillPaymentOrder(r.Context(), order, zpayTradeNo, paymentType, time.Now().UTC()); err != nil {
+		return err
+	}
+	_, err = s.billingService().FulfillReferralInviterAfterPayment(r.Context(), order.UserID)
 	return err
 }
 

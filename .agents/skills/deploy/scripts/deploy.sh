@@ -2,6 +2,20 @@
 set -Eeuo pipefail
 
 SCRIPT_DIR="$(cd -- "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+if [[ "${1:-}" == "targets" ]]; then
+    targets_dir="${DEPLOY_TARGETS_DIR:-$SCRIPT_DIR/../targets}"
+    if ! compgen -G "$targets_dir/*.env" >/dev/null; then
+        echo "no deploy targets found in $targets_dir"
+        exit 0
+    fi
+    for file in "$targets_dir"/*.env; do
+        [[ -f "$file" ]] || continue
+        printf '%s\n' "$(basename "$file" .env)"
+    done
+    exit 0
+fi
+
 source "$SCRIPT_DIR/common.sh"
 
 if [[ "${1:-}" == "rollback" ]]; then
@@ -34,6 +48,7 @@ esac
 cd "$REPO_ROOT"
 
 echo "==> repo: $REPO_ROOT"
+echo "==> target: $DEPLOY_TARGET_NAME ($SITE via $REMOTE)"
 
 SNAPSHOT_ID=""
 RESTORE_ON_ERROR=0

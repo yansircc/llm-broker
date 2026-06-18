@@ -35,6 +35,7 @@ green_port="${BLUEGREEN_GREEN_PORT:-$((legacy_port + 2))}"
 
 echo "==> repo: $REPO_ROOT"
 echo "==> blue-green bootstrap on $REMOTE"
+echo "==> target: $DEPLOY_TARGET_NAME ($SITE via $REMOTE)"
 echo "    legacy port: $legacy_port"
 echo "    blue port:   $blue_port"
 echo "    green port:  $green_port"

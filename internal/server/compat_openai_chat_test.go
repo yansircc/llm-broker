@@ -124,7 +124,6 @@ func TestHandleCompatOpenAIChatCompletionsCodexLoop(t *testing.T) {
 		CustomerID:     "user-1",
 		APIKeyID:       "key-1",
 		Name:           "test",
-		EmailVerified:  true,
 		AllowedSurface: domain.SurfaceAll,
 	}))
 	w := httptest.NewRecorder()

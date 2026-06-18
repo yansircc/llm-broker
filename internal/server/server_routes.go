@@ -88,8 +88,6 @@ func (s *Server) registerCustomerRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/auth/register", s.handleCustomerRegister)
 	mux.HandleFunc("POST /api/auth/login", s.handleCustomerLogin)
 	mux.HandleFunc("POST /api/auth/logout", s.handleCustomerLogout)
-	mux.HandleFunc("GET /api/auth/verify-email", s.handleVerifyEmail)
-	mux.HandleFunc("POST /api/auth/email-verification/resend", s.handleResendEmailVerification)
 	mux.HandleFunc("GET /api/me", s.handleCustomerMe)
 	mux.HandleFunc("GET /api/keys", s.handleCustomerListKeys)
 	mux.HandleFunc("POST /api/keys", s.handleCustomerCreateKey)

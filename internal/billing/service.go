@@ -245,7 +245,7 @@ func (s *Service) FulfillPaymentOrder(ctx context.Context, order *domain.Payment
 	return entry, nil
 }
 
-func (s *Service) FulfillReferral(ctx context.Context, invitee *domain.User) error {
+func (s *Service) FulfillReferralSignup(ctx context.Context, invitee *domain.User) error {
 	if invitee == nil || invitee.ReferredByUserID == "" {
 		return nil
 	}
@@ -254,24 +254,46 @@ func (s *Service) FulfillReferral(ctx context.Context, invitee *domain.User) err
 		return err
 	}
 	newUserBonus, _ := settingMicros(ctx, s.store, "referral_new_user_bonus_micros")
-	inviterBonus, _ := settingMicros(ctx, s.store, "referral_inviter_bonus_micros")
+	inviter, err := s.store.GetUser(ctx, invitee.ReferredByUserID)
+	if err != nil {
+		return err
+	}
 	now := s.now()
 	ref := &domain.Referral{
 		ID:            uuid.NewString(),
 		InviterUserID: invitee.ReferredByUserID,
 		InviteeUserID: invitee.ID,
-		InviteCode:    invitee.ReferralCode,
+		InviteCode:    referralInviteCode(inviter),
 		CreatedAt:     now,
 		CreditedAt:    now,
 	}
-	var inviteeCredit, inviterCredit *domain.BillingLedgerEntry
+	var inviteeCredit *domain.BillingLedgerEntry
 	if newUserBonus != 0 {
 		inviteeCredit = referralCredit(invitee.ID, newUserBonus, "referral_signup_credit", "referral:new_user:"+invitee.ID, now)
 	}
-	if inviterBonus != 0 {
-		inviterCredit = referralCredit(invitee.ReferredByUserID, inviterBonus, "referral_signup_credit", "referral:inviter:"+invitee.ID, now)
+	return s.store.CreateReferralWithCredits(ctx, ref, inviteeCredit, nil)
+}
+
+func (s *Service) FulfillReferralInviterAfterPayment(ctx context.Context, inviteeUserID string) (*domain.BillingLedgerEntry, error) {
+	if inviteeUserID == "" {
+		return nil, nil
 	}
-	return s.store.CreateReferralWithCredits(ctx, ref, inviteeCredit, inviterCredit)
+	ref, err := s.store.GetReferralByInvitee(ctx, inviteeUserID)
+	if err != nil || ref == nil {
+		return nil, err
+	}
+	inviterBonus, _ := settingMicros(ctx, s.store, "referral_inviter_bonus_micros")
+	if inviterBonus != 0 {
+		return s.Credit(ctx, ref.InviterUserID, "referral_paid_credit", "referral", "referral:inviter:"+inviteeUserID, "referral:inviter:"+inviteeUserID, "referral paid reward", inviterBonus)
+	}
+	return nil, nil
+}
+
+func referralInviteCode(inviter *domain.User) string {
+	if inviter == nil {
+		return ""
+	}
+	return inviter.ReferralCode
 }
 
 func referralCredit(userID string, amount int64, kind, idempotency string, now time.Time) *domain.BillingLedgerEntry {

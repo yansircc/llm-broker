@@ -25,8 +25,9 @@ func (s *captureEmailSender) Send(_ context.Context, msg email.Message) error {
 	return nil
 }
 
-func TestCustomerEmailVerificationGatesKeysAndFulfillsReferral(t *testing.T) {
+func TestCustomerRegistrationCreatesUsableKeyAndFulfillsReferral(t *testing.T) {
 	srv := newTestServer(t)
+	srv.cfg.ZPayKey = "secret"
 	mailer := &captureEmailSender{}
 	srv.emailSender = mailer
 	now := time.Now().UTC()
@@ -54,11 +55,10 @@ func TestCustomerEmailVerificationGatesKeysAndFulfillsReferral(t *testing.T) {
 	if registerResp.Code != http.StatusOK {
 		t.Fatalf("register status %d body %s", registerResp.Code, registerResp.Body.String())
 	}
-	if len(mailer.messages) != 1 {
-		t.Fatalf("verification emails = %d, want 1", len(mailer.messages))
+	if len(mailer.messages) != 0 {
+		t.Fatalf("verification emails = %d, want 0", len(mailer.messages))
 	}
 	sessionCookie := customerCookie(t, registerResp)
-	verifyToken := verificationToken(t, mailer.messages[0])
 
 	invitee, err := srv.store.GetUserByEmail(context.Background(), "invitee@example.com")
 	if err != nil || invitee == nil {
@@ -67,41 +67,15 @@ func TestCustomerEmailVerificationGatesKeysAndFulfillsReferral(t *testing.T) {
 	if invitee.EmailVerifiedAt != nil {
 		t.Fatal("new invitee should start unverified")
 	}
-	assertBalanceMicros(t, srv, invitee.ID, 0)
+	assertBalanceMicros(t, srv, invitee.ID, 1_000_000)
 	assertBalanceMicros(t, srv, inviter.ID, 0)
 
-	createKeyReq := httptest.NewRequest(http.MethodPost, "/api/keys", strings.NewReader(`{"name":"blocked"}`))
+	createKeyReq := httptest.NewRequest(http.MethodPost, "/api/keys", strings.NewReader(`{"name":"default"}`))
 	createKeyReq.AddCookie(sessionCookie)
 	createKeyResp := httptest.NewRecorder()
 	srv.handleCustomerCreateKey(createKeyResp, createKeyReq)
-	if createKeyResp.Code != http.StatusForbidden {
-		t.Fatalf("unverified create key status %d body %s", createKeyResp.Code, createKeyResp.Body.String())
-	}
-
-	verifyReq := httptest.NewRequest(http.MethodGet, "/api/auth/verify-email?token="+url.QueryEscape(verifyToken), nil)
-	verifyResp := httptest.NewRecorder()
-	srv.handleVerifyEmail(verifyResp, verifyReq)
-	if verifyResp.Code != http.StatusFound {
-		t.Fatalf("verify status %d body %s", verifyResp.Code, verifyResp.Body.String())
-	}
-	invitee, _ = srv.store.GetUser(context.Background(), invitee.ID)
-	if invitee.EmailVerifiedAt == nil {
-		t.Fatal("invitee email was not marked verified")
-	}
-	assertBalanceMicros(t, srv, invitee.ID, 1_000_000)
-	assertBalanceMicros(t, srv, inviter.ID, 2_000_000)
-
-	replayResp := httptest.NewRecorder()
-	srv.handleVerifyEmail(replayResp, verifyReq)
-	assertBalanceMicros(t, srv, invitee.ID, 1_000_000)
-	assertBalanceMicros(t, srv, inviter.ID, 2_000_000)
-
-	createKeyReq = httptest.NewRequest(http.MethodPost, "/api/keys", strings.NewReader(`{"name":"default"}`))
-	createKeyReq.AddCookie(sessionCookie)
-	createKeyResp = httptest.NewRecorder()
-	srv.handleCustomerCreateKey(createKeyResp, createKeyReq)
 	if createKeyResp.Code != http.StatusOK {
-		t.Fatalf("verified create key status %d body %s", createKeyResp.Code, createKeyResp.Body.String())
+		t.Fatalf("create key status %d body %s", createKeyResp.Code, createKeyResp.Body.String())
 	}
 	var keyResp struct {
 		Token string `json:"token"`
@@ -110,9 +84,43 @@ func TestCustomerEmailVerificationGatesKeysAndFulfillsReferral(t *testing.T) {
 		t.Fatalf("missing created api token: token=%q err=%v body=%s", keyResp.Token, err, createKeyResp.Body.String())
 	}
 	ki, ok := auth.NewMiddleware("admin-token", srv.store).ValidateToken(context.Background(), keyResp.Token)
-	if !ok || ki.CustomerID != invitee.ID || !ki.EmailVerified || ki.AllowedSurface != domain.SurfaceAll {
-		t.Fatalf("created api key did not authenticate as verified invitee: ok=%v keyInfo=%#v", ok, ki)
+	if !ok || ki.CustomerID != invitee.ID || ki.AllowedSurface != domain.SurfaceAll {
+		t.Fatalf("created api key did not authenticate as unverified invitee: ok=%v keyInfo=%#v", ok, ki)
 	}
+
+	order := &domain.PaymentOrder{
+		ID:                 "invitee-order-1",
+		OutTradeNo:         "invitee-out-1",
+		UserID:             invitee.ID,
+		Gateway:            "zpay",
+		Status:             "pending",
+		ProductName:        "credit",
+		AmountCNYFen:       990,
+		CreditMicros:       9_900_000,
+		ExchangeRateMicros: 1_000_000,
+		PaymentType:        "alipay",
+		CreatedAt:          now,
+		UpdatedAt:          now,
+	}
+	if err := srv.store.SavePaymentOrder(context.Background(), order); err != nil {
+		t.Fatal(err)
+	}
+	notify := signedZPayNotify("secret", map[string]string{
+		"out_trade_no": "invitee-out-1",
+		"trade_no":     "zpay-invitee-1",
+		"trade_status": "TRADE_SUCCESS",
+		"type":         "alipay",
+		"money":        "9.90",
+	})
+	for i := 0; i < 2; i++ {
+		resp := httptest.NewRecorder()
+		srv.handlePaymentNotify(resp, httptest.NewRequest(http.MethodGet, "/api/payments/notify?"+notify.Encode(), nil))
+		if resp.Code != http.StatusOK || strings.TrimSpace(resp.Body.String()) != "success" {
+			t.Fatalf("invitee notify #%d status=%d body=%q", i+1, resp.Code, resp.Body.String())
+		}
+	}
+	assertBalanceMicros(t, srv, invitee.ID, 10_900_000)
+	assertBalanceMicros(t, srv, inviter.ID, 2_000_000)
 }
 
 func TestPaymentNotifyCreditsOnceAndRejectsAmountMismatch(t *testing.T) {

@@ -98,7 +98,6 @@ Admin surface：
 Customer surface：
 
 - 注册/登录/登出
-- 邮箱验证和 resend
 - API key 管理
 - 余额和用量
 - 充值二维码流程
@@ -186,12 +185,10 @@ Columns：
 
 Rules：
 
-- 客户创建 API key 要求 `users.email_verified_at IS NOT NULL`。
-- 注册邀请奖励只在邮箱验证成功后履约。
-- 原始未验证注册不会获得可用 credit。
-- `GET /api/auth/verify-email?token=...` 验证并消费 token，然后跳转到 `/app/dashboard?verified=1`。
-- `POST /api/auth/email-verification/resend` 要求已登录 web session，只允许未验证用户调用，使旧的未消费 token 失效，创建新 token，并重新发送邮件。
-- Resend 要限流：两次发送至少间隔 60 秒，每个用户每天最多 5 次。
+- MVP 不包含邮箱验证流程。
+- 客户创建 API key 和 relay admission 不要求 `users.email_verified_at`。
+- 邀请奖励按触发点拆分：受邀方在注册成功时获得奖励；邀请方必须等受邀方成功付费后才获得奖励。
+- `email_verifications` 可以作为 legacy schema 暂时保留到后续清理，但不能影响注册、API key、admission 或 referral payout。
 - Verification token 存储为 `hex(SHA256(raw_token))`；raw token 只出现在邮件链接里。
 - MVP token 过期时间为 1 小时。
 
@@ -508,17 +505,13 @@ Rules：
 
 - [ ] 增加 migration tests，覆盖新的 `users`、`api_keys`、`web_sessions`、`email_verifications` schema。
 - [ ] 增加 auth tests，证明 API key lookup 使用 deterministic SHA-256 token hashes 返回 `user_id`、`api_key_id`、surface、status。
-- [ ] 增加 customer auth handler tests，覆盖 register、login、logout、session lookup、verify-email、resend。
+- [ ] 增加 customer auth handler tests，覆盖 register、login、logout、session lookup。
 - [ ] 实现客户登录的 bcrypt password hashing。
-- [ ] 实现 `POST /api/auth/register`，创建 user、创建 email verification token、发送验证邮件。
-- [ ] 实现 `GET /api/auth/verify-email?token=...`，消费 token、设置 `users.email_verified_at`、触发 referral fulfillment。
-- [ ] 实现 `POST /api/auth/email-verification/resend`，要求已登录 web session，并执行 resend cooldown/day limit。
-- [ ] 实现 email sender interface，production 用 SMTP/env-backed sender，本地开发用 stdout sender。
-- [ ] 使用 deterministic SHA-256 token hashes 和 expiry 实现 email verification tokens。
+- [ ] 实现 `POST /api/auth/register`，创建 user，并在有有效 invite code 时履约受邀方注册奖励。
 - [ ] 把 relay token hashes 从 `users` 移到 `api_keys`。
 - [ ] 保持 admin `API_TOKEN` 验证不变，用于 operator routes。
 - [ ] 生成 API key 时只返回一次 plaintext，存储 SHA-256 hash 和 prefix。
-- [ ] 在 `email_verified_at` 设置前拒绝创建 API key。
+- [ ] active 登录客户无需邮箱验证即可创建 API key。
 - [ ] Run: `go test ./internal/auth ./internal/server ./internal/store -count=1`
 - [ ] Commit: `git commit -m "feat: split customers and api keys"`
 
@@ -573,7 +566,7 @@ Rules：
 Admission law：
 
 ```text
-allow = email_verified AND balance > min_balance AND under_global_limit AND under_user_limit AND under_key_limit
+allow = balance > min_balance AND under_global_limit AND under_user_limit AND under_key_limit
 ```
 
 ### Task 5: 把 Billing 接入 Relay Admission 和 Settlement
@@ -590,7 +583,7 @@ allow = email_verified AND balance > min_balance AND under_global_limit AND unde
 - Modify: `internal/domain/log.go`
 - Modify: `internal/store/sqlite_logs.go`
 
-- [ ] 增加失败 relay tests，覆盖余额、邮箱验证或容量不满足时的 admission rejection。
+- [ ] 增加失败 relay tests，覆盖余额或容量不满足时的 admission rejection。
 - [ ] 增加失败 relay tests，覆盖余额 `> 0` 且 capacity available 时允许请求，并按真实 usage debit。
 - [ ] 增加失败 relay tests，证明同一个 request id 两次 settlement 只创建一条 ledger debit。
 - [ ] 增加失败 stream tests，证明 final usage 在转发 final completion event 前已持久化。
@@ -655,7 +648,7 @@ payment_order(pending) + valid paid gateway evidence + amount match
   -> billing_ledger(payment_credit, source_id=out_trade_no)
 ```
 
-### Task 7: 增加邮箱验证后的注册邀请奖励
+### Task 7: 增加注册和付费触发的邀请奖励
 
 **Files：**
 
@@ -668,13 +661,14 @@ payment_order(pending) + valid paid gateway evidence + amount match
 - Modify: `internal/store/schema.sql`
 - Modify: `internal/store/sqlite_schema.go`
 
-- [ ] 增加测试，证明使用有效 invite code 且完成邮箱验证后 invitee 和 inviter 都获得 credit。
-- [ ] 增加测试，证明未验证 signup 即使带有效 invite code 也不会产生可用 credits。
+- [ ] 增加测试，证明使用有效 invite code 注册后 invitee 立即获得 credit。
+- [ ] 增加测试，证明 inviter 必须等 invitee 成功付费后才获得 credit。
 - [ ] 增加测试，证明无效 invite code 拒绝注册。
 - [ ] 增加测试，证明重复 signup/retry 不会重复发 referral credits。
 - [ ] 增加 `referrals` table 和 referral settings。
 - [ ] 给每个用户生成稳定 referral code。
-- [ ] 在 email-verification referral fulfillment 的同一个 transaction 中插入两条 referral ledger credits。
+- [ ] 在注册履约路径插入 invitee referral ledger credit。
+- [ ] 在支付履约路径用 invitee-scoped idempotency key 插入 inviter referral ledger credit。
 - [ ] 在 customer `/api/me` 暴露 referral summary。
 - [ ] Run: `go test ./internal/billing ./internal/server ./internal/store -count=1`
 - [ ] Commit: `git commit -m "feat: add referral signup credits"`
@@ -682,11 +676,13 @@ payment_order(pending) + valid paid gateway evidence + amount match
 Referral law：
 
 ```text
-verify_email(user_with_invite_code)
+register(user_with_invite_code)
   -> users.referred_by_user_id = inviter
   -> referrals(inviter, invitee)
   -> ledger += invitee signup bonus
-  -> ledger += inviter signup bonus
+
+paid_order(invitee)
+  -> ledger += inviter paid referral bonus
 ```
 
 ### Task 8: 增加客户门户
@@ -705,13 +701,11 @@ verify_email(user_with_invite_code)
 - Modify: `web/src/lib/admin-types.ts`
 
 - [ ] 构建客户登录和注册表单。
-- [ ] 构建邮箱验证状态和 resend flow。
 - [ ] 构建基于 ledger-derived balance 的余额面板。
 - [ ] 构建充值表单：创建 7pay QR order，并每 3 秒轮询 order status。
 - [ ] 构建 API key list/create/revoke UI。
 - [ ] 构建 usage table，数据来自 request logs 和 ledger debits。
 - [ ] 构建 referral link 和 bonus history。
-- [ ] 邮箱验证完成前隐藏 API key creation。
 - [ ] Admin token login 和 customer login 必须在视觉和路由上分离。
 - [ ] Run: `cd web && npm run build`
 - [ ] Commit: `git commit -m "feat: add customer portal"`
@@ -784,7 +778,7 @@ UI rule：
 - [ ] 增加 reward-only concurrent request rejection 的 smoke script mode。
 - [ ] 增加 checkpointed balance 等于 full ledger recomputation 的 smoke script mode。
 - [ ] 增加 live 7pay payment smoke notes，因为 gateway credentials 依赖环境。
-- [ ] 记录环境变量：`API_TOKEN`、`ENCRYPTION_KEY`、`ZPAY_PID`、`ZPAY_KEY`、`ZPAY_CID`、`SITE_URL`、`SMTP_HOST`、`SMTP_PORT`、`SMTP_USER`、`SMTP_PASSWORD`、`EMAIL_FROM`、email verification settings、session settings。
+- [ ] 记录环境变量：`API_TOKEN`、`ENCRYPTION_KEY`、`ZPAY_PID`、`ZPAY_KEY`、`ZPAY_CID`、`SITE_URL`、可选 SMTP settings、session settings。
 - [ ] 记录 Codex/OpenAI-compatible callers 的 public client setup。
 - [ ] Run: `go test ./...`
 - [ ] Run: `cd web && npm run build`
@@ -824,10 +818,10 @@ UI rule：
 - 保留一个小的 OpenAI-compatible surface，但它只是 projection，不是第二条执行路径。
 - 内部使用 USD-equivalent integer credits。
 - 创建 payment order 时快照 RMB-to-USD-equivalent rate。
-- Admission 包含余额、邮箱验证、容量、反滥用闸门。
+- Admission 包含余额、容量、反滥用闸门。
 - API keys 使用 deterministic SHA-256 hashes；客户密码使用 bcrypt。
 - Balance reads 使用 ledger checkpoints，避免 hot-path 无界 SUM 查询。
 - Stream billing 在 final stream completion 转发前持久化 usage，并通过 startup reconciliation 结算已观察但未结算的 usage。
 - 允许 admitted request 在 postpaid settlement 后把余额扣成负数。
 - MVP 接受配置化 admission limits 内的付费用户并发超花。
-- 邮箱验证完成后给邀请双方发 reward credits。
+- 受邀方注册成功后获得 reward credits；邀请方等受邀方首次成功付费后获得 reward credits。

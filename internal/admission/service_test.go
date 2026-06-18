@@ -10,7 +10,7 @@ import (
 	"github.com/yansircc/llm-broker/internal/store"
 )
 
-func TestAdmissionRequiresVerifiedEmailAndPositiveBalance(t *testing.T) {
+func TestAdmissionRequiresPositiveBalance(t *testing.T) {
 	st := store.NewMockStore()
 	b := billing.NewService(st)
 	svc := NewService(st, b)
@@ -19,14 +19,11 @@ func TestAdmissionRequiresVerifiedEmailAndPositiveBalance(t *testing.T) {
 	_ = st.UpsertAdmissionLimit(ctx, &domain.AdmissionLimit{Scope: "global", MinBalanceMicros: 1, UpdatedAt: now})
 	_ = st.InsertBillingLedgerEntry(ctx, &domain.BillingLedgerEntry{ID: "l1", UserID: "u1", AmountMicros: 1, IdempotencyKey: "credit", MetadataJSON: "{}", CreatedAt: now})
 
-	if _, _, err := svc.Admit(ctx, Request{UserID: "u1", APIKeyID: "k1"}); err == nil {
-		t.Fatal("unverified email admitted")
-	}
-	if _, _, err := svc.Admit(ctx, Request{UserID: "u2", APIKeyID: "k2", EmailVerified: true}); err == nil {
+	if _, _, err := svc.Admit(ctx, Request{UserID: "u2", APIKeyID: "k2"}); err == nil {
 		t.Fatal("zero balance admitted")
 	}
-	if _, release, err := svc.Admit(ctx, Request{UserID: "u1", APIKeyID: "k1", EmailVerified: true}); err != nil {
-		t.Fatalf("verified positive balance rejected: %v", err)
+	if _, release, err := svc.Admit(ctx, Request{UserID: "u1", APIKeyID: "k1"}); err != nil {
+		t.Fatalf("positive balance rejected: %v", err)
 	} else {
 		release()
 	}
@@ -41,12 +38,12 @@ func TestRewardOnlyConcurrencyIsOne(t *testing.T) {
 	_ = st.UpsertAdmissionLimit(ctx, &domain.AdmissionLimit{Scope: "reward_only", MaxConcurrent: 1, MinBalanceMicros: 1, UpdatedAt: now})
 	_ = st.InsertBillingLedgerEntry(ctx, &domain.BillingLedgerEntry{ID: "l1", UserID: "u1", AmountMicros: 10, IdempotencyKey: "credit", MetadataJSON: "{}", CreatedAt: now})
 
-	_, release, err := svc.Admit(ctx, Request{UserID: "u1", APIKeyID: "k1", EmailVerified: true, RewardOnly: true})
+	_, release, err := svc.Admit(ctx, Request{UserID: "u1", APIKeyID: "k1", RewardOnly: true})
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer release()
-	if _, _, err := svc.Admit(ctx, Request{UserID: "u1", APIKeyID: "k1", EmailVerified: true, RewardOnly: true}); err == nil {
+	if _, _, err := svc.Admit(ctx, Request{UserID: "u1", APIKeyID: "k1", RewardOnly: true}); err == nil {
 		t.Fatal("second reward-only concurrent request admitted")
 	}
 }

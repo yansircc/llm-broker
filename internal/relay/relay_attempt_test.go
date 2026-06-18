@@ -1153,7 +1153,7 @@ func TestCommercialRelaySettlesUsageAndDebitsLedger(t *testing.T) {
 	w := httptest.NewRecorder()
 	relaySvc.HandleProviderSurface(domain.ProviderClaude, domain.SurfaceNative).ServeHTTP(
 		w,
-		commercialRelayRequest("req-bill-1", true),
+		commercialRelayRequest("req-bill-1"),
 	)
 	relaySvc.WaitForLogFlush()
 
@@ -1182,7 +1182,7 @@ func TestCommercialRelayRejectsBeforeUpstreamWhenBalanceUnavailable(t *testing.T
 	w := httptest.NewRecorder()
 	relaySvc.HandleProviderSurface(domain.ProviderClaude, domain.SurfaceNative).ServeHTTP(
 		w,
-		commercialRelayRequest("req-bill-reject", true),
+		commercialRelayRequest("req-bill-reject"),
 	)
 
 	if w.Code != http.StatusPaymentRequired {
@@ -1200,7 +1200,7 @@ func TestCommercialRelayMarksSuccessfulResponseWithoutUsage(t *testing.T) {
 	w := httptest.NewRecorder()
 	relaySvc.HandleProviderSurface(domain.ProviderClaude, domain.SurfaceNative).ServeHTTP(
 		w,
-		commercialRelayRequest("req-bill-no-usage", true),
+		commercialRelayRequest("req-bill-no-usage"),
 	)
 	relaySvc.WaitForLogFlush()
 
@@ -1272,7 +1272,7 @@ func newCommercialRelayTest(t *testing.T, driverStub *relayTestDriver) (*store.M
 	return mockStore, relaySvc, &upstreamCalls
 }
 
-func commercialRelayRequest(requestID string, verified bool) *http.Request {
+func commercialRelayRequest(requestID string) *http.Request {
 	req := httptest.NewRequest(http.MethodPost, "/v1/messages", strings.NewReader(`{"model":"gpt-5","messages":[]}`))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("X-Broker-Request-Id", requestID)
@@ -1282,7 +1282,6 @@ func commercialRelayRequest(requestID string, verified bool) *http.Request {
 		APIKeyID:       "key-bill",
 		CredentialKind: "api_key",
 		Name:           "bill",
-		EmailVerified:  verified,
 		AllowedSurface: domain.SurfaceNative,
 	}
 	return req.WithContext(context.WithValue(req.Context(), auth.KeyInfoKey, ki))

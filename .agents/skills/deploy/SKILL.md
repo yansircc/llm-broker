@@ -8,7 +8,7 @@ description: |
 
 ## Deploy broker
 
-Run `scripts/deploy.sh` from the repo root (or any worktree). The script handles the full pipeline:
+Run `.agents/skills/deploy/scripts/deploy.sh` from the repo root (or any worktree). The script handles the full pipeline:
 
 1. Build SvelteKit frontend (`web/` → `internal/ui/dist`)
 2. Cross-compile Go binary for linux/amd64
@@ -18,10 +18,26 @@ Run `scripts/deploy.sh` from the repo root (or any worktree). The script handles
 6. Verify service health — if restart fails, auto-restore the snapshot
 7. Smoke test HTTP endpoints — `/health`, admin API, frontend pages
 
-Before starting any deploy, tell the human the rollback command first so they can recover immediately if the release looks wrong. At minimum print `bash .Codex/skills/deploy/scripts/restore.sh latest`, and after the snapshot is created, surface the exact snapshot-specific rollback command emitted by the script.
+Before starting any deploy, tell the human the rollback command first so they can recover immediately if the release looks wrong. Use the same `DEPLOY_TARGET` for deploy and rollback. At minimum print `DEPLOY_TARGET=<target> bash .agents/skills/deploy/scripts/restore.sh latest`, and after the snapshot is created, surface the exact snapshot-specific rollback command emitted by the script.
+
+List configured targets:
 
 ```bash
-bash .Codex/skills/deploy/scripts/deploy.sh
+bash .agents/skills/deploy/scripts/deploy.sh targets
+```
+
+Deploy to a selected target:
+
+```bash
+DEPLOY_TARGET=cdx bash .agents/skills/deploy/scripts/deploy.sh
+```
+
+Target files live in `.agents/skills/deploy/targets/*.env`. They contain non-secret routing values such as `REMOTE`, `SITE`, `SERVICE`, and `DEPLOY_STRATEGY`. Runtime secrets remain on the server in `/etc/llm-broker.env`.
+
+If target files exist, `DEPLOY_TARGET` is required. This prevents root `.env` from silently sending a deploy to the wrong host. The legacy escape hatch is only for one-off manual use:
+
+```bash
+DEPLOY_ALLOW_LEGACY_ENV=1 REMOTE=user@host SITE=https://host bash .agents/skills/deploy/scripts/deploy.sh
 ```
 
 `deploy.sh` now supports strategy selection:
@@ -35,19 +51,19 @@ bash .Codex/skills/deploy/scripts/deploy.sh
 Bootstrap a host into blue-green mode once:
 
 ```bash
-bash .Codex/skills/deploy/scripts/bluegreen_setup.sh
+DEPLOY_TARGET=cdx bash .agents/skills/deploy/scripts/bluegreen_setup.sh
 ```
 
 If the host is already blue-green enabled, the script refuses to re-run unless forced:
 
 ```bash
-FORCE_BOOTSTRAP=1 bash .Codex/skills/deploy/scripts/bluegreen_setup.sh
+FORCE_BOOTSTRAP=1 DEPLOY_TARGET=cdx bash .agents/skills/deploy/scripts/bluegreen_setup.sh
 ```
 
 After bootstrap, regular deploys can keep using:
 
 ```bash
-bash .Codex/skills/deploy/scripts/deploy.sh
+DEPLOY_TARGET=cdx bash .agents/skills/deploy/scripts/deploy.sh
 ```
 
 ### Rollback
@@ -55,19 +71,19 @@ bash .Codex/skills/deploy/scripts/deploy.sh
 Manually rollback to the most recent snapshot:
 
 ```bash
-bash .Codex/skills/deploy/scripts/restore.sh latest
+DEPLOY_TARGET=cdx bash .agents/skills/deploy/scripts/restore.sh latest
 ```
 
 Or restore a specific snapshot:
 
 ```bash
-bash .Codex/skills/deploy/scripts/restore.sh 20260309T211816Z-deploy
+DEPLOY_TARGET=cdx bash .agents/skills/deploy/scripts/restore.sh 20260309T211816Z-deploy
 ```
 
 `deploy.sh rollback` is also available as a shortcut:
 
 ```bash
-bash .Codex/skills/deploy/scripts/deploy.sh rollback
+DEPLOY_TARGET=cdx bash .agents/skills/deploy/scripts/deploy.sh rollback
 ```
 
 ### Partial deploy
@@ -75,7 +91,7 @@ bash .Codex/skills/deploy/scripts/deploy.sh rollback
 To skip frontend build for a Go-only change:
 
 ```bash
-SKIP_FRONTEND=1 bash .Codex/skills/deploy/scripts/deploy.sh
+SKIP_FRONTEND=1 DEPLOY_TARGET=cdx bash .agents/skills/deploy/scripts/deploy.sh
 ```
 
 ### Failure handling

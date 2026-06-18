@@ -1,0 +1,101 @@
+# Codex SaaS relay environment template
+#
+# This file is a template only. Do not put real secrets in git.
+# Deploy target routing is stored in .agents/skills/deploy/targets/*.env.
+# Runtime env is installed on the server as /etc/llm-broker.env.
+
+###############################################################################
+# Local deploy script env
+###############################################################################
+
+# Select the deploy target explicitly when running deploy/restore scripts.
+# Known targets can be listed with:
+#   bash .agents/skills/deploy/scripts/deploy.sh targets
+DEPLOY_TARGET=cdx
+
+# Optional overrides. Leave blank unless the host layout differs.
+REMOTE_BIN=
+REMOTE_ENV=
+REMOTE_SERVICE=
+REMOTE_DB_PATH=
+SNAPSHOT_ROOT=
+
+###############################################################################
+# Remote service env: /etc/llm-broker.env
+###############################################################################
+
+# Server
+HOST=127.0.0.1
+PORT=3000
+SITE_URL=https://cdx.210k.cc
+
+# Storage
+DB_PATH=/var/lib/llm-broker/llm-broker.db
+LOG_BLOBS=file
+LOG_RETENTION_DAYS=7
+
+# Required secrets
+ENCRYPTION_KEY=
+API_TOKEN=
+
+# Customer sessions
+CUSTOMER_SESSION_TTL=2592000000
+
+# SMTP is currently optional. Email verification is not required for signup,
+# API key creation, or relay admission.
+SMTP_ADDR=
+SMTP_USERNAME=
+SMTP_PASSWORD=
+SMTP_FROM=
+
+# 7pay / ZPay recharge.
+# If ZPAY_PID or ZPAY_KEY is empty, payment creation returns payment_unavailable.
+ZPAY_PID=
+ZPAY_KEY=
+ZPAY_CID=
+
+# Codex upstream
+CODEX_API_URL=https://chatgpt.com/backend-api/codex/responses
+CODEX_REQUEST_TIMEOUT=600000
+
+# Request execution
+REQUEST_TIMEOUT=300000
+REQUEST_MAX_SIZE_MB=60
+MAX_RETRY_ACCOUNTS=2
+MAX_CACHE_CONTROLS=4
+SESSION_BINDING_TTL=86400000
+TOKEN_REFRESH_ADVANCE=60000
+
+# Admission / compat throttles
+COMPAT_MAX_REQUESTS_PER_MINUTE=0
+COMPAT_MAX_CONCURRENT=4
+
+# Provider cooldowns
+ERROR_PAUSE_401=1800000
+ERROR_PAUSE_401_REFRESH=30000
+ERROR_PAUSE_403=600000
+ERROR_PAUSE_429=60000
+ERROR_PAUSE_529=300000
+CELL_ERROR_PAUSE=60000
+
+# Logging / diagnostics
+LOG_LEVEL=info
+TRACE_COMPAT=false
+PROMPT_ENV_HOME=
+
+# Background tasks
+BACKGROUND_JOBS_MODE=all
+BACKGROUND_LEADER_LOCK_PATH=/var/run/llm-broker/background.lock
+
+###############################################################################
+# Current non-env business settings
+###############################################################################
+#
+# These are stored in SQLite billing_settings/model_prices/admission_limits,
+# not read from process env at startup:
+#
+# cny_to_usd_rate_micros
+# referral_new_user_bonus_micros
+# referral_inviter_bonus_micros
+# model input/output/cache prices
+# admission limits

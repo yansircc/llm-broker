@@ -13,8 +13,6 @@ import (
 	"github.com/google/uuid"
 	"github.com/yansircc/llm-broker/internal/billing"
 	"github.com/yansircc/llm-broker/internal/domain"
-	"github.com/yansircc/llm-broker/internal/email"
-	"github.com/yansircc/llm-broker/internal/store"
 	"golang.org/x/crypto/bcrypt"
 )
 
@@ -81,11 +79,11 @@ func (s *Server) handleCustomerRegister(w http.ResponseWriter, r *http.Request) 
 		writeAdminError(w, http.StatusInternalServerError, "internal_error", "failed to create session")
 		return
 	}
-	if err := s.sendEmailVerification(r, user); err != nil {
-		writeAdminError(w, http.StatusInternalServerError, "internal_error", "failed to send verification email")
+	if err := s.billingService().FulfillReferralSignup(r.Context(), user); err != nil {
+		writeAdminError(w, http.StatusInternalServerError, "internal_error", "failed to fulfill referral")
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"user": customerUserView(user), "verification_sent": true})
+	writeJSON(w, http.StatusOK, map[string]any{"user": customerUserView(user)})
 }
 
 func (s *Server) handleCustomerLogin(w http.ResponseWriter, r *http.Request) {
@@ -128,70 +126,6 @@ func (s *Server) handleCustomerMe(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"user": customerUserView(cc.User)})
-}
-
-func (s *Server) handleVerifyEmail(w http.ResponseWriter, r *http.Request) {
-	raw := r.URL.Query().Get("token")
-	if raw == "" {
-		http.Redirect(w, r, "/app/login?verified=0", http.StatusFound)
-		return
-	}
-	ev, err := s.store.GetEmailVerificationByTokenHash(r.Context(), sha256Hex(raw))
-	if err != nil || ev == nil || ev.ConsumedAt != nil || !ev.ExpiresAt.After(time.Now()) {
-		http.Redirect(w, r, "/app/login?verified=0", http.StatusFound)
-		return
-	}
-	now := time.Now().UTC()
-	if err := s.store.MarkUserEmailVerified(r.Context(), ev.UserID, now); err != nil {
-		http.Redirect(w, r, "/app/login?verified=0", http.StatusFound)
-		return
-	}
-	_ = s.store.ConsumeEmailVerification(r.Context(), ev.ID, now)
-	user, _ := s.store.GetUser(r.Context(), ev.UserID)
-	if user != nil {
-		user.EmailVerifiedAt = &now
-		_ = s.billingService().FulfillReferral(r.Context(), user)
-	}
-	http.Redirect(w, r, "/app/dashboard?verified=1", http.StatusFound)
-}
-
-func (s *Server) handleResendEmailVerification(w http.ResponseWriter, r *http.Request) {
-	cc, ok := s.requireCustomer(w, r)
-	if !ok {
-		return
-	}
-	if cc.User.EmailVerifiedAt != nil {
-		writeJSON(w, http.StatusOK, map[string]any{"verification_sent": false, "already_verified": true})
-		return
-	}
-	now := time.Now().UTC()
-	last, err := s.store.LastEmailVerification(r.Context(), cc.User.ID, "signup")
-	if err != nil {
-		writeAdminError(w, http.StatusInternalServerError, "internal_error", "failed to inspect verification state")
-		return
-	}
-	if last != nil && now.Sub(last.CreatedAt) < time.Minute {
-		writeAdminError(w, http.StatusTooManyRequests, "rate_limit", "resend cooldown")
-		return
-	}
-	count, err := s.store.CountEmailVerificationsSince(r.Context(), cc.User.ID, "signup", now.Add(-24*time.Hour))
-	if err != nil {
-		writeAdminError(w, http.StatusInternalServerError, "internal_error", "failed to inspect verification state")
-		return
-	}
-	if count >= 5 {
-		writeAdminError(w, http.StatusTooManyRequests, "rate_limit", "daily resend limit reached")
-		return
-	}
-	if err := s.store.DeletePendingEmailVerifications(r.Context(), cc.User.ID, "signup"); err != nil {
-		writeAdminError(w, http.StatusInternalServerError, "internal_error", "failed to reset verification")
-		return
-	}
-	if err := s.sendEmailVerification(r, cc.User); err != nil {
-		writeAdminError(w, http.StatusInternalServerError, "internal_error", "failed to send verification email")
-		return
-	}
-	writeJSON(w, http.StatusOK, map[string]bool{"verification_sent": true})
 }
 
 func (s *Server) createCustomerSession(w http.ResponseWriter, r *http.Request, user *domain.User) (*domain.WebSession, error) {
@@ -246,27 +180,6 @@ func (s *Server) requireCustomer(w http.ResponseWriter, r *http.Request) (*custo
 	return &customerContext{User: user, Session: session}, true
 }
 
-func (s *Server) sendEmailVerification(r *http.Request, user *domain.User) error {
-	raw, err := randomToken("verify")
-	if err != nil {
-		return err
-	}
-	now := time.Now().UTC()
-	ev := &domain.EmailVerification{
-		ID:        uuid.NewString(),
-		UserID:    user.ID,
-		Email:     user.Email,
-		TokenHash: sha256Hex(raw),
-		Purpose:   "signup",
-		CreatedAt: now,
-		ExpiresAt: now.Add(time.Hour),
-	}
-	if err := s.store.CreateEmailVerification(r.Context(), ev); err != nil {
-		return err
-	}
-	return s.emailSenderOrDefault().Send(r.Context(), email.VerificationMessage(user.Email, s.publicURL(r, "/api/auth/verify-email?token="+raw)))
-}
-
 func (s *Server) publicURL(r *http.Request, path string) string {
 	if s.cfg != nil && s.cfg.SiteURL != "" {
 		return strings.TrimRight(s.cfg.SiteURL, "/") + path
@@ -286,13 +199,6 @@ func (s *Server) secureCookie(r *http.Request) bool {
 		return true
 	}
 	return s != nil && s.cfg != nil && strings.HasPrefix(strings.ToLower(strings.TrimSpace(s.cfg.SiteURL)), "https://")
-}
-
-func (s *Server) emailSenderOrDefault() email.Sender {
-	if s.emailSender != nil {
-		return s.emailSender
-	}
-	return email.StdoutSender{}
 }
 
 func (s *Server) billingService() *billing.Service {
@@ -326,5 +232,3 @@ func customerUserView(user *domain.User) map[string]any {
 		"created_at":        user.CreatedAt,
 	}
 }
-
-var _ = store.ErrNotFound

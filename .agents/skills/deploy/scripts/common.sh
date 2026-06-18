@@ -4,13 +4,73 @@ set -euo pipefail
 SCRIPT_DIR="$(cd -- "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(git -C "$SCRIPT_DIR" rev-parse --show-toplevel)"
 
-# Load .env from repo root (gitignored, holds REMOTE/SITE)
+REQUESTED_DEPLOY_TARGET="${DEPLOY_TARGET:-}"
+REQUESTED_DEPLOY_TARGETS_DIR="${DEPLOY_TARGETS_DIR:-}"
+REQUESTED_REMOTE="${REMOTE:-}"
+REQUESTED_SITE="${SITE:-}"
+REQUESTED_SERVICE="${SERVICE:-}"
+REQUESTED_DEPLOY_STRATEGY="${DEPLOY_STRATEGY:-}"
+REQUESTED_DEPLOY_ALLOW_LEGACY_ENV="${DEPLOY_ALLOW_LEGACY_ENV:-}"
+
+# Load .env from repo root for legacy local defaults and non-target toggles.
 if [[ -f "$REPO_ROOT/.env" ]]; then
     set -a; source "$REPO_ROOT/.env"; set +a
 fi
 
-REMOTE="${REMOTE:?Set REMOTE in .env or environment (e.g. user@host)}"
-SITE="${SITE:?Set SITE in .env or environment (e.g. https://example.com)}"
+DEPLOY_TARGETS_DIR="${REQUESTED_DEPLOY_TARGETS_DIR:-${DEPLOY_TARGETS_DIR:-$SCRIPT_DIR/../targets}}"
+DEPLOY_TARGET="$REQUESTED_DEPLOY_TARGET"
+
+deploy_target_file() {
+    local target="$1"
+    if [[ ! "$target" =~ ^[A-Za-z0-9._-]+$ ]]; then
+        echo "invalid DEPLOY_TARGET: $target" >&2
+        return 1
+    fi
+    printf '%s/%s.env\n' "$DEPLOY_TARGETS_DIR" "$target"
+}
+
+deploy_targets_available() {
+    compgen -G "$DEPLOY_TARGETS_DIR/*.env" >/dev/null
+}
+
+print_deploy_targets() {
+    if ! deploy_targets_available; then
+        echo "    (none found in $DEPLOY_TARGETS_DIR)" >&2
+        return
+    fi
+    local file
+    for file in "$DEPLOY_TARGETS_DIR"/*.env; do
+        [[ -f "$file" ]] || continue
+        printf '    %s\n' "$(basename "$file" .env)" >&2
+    done
+}
+
+if [[ -n "$DEPLOY_TARGET" ]]; then
+    target_file="$(deploy_target_file "$DEPLOY_TARGET")"
+    if [[ ! -f "$target_file" ]]; then
+        echo "unknown DEPLOY_TARGET: $DEPLOY_TARGET" >&2
+        echo "available targets:" >&2
+        print_deploy_targets
+        exit 1
+    fi
+    set -a; source "$target_file"; set +a
+elif deploy_targets_available && [[ "$REQUESTED_DEPLOY_ALLOW_LEGACY_ENV" != "1" ]]; then
+    echo "DEPLOY_TARGET is required when deploy targets exist." >&2
+    echo "available targets:" >&2
+    print_deploy_targets
+    echo "example: DEPLOY_TARGET=cdx bash .agents/skills/deploy/scripts/deploy.sh" >&2
+    echo "legacy escape hatch: DEPLOY_ALLOW_LEGACY_ENV=1 REMOTE=user@host SITE=https://host bash .agents/skills/deploy/scripts/deploy.sh" >&2
+    exit 1
+else
+    REMOTE="${REQUESTED_REMOTE:-${REMOTE:-}}"
+    SITE="${REQUESTED_SITE:-${SITE:-}}"
+    SERVICE="${REQUESTED_SERVICE:-${SERVICE:-}}"
+    DEPLOY_STRATEGY="${REQUESTED_DEPLOY_STRATEGY:-${DEPLOY_STRATEGY:-}}"
+fi
+
+REMOTE="${REMOTE:?Set DEPLOY_TARGET or REMOTE (e.g. user@host)}"
+SITE="${SITE:?Set DEPLOY_TARGET or SITE (e.g. https://example.com)}"
+DEPLOY_TARGET_NAME="${DEPLOY_TARGET:-legacy-env}"
 
 detect_service() {
     if [[ -n "${SERVICE:-}" ]]; then

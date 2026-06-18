@@ -186,12 +186,10 @@ Columns:
 
 Rules:
 
-- Customer API key creation requires `users.email_verified_at IS NOT NULL`.
-- Signup referral credits are fulfilled only after email verification succeeds.
-- A raw unverified registration never receives usable credit.
-- `GET /api/auth/verify-email?token=...` verifies and consumes a token, then redirects to `/app/dashboard?verified=1`.
-- `POST /api/auth/email-verification/resend` requires a logged-in web session, only works for unverified users, invalidates old unconsumed tokens, creates a new token, and sends a new email.
-- Resend is rate-limited: at least 60 seconds between sends and at most 5 sends per user per day.
+- Email verification is not part of the MVP product flow.
+- Customer API key creation and relay admission do not require `users.email_verified_at`.
+- Signup referral credits are split by trigger: invitee credit is fulfilled at registration; inviter credit is fulfilled only after the invitee has a successful paid order.
+- `email_verifications` can remain as legacy schema until a later cleanup, but it must not gate registration, API keys, admission, or referral payout.
 - Verification tokens are stored as `hex(SHA256(raw_token))`; raw tokens only appear in email links.
 - MVP token expiry is 1 hour.
 
@@ -508,17 +506,13 @@ Provider driver files can remain temporarily if tests still need compile scaffol
 
 - [ ] Add migration tests for new `users`, `api_keys`, `web_sessions`, and `email_verifications` schema.
 - [ ] Add auth tests proving API key lookup returns `user_id`, `api_key_id`, surface, and status using deterministic SHA-256 token hashes.
-- [ ] Add customer auth handler tests for register, login, logout, session lookup, verify-email, and resend.
+- [ ] Add customer auth handler tests for register, login, logout, and session lookup.
 - [ ] Implement bcrypt password hashing for customer login.
-- [ ] Implement `POST /api/auth/register`, creating the user, creating an email verification token, and sending the verification email.
-- [ ] Implement `GET /api/auth/verify-email?token=...`, consuming the token, setting `users.email_verified_at`, and triggering referral fulfillment.
-- [ ] Implement `POST /api/auth/email-verification/resend`, requiring a logged-in web session and enforcing the resend cooldown/day limit.
-- [ ] Implement email sender interface with SMTP/env-backed production sender and local dev stdout sender.
-- [ ] Implement email verification tokens using deterministic SHA-256 token hashes and expiry.
+- [ ] Implement `POST /api/auth/register`, creating the user and fulfilling invitee-side referral signup credit when an invite code is present.
 - [ ] Move relay token hashes from `users` into `api_keys`.
 - [ ] Keep admin `API_TOKEN` validation unchanged for operator routes.
 - [ ] Generate API keys as one-time plaintext values with SHA-256 hash and prefix stored.
-- [ ] Reject API key creation until `email_verified_at` is set.
+- [ ] Allow API key creation for active logged-in customers without email verification.
 - [ ] Run `go test ./internal/auth ./internal/server ./internal/store -count=1`.
 - [ ] Commit: `git commit -m "feat: split customers and api keys"`
 
@@ -573,7 +567,7 @@ Provider driver files can remain temporarily if tests still need compile scaffol
 Admission law:
 
 ```text
-allow = email_verified AND balance > min_balance AND under_global_limit AND under_user_limit AND under_key_limit
+allow = balance > min_balance AND under_global_limit AND under_user_limit AND under_key_limit
 ```
 
 ### Task 5: Wire Billing into Relay Admission and Settlement
@@ -590,7 +584,7 @@ allow = email_verified AND balance > min_balance AND under_global_limit AND unde
 - Modify: `internal/domain/log.go`
 - Modify: `internal/store/sqlite_logs.go`
 
-- [ ] Add failing relay tests for admission rejection when balance, email verification, or capacity fails.
+- [ ] Add failing relay tests for admission rejection when balance or capacity fails.
 - [ ] Add failing relay tests for balance `> 0` and capacity available allowing a request and debiting actual usage.
 - [ ] Add failing relay tests proving two settlements for the same request id create one ledger debit.
 - [ ] Add failing stream tests proving final usage is persisted before forwarding the final completion event.
@@ -668,13 +662,14 @@ payment_order(pending) + valid paid gateway evidence + amount match
 - Modify: `internal/store/schema.sql`
 - Modify: `internal/store/sqlite_schema.go`
 
-- [ ] Add tests proving verified signup with a valid invite code credits both invitee and inviter.
-- [ ] Add tests proving unverified signup with a valid invite code creates no usable credits.
+- [ ] Add tests proving registration with a valid invite code credits the invitee immediately.
+- [ ] Add tests proving the inviter is credited only after the invitee has a successful paid order.
 - [ ] Add tests proving invalid invite code rejects registration.
 - [ ] Add tests proving duplicate signup/retry cannot duplicate referral credits.
 - [ ] Add `referrals` table and referral settings.
 - [ ] Generate stable referral codes for every user.
-- [ ] Insert two referral ledger credits in the same transaction as email-verification referral fulfillment.
+- [ ] Insert invitee referral credit in the registration fulfillment path.
+- [ ] Insert inviter referral credit from the payment fulfillment path using an invitee-scoped idempotency key.
 - [ ] Expose referral summary in customer `/api/me`.
 - [ ] Run `go test ./internal/billing ./internal/server ./internal/store -count=1`.
 - [ ] Commit: `git commit -m "feat: add referral signup credits"`
@@ -682,11 +677,13 @@ payment_order(pending) + valid paid gateway evidence + amount match
 Referral law:
 
 ```text
-verify_email(user_with_invite_code)
+register(user_with_invite_code)
   -> users.referred_by_user_id = inviter
   -> referrals(inviter, invitee)
   -> ledger += invitee signup bonus
-  -> ledger += inviter signup bonus
+
+paid_order(invitee)
+  -> ledger += inviter paid referral bonus
 ```
 
 ### Task 8: Add Customer Portal
@@ -705,13 +702,11 @@ verify_email(user_with_invite_code)
 - Modify: `web/src/lib/admin-types.ts`
 
 - [ ] Build customer login and registration forms.
-- [ ] Build email verification state and resend flow.
 - [ ] Build balance panel using ledger-derived balance.
 - [ ] Build recharge form that creates a 7pay QR order and polls order status every 3 seconds.
 - [ ] Build API key list/create/revoke UI.
 - [ ] Build usage table from request logs and ledger debits.
 - [ ] Build referral link and bonus history.
-- [ ] Hide API key creation until email verification is complete.
 - [ ] Keep admin token login visually and route-wise separate from customer login.
 - [ ] Run `cd web && npm run build`.
 - [ ] Commit: `git commit -m "feat: add customer portal"`
@@ -784,7 +779,7 @@ Boundary:
 - [ ] Add smoke script mode for reward-only concurrent request rejection.
 - [ ] Add smoke script mode proving checkpointed balance equals full ledger recomputation.
 - [ ] Add payment smoke notes for live 7pay because gateway credentials are environment-specific.
-- [ ] Document environment variables: `API_TOKEN`, `ENCRYPTION_KEY`, `ZPAY_PID`, `ZPAY_KEY`, `ZPAY_CID`, `SITE_URL`, `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASSWORD`, `EMAIL_FROM`, email verification settings, session settings.
+- [ ] Document environment variables: `API_TOKEN`, `ENCRYPTION_KEY`, `ZPAY_PID`, `ZPAY_KEY`, `ZPAY_CID`, `SITE_URL`, optional SMTP settings, and session settings.
 - [ ] Document public client setup for Codex/OpenAI-compatible callers.
 - [ ] Run `go test ./...`.
 - [ ] Run `cd web && npm run build`.
@@ -824,10 +819,10 @@ Required before merging this branch:
 - Keep a small OpenAI-compatible surface as a projection, not a second execution path.
 - Use USD-equivalent integer credits internally.
 - Snapshot RMB-to-USD-equivalent rate at payment order creation.
-- Admission includes balance, email verification, capacity, and abuse gates.
+- Admission includes balance, capacity, and abuse gates.
 - API keys use deterministic SHA-256 hashes; customer passwords use bcrypt.
 - Balance reads use ledger checkpoints to avoid unbounded hot-path SUM queries.
 - Stream billing persists usage before final stream completion is forwarded, and startup reconciliation settles observed-but-unsettled usage.
 - Allow postpaid settlement to push balance negative after an admitted request.
 - Accept paid-user concurrent overrun within configured admission limits for MVP.
-- Credit referral rewards after email-verified signup for both users.
+- Credit invitee referral rewards at signup; credit inviter referral rewards after the invitee's first successful paid order.
