@@ -59,6 +59,7 @@ func (d *CodexDriver) Interpret(statusCode int, headers http.Header, body []byte
 	upstreamErrorType, upstreamErrorMessage := parseCodexErrorInfo(body)
 	switch statusCode {
 	case http.StatusOK:
+		d.noteGoodModel(model)
 		state := d.captureHeaders(headers, prevState)
 		return Effect{Kind: EffectSuccess, Scope: EffectScopeBucket, UpdatedState: state}
 
@@ -121,6 +122,19 @@ func (d *CodexDriver) Interpret(statusCode int, headers http.Header, body []byte
 			Scope:                EffectScopeBucket,
 			CooldownUntil:        time.Now().Add(d.cfg.Pauses.Pause401Refresh),
 			UpstreamStatus:       401,
+			UpstreamErrorType:    upstreamErrorType,
+			UpstreamErrorMessage: upstreamErrorMessage,
+		}
+
+	case http.StatusBadRequest:
+		// A 400 is a request-level rejection (e.g. an unsupported model), not the
+		// credential's fault. Surface it as an observable reject without applying
+		// any cooldown or state change — and never let it fall through to the
+		// success default, which once masked dead-model probe failures.
+		return Effect{
+			Kind:                 EffectReject,
+			Scope:                EffectScopeBucket,
+			UpstreamStatus:       http.StatusBadRequest,
 			UpstreamErrorType:    upstreamErrorType,
 			UpstreamErrorMessage: upstreamErrorMessage,
 		}

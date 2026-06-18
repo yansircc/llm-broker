@@ -19,15 +19,12 @@ func (d *CodexDriver) Probe(ctx context.Context, acct *domain.Account, token str
 		return ProbeResult{}, fmt.Errorf("codex account missing subject")
 	}
 
-	// Probe with the catalog's primary model so this follows model-generation
-	// changes automatically. A hardcoded model silently 400s once the provider
-	// drops it ("model is not supported"), which starves the rate-limit refresh
-	// loop and leaves accounts stuck on stale utilization.
-	probeModel := "gpt-5.5"
-	if models := d.Models(); len(models) > 0 {
-		probeModel = models[0].ID
-	}
-	body := fmt.Sprintf(`{"model":%q,"instructions":"Reply with OK only.","input":[{"role":"user","content":"test"}],"stream":true,"store":false}`, probeModel)
+	// Probe with the live observed model (or the catalog's primary as fallback)
+	// so this follows model-generation changes automatically. A hardcoded model
+	// silently 400s once the provider drops it ("model is not supported"), which
+	// starves the rate-limit refresh loop and leaves accounts stuck on stale
+	// utilization.
+	body := fmt.Sprintf(`{"model":%q,"instructions":"Reply with OK only.","input":[{"role":"user","content":"test"}],"stream":true,"store":false}`, d.probeModel())
 	req, err := http.NewRequestWithContext(ctx, "POST", d.cfg.APIURL, strings.NewReader(body))
 	if err != nil {
 		return ProbeResult{}, err
