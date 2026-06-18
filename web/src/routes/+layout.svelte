@@ -9,17 +9,17 @@
 	}
 
 	const consoleNavGroups = [
-		{ label: 'Overview', items: [{ href: '/console/dashboard', label: 'Dashboard' }] },
+		{ label: '总览', items: [{ href: '/console/dashboard', label: '控制台' }] },
 		{
-			label: 'Accounts',
+			label: '账号池',
 			items: [
-				{ href: '/console/accounts', label: 'Account Pool' },
-				{ href: '/console/migrations', label: 'Migration' }
+				{ href: '/console/accounts', label: '上游账号' },
+				{ href: '/console/migrations', label: '迁移工具' }
 			]
 		},
-		{ label: 'Customers', items: [{ href: '/console/users', label: 'Users' }] },
-		{ label: 'Billing', items: [{ href: '/console/billing', label: 'Billing' }] },
-		{ label: 'Activity', items: [{ href: '/console/activity', label: 'Events' }] }
+		{ label: '客户', items: [{ href: '/console/users', label: '用户与密钥' }] },
+		{ label: '计费', items: [{ href: '/console/billing', label: '充值计费' }] },
+		{ label: '观测', items: [{ href: '/console/activity', label: '运行事件' }] }
 	];
 	const publicNavItems = [
 		{ href: '/pricing', label: '定价' },
@@ -68,16 +68,16 @@
 		<header class="top-glass">
 			<div class="nav-inner">
 				<Logo href={`${base}/console/dashboard`} label="CDX Console" />
-				<nav class="nav-links" aria-label="Admin navigation">
-					<a href="{base}/console/dashboard" class:active={activeNav('/console/dashboard')}>control</a>
-					<a href="{base}/app/dashboard">customer app</a>
-					<a href="{base}/">site</a>
+				<nav class="nav-links" aria-label="管理后台导航">
+					<a href="{base}/console/dashboard" class:active={activeNav('/console/dashboard')}>管理后台</a>
+					<a href="{base}/app/dashboard">用户端</a>
+					<a href="{base}/">官网</a>
 				</nav>
 			</div>
 		</header>
 		<main class="admin-grid">
 			<aside class="admin-side">
-				<nav class="admin-menu" aria-label="Console navigation">
+				<nav class="admin-menu" aria-label="控制台导航">
 					{#each consoleNavGroups as group (group.label)}
 						<div class="admin-menu-group">
 							<div class="admin-menu-label">{group.label}</div>

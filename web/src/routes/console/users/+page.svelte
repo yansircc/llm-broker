@@ -5,6 +5,7 @@
 	import MetricCard from '$lib/components/MetricCard.svelte';
 	import StatusBadge from '$lib/components/StatusBadge.svelte';
 	import { fmtCost, timeAgo } from '$lib/format';
+	import { egressLabel, providerLabel, roleLabel, surfaceLabel } from '$lib/admin-i18n';
 
 	let users = $state<UserSummary[]>([]);
 	let accounts = $state<AccountListItem[]>([]);
@@ -77,13 +78,13 @@
 	}
 
 	function accountLabel(account: AccountListItem): string {
-		const parts = [account.email, account.provider];
+		const parts = [account.email, providerLabel(account.provider)];
 		if (account.cell?.name) {
 			parts.push(account.cell.name);
 		} else if (account.cell_id) {
 			parts.push(account.cell_id);
 		} else {
-			parts.push('legacy direct');
+			parts.push(egressLabel(account.cell_id));
 		}
 		return parts.join(' / ');
 	}
@@ -97,7 +98,7 @@
 	async function createUser() {
 		const name = newUserName.trim();
 		if (!name) {
-			addUserError = 'username required';
+			addUserError = '请填写用户名';
 			return;
 		}
 		creatingUser = true;
@@ -177,56 +178,64 @@ curl -fsS "$BASE_URL/v1/models" \\
 {:else}
 	<div class="page-header">
 		<div>
-			<div class="eyebrow">legacy keys</div>
-			<h1>Users</h1>
-			<p class="lede">Operational API users, surface permissions, bound accounts, and historical relay cost.</p>
+			<div class="eyebrow">用户与密钥</div>
+			<h1>用户</h1>
+			<p class="lede">管理 API 用户、角色、接口面权限、绑定账号和历史转发成本。</p>
 		</div>
 		<div class="page-actions">
 			{#if !showAddUser && !createdUser}
-				<button class="primary-btn" onclick={() => { showAddUser = true; }}>Add user</button>
+				<button class="primary-btn" onclick={() => { showAddUser = true; }}>新增用户</button>
 			{/if}
-			<button class="link" onclick={loadAll}>refresh</button>
+			<button class="link" onclick={loadAll}>刷新</button>
 			<span class="muted mono">{lastRefresh}</span>
 		</div>
 	</div>
 
 	<div class="metric-grid">
-		<MetricCard label="users" value={users.length} sub={`${users.filter((user) => user.status === 'active').length} active`} />
-		<MetricCard label="admins" value={users.filter((user) => user.role === 'admin').length} sub="ADMIN_EMAILS matches" />
-		<MetricCard label="native" value={users.filter((user) => user.allowed_surface === 'native').length} sub="native-only users" />
-		<MetricCard label="all surfaces" value={users.filter((user) => user.allowed_surface === 'all').length} sub="unrestricted surface" />
+		<MetricCard label="用户" value={users.length} sub={`${users.filter((user) => user.status === 'active').length} 个正常`} />
+		<MetricCard label="管理员" value={users.filter((user) => user.role === 'admin').length} sub="ADMIN_EMAILS 命中" />
+		<MetricCard label="Responses" value={users.filter((user) => user.allowed_surface === 'native').length} sub="仅 Responses 用户" />
+		<MetricCard label="全部接口面" value={users.filter((user) => user.allowed_surface === 'all').length} sub="不限接口面" />
 	</div>
 
 	{#if showAddUser}
 		<section class="panel form-panel">
 			<div class="section-header flush">
-				<h2>Create User</h2>
+				<h2>创建用户</h2>
 			</div>
-			<div class="form-row wide">
-				<label for="new-user-name">name</label>
-			<input
-				id="new-user-name"
-				type="text"
-				placeholder="username"
-				bind:value={newUserName}
-				onkeydown={(e: KeyboardEvent) => { if (e.key === 'Enter') createUser(); if (e.key === 'Escape') cancelAddUser(); }}
-				disabled={creatingUser}
-			/>
-			<select bind:value={newAllowedSurface} disabled={creatingUser}>
-				<option value="native">native</option>
-				<option value="compat">compat</option>
-				<option value="all">all</option>
-			</select>
-			<select bind:value={newBoundAccountID} disabled={creatingUser}>
-				<option value="">[no bound account]</option>
-				{#each accounts as account (account.id)}
-					<option value={account.id}>{accountLabel(account)}</option>
-				{/each}
-			</select>
-			<div class="page-actions">
-				<button class="primary-btn" onclick={createUser} disabled={creatingUser}>create</button>
-				<button class="link" onclick={cancelAddUser} disabled={creatingUser}>cancel</button>
-			</div>
+			<div class="form-row add-user-grid">
+				<div>
+					<label for="new-user-name">名称</label>
+					<input
+						id="new-user-name"
+						type="text"
+						placeholder="用户名"
+						bind:value={newUserName}
+						onkeydown={(e: KeyboardEvent) => { if (e.key === 'Enter') createUser(); if (e.key === 'Escape') cancelAddUser(); }}
+						disabled={creatingUser}
+					/>
+				</div>
+				<div>
+					<label for="new-user-surface">接口面</label>
+					<select id="new-user-surface" bind:value={newAllowedSurface} disabled={creatingUser}>
+						<option value="native">Responses</option>
+						<option value="compat">兼容层</option>
+						<option value="all">全部</option>
+					</select>
+				</div>
+				<div>
+					<label for="new-user-account">绑定账号</label>
+					<select id="new-user-account" bind:value={newBoundAccountID} disabled={creatingUser}>
+						<option value="">不绑定账号</option>
+						{#each accounts as account (account.id)}
+							<option value={account.id}>{accountLabel(account)}</option>
+						{/each}
+					</select>
+				</div>
+				<div class="page-actions form-actions">
+					<button class="primary-btn" onclick={createUser} disabled={creatingUser}>{creatingUser ? '创建中...' : '创建'}</button>
+					<button class="link" onclick={cancelAddUser} disabled={creatingUser}>取消</button>
+				</div>
 			</div>
 			{#if addUserError}<p class="error-msg">{addUserError}</p>{/if}
 		</section>
@@ -236,12 +245,12 @@ curl -fsS "$BASE_URL/v1/models" \\
 		<section class="panel">
 			<div class="section-header flush">
 				<div>
-					<h2>Created User</h2>
-					<p class="hint">{createdUser.name} token is shown once.</p>
+					<h2>用户已创建</h2>
+					<p class="hint">{createdUser.name} 的 token 只显示一次。</p>
 				</div>
 				<div class="page-actions">
-					<button class="link" onclick={copyCmd}>{copied ? 'copied' : 'copy command'}</button>
-					<button class="link" onclick={() => { createdUser = null; copied = false; }}>dismiss</button>
+					<button class="link" onclick={copyCmd}>{copied ? '已复制' : '复制测试命令'}</button>
+					<button class="link" onclick={() => { createdUser = null; copied = false; }}>关闭</button>
 				</div>
 			</div>
 			<div class="copy-value mono">{createdUser.token}</div>
@@ -252,28 +261,28 @@ curl -fsS "$BASE_URL/v1/models" \\
 	{/if}
 
 	{#if users.length === 0}
-		<p class="muted">no users</p>
+		<p class="muted">暂无用户</p>
 	{:else}
 		<div class="table-wrap">
 			<table>
 				<thead>
 					<tr>
-						<th>name</th>
-						<th>role</th>
-						<th>status</th>
-						<th>surface</th>
-						<th>bound</th>
-						<th>last active</th>
-						<th class="num">total cost</th>
+						<th>名称</th>
+						<th>角色</th>
+						<th>状态</th>
+						<th>接口面</th>
+						<th>绑定账号</th>
+						<th>最近活跃</th>
+						<th class="num">总成本</th>
 					</tr>
 				</thead>
 				<tbody>
 					{#each users as user (user.id)}
 						<tr>
 							<td><a href="{base}/console/users/{user.id}">{user.name}</a></td>
-							<td>{user.role ?? 'user'}</td>
+							<td>{roleLabel(user.role)}</td>
 							<td><StatusBadge status={user.status} /></td>
-							<td>{user.allowed_surface}</td>
+							<td>{surfaceLabel(user.allowed_surface)}</td>
 							<td class:muted={!user.bound_account_id}>{boundAccountText(user)}</td>
 							<td>{timeAgo(user.last_active_at ?? '')}</td>
 							<td class="num {hasTotalCost(user.id) && (totalCosts[user.id] ?? 0) === 0 ? 'muted' : ''}">{totalCostText(user.id)}</td>
@@ -299,5 +308,20 @@ curl -fsS "$BASE_URL/v1/models" \\
 		white-space: pre-wrap;
 		word-break: break-all;
 		border-radius: 3px;
+	}
+
+	.add-user-grid {
+		grid-template-columns: minmax(180px, 1fr) minmax(140px, 180px) minmax(240px, 1.5fr) auto;
+	}
+
+	.form-actions {
+		align-self: end;
+		justify-content: flex-start;
+	}
+
+	@media (max-width: 840px) {
+		.add-user-grid {
+			grid-template-columns: 1fr;
+		}
 	}
 </style>

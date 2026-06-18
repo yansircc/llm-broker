@@ -4,6 +4,7 @@
 	import MetricCard from '$lib/components/MetricCard.svelte';
 	import StatusBadge from '$lib/components/StatusBadge.svelte';
 	import { fmtCost, fmtDate } from '$lib/format';
+	import { statusLabel } from '$lib/admin-i18n';
 
 	interface AdminBillingUser {
 		id: string;
@@ -35,7 +36,7 @@
 		try {
 			user = await api<AdminBillingUser>(`/billing/users/${$page.params.id}`);
 		} catch (e: any) {
-			error = e.message || 'failed to load billing user';
+			error = e.message || '加载用户计费失败';
 		} finally {
 			loading = false;
 		}
@@ -44,38 +45,38 @@
 
 <div class="page-header">
 	<div>
-		<div class="eyebrow">billing user</div>
-		<h1>User Billing</h1>
-		<p class="lede">Per-customer credits, token usage, and recharge order history.</p>
+		<div class="eyebrow">用户计费</div>
+		<h1>用户计费</h1>
+		<p class="lede">查看单个客户的余额、token 用量和充值订单历史。</p>
 	</div>
 	<div class="page-actions">
-		<button class="link" onclick={loadUser}>refresh</button>
+		<button class="link" onclick={loadUser}>刷新</button>
 	</div>
 </div>
 
 {#if error}
 	<p class="error-msg">{error}</p>
 {:else if loading}
-	<p class="loading">loading billing user...</p>
+	<p class="loading">正在加载用户计费...</p>
 {:else if user}
 	<div class="metric-grid">
-		<MetricCard label="credits" value={fmtCost(user.credits_usd)} sub={user.email} />
-		<MetricCard label="usage" value={fmtCost(user.usage_usd)} sub="token debit total" />
-		<MetricCard label="plan" value={user.plan ?? '-'} sub="customer plan" />
-		<MetricCard label="orders" value={user.orders.length} sub={user.status} />
+		<MetricCard label="余额" value={fmtCost(user.credits_usd)} sub={user.email} />
+		<MetricCard label="用量" value={fmtCost(user.usage_usd)} sub="token 扣费总额" />
+		<MetricCard label="套餐" value={user.plan ?? '-'} sub="客户套餐" />
+		<MetricCard label="订单" value={user.orders.length} sub={statusLabel(user.status)} />
 	</div>
 
 	<div class="section-header">
-		<h2>Orders</h2>
+		<h2>订单</h2>
 		<StatusBadge status={user.status} />
 	</div>
 	{#if user.orders.length === 0}
-		<p class="muted">no orders</p>
+		<p class="muted">暂无订单</p>
 	{:else}
 		<div class="table-wrap">
 			<table>
 				<thead>
-					<tr><th>order</th><th>status</th><th class="num">amount</th><th>created</th><th>paid</th></tr>
+					<tr><th>订单</th><th>状态</th><th class="num">金额</th><th>创建时间</th><th>支付时间</th></tr>
 				</thead>
 				<tbody>
 					{#each user.orders as order (order.id)}
@@ -92,5 +93,5 @@
 		</div>
 	{/if}
 {:else}
-	<p class="muted">no billing user</p>
+	<p class="muted">暂无用户计费数据</p>
 {/if}

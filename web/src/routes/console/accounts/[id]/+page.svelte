@@ -8,6 +8,7 @@
 	import Countdown from '$lib/components/Countdown.svelte';
 	import PriorityEditor from '$lib/components/PriorityEditor.svelte';
 	import ConfirmAction from '$lib/components/ConfirmAction.svelte';
+	import { providerLabel, statusLabel } from '$lib/admin-i18n';
 
 	interface AccountDetail {
 		id: string;
@@ -195,9 +196,9 @@
 		const cellRegion = region(cell);
 		if (cellRegion !== '-') parts.push(cellRegion);
 		if (cooldownActive(cell)) {
-			parts.push('cooling');
+			parts.push(statusLabel('cooling'));
 		} else if (cell.status !== 'active') {
-			parts.push(cell.status);
+			parts.push(statusLabel(cell.status));
 		}
 		return parts.join(' / ');
 	}
@@ -212,7 +213,7 @@
 				method: 'POST',
 				body: JSON.stringify({ cell_id: selectedCellID })
 			});
-			cellResult = selectedCellID ? `bound ${acct.email} -> ${selectedCellID}` : `unbound ${acct.email}`;
+			cellResult = selectedCellID ? `已绑定 ${acct.email} -> ${selectedCellID}` : `已解除 ${acct.email} 的节点绑定`;
 			await loadAccount();
 		} catch (e: any) {
 			actionError = e.message;
@@ -249,23 +250,23 @@
 
 {#if error}
 	<p class="error-msg">{error}</p>
-	<p><a href="{base}/console/accounts">&larr; back to accounts</a></p>
+	<p><a href="{base}/console/accounts">&larr; 返回账号池</a></p>
 {:else if loading}
-	<p class="loading">loading account...</p>
+	<p class="loading">正在加载账号...</p>
 {:else if acct}
 	<div class="page-header">
 		<div>
-			<div class="eyebrow">account detail</div>
+			<div class="eyebrow">账号详情</div>
 			<h1>{acct.email}</h1>
-			<p class="lede">{acct.provider} / {acct.id}</p>
+			<p class="lede">{providerLabel(acct.provider)} / {acct.id}</p>
 		</div>
 		<div class="page-actions">
-			<button class="link" onclick={testAccount} disabled={testing}>{testing ? 'testing...' : 'test'}</button>
-			<button class="link" onclick={forceRefresh}>refresh token</button>
+			<button class="link" onclick={testAccount} disabled={testing}>{testing ? '测试中...' : '测试'}</button>
+			<button class="link" onclick={forceRefresh}>刷新 token</button>
 			<button class="link {acct.status === 'disabled' ? 'g' : 'r'}" onclick={toggleStatus}>
-				{acct.status === 'disabled' ? 'enable' : 'disable'}
+				{acct.status === 'disabled' ? '启用' : '停用'}
 			</button>
-			<ConfirmAction label="delete" cls="r" onclick={deleteAccount} />
+			<ConfirmAction label="删除" cls="r" onclick={deleteAccount} />
 		</div>
 	</div>
 
@@ -274,25 +275,25 @@
 	{#if testResult}
 		<div class="bar" style="margin-top:0">
 			{#if testResult.ok}
-				<span class="g">ok</span> / {acct.probe_label} / {(testResult.latency_ms / 1000).toFixed(1)}s / <span class="muted">{testResult.time}</span>
+				<span class="g">正常</span> / {acct.probe_label} / {(testResult.latency_ms / 1000).toFixed(1)}s / <span class="muted">{testResult.time}</span>
 			{:else}
-				<span class="r">failed</span> / {testResult.error} / <span class="muted">{testResult.time}</span>
+				<span class="r">失败</span> / {testResult.error} / <span class="muted">{testResult.time}</span>
 			{/if}
 		</div>
 	{/if}
 
-	<h2>info</h2>
+	<h2>基本信息</h2>
 	<dl>
 		<dt>id</dt>
 		<dd class="muted">{acct.id}</dd>
 
-		<dt>status</dt>
-		<dd><span class={dotClass(acct.status)}>{acct.status}</span></dd>
+		<dt>状态</dt>
+		<dd><span class={dotClass(acct.status)}>{statusLabel(acct.status)}</span></dd>
 
 		<dt>subject</dt>
 		<dd class="muted">{acct.subject || '-'}</dd>
 
-		<dt>email</dt>
+		<dt>邮箱</dt>
 		<dd>
 			{#if editingEmail}
 				<input
@@ -308,13 +309,13 @@
 					data-bwignore="true"
 					onkeydown={(e: KeyboardEvent) => { if (e.key === 'Enter') saveEmail(); if (e.key === 'Escape') { editingEmail = false; emailError = ''; } }}
 					maxlength={100}
-					style="width:240px;font:13px monospace;border:1px solid #ccc;padding:0 4px;"
+					class="email-edit"
 				>
-				<button class="link" style="font-size:12px" onclick={saveEmail} disabled={savingEmail}>{savingEmail ? 'saving...' : 'save'}</button>
-				<button class="link" style="font-size:12px;margin-left:4px" onclick={() => { editingEmail = false; emailError = ''; }}>cancel</button>
+				<button class="link compact-action" onclick={saveEmail} disabled={savingEmail}>{savingEmail ? '保存中...' : '保存'}</button>
+				<button class="link compact-action" onclick={() => { editingEmail = false; emailError = ''; }}>取消</button>
 			{:else}
 				{acct.email}
-				<button class="link" style="font-size:12px;margin-left:6px" onclick={() => { emailInput = acct!.email; editingEmail = true; emailError = ''; }}>edit</button>
+				<button class="link compact-action" onclick={() => { emailInput = acct!.email; editingEmail = true; emailError = ''; }}>编辑</button>
 			{/if}
 			{#if emailError}<span class="error-msg">{emailError}</span>{/if}
 		</dd>
@@ -326,7 +327,7 @@
 			{/each}
 		{/if}
 
-		<dt>weight</dt>
+		<dt>权重</dt>
 		<dd>
 			<PriorityEditor
 				accountId={acct.id}
@@ -337,22 +338,22 @@
 			/>
 		</dd>
 
-		<dt>created</dt>
+		<dt>创建时间</dt>
 		<dd>{fmtDate(acct.created_at)}</dd>
 	</dl>
 
 	<h2>token</h2>
 	<dl>
-		<dt>expires in</dt>
+		<dt>过期倒计时</dt>
 		<dd><Countdown until={acct.expires_at} /></dd>
 
-		<dt>last refreshed</dt>
+		<dt>最近刷新</dt>
 		<dd>{#if acct.last_refresh_at}{timeAgo(acct.last_refresh_at)} <span class="muted">({new Date(acct.last_refresh_at).toLocaleTimeString('en-GB', { hour12: false })})</span>{:else}<span class="muted">-</span>{/if}</dd>
 	</dl>
 
-	<h2>scheduling</h2>
+	<h2>调度</h2>
 	<dl>
-		<dt>cooldown</dt>
+		<dt>冷却</dt>
 		<dd>
 			<Countdown until={acct.cooldown_until} variant="cooldown" />
 		</dd>
@@ -371,14 +372,14 @@
 				</dd>
 			{/each}
 		{:else}
-			<dt>windows</dt>
+			<dt>额度窗口</dt>
 			<dd><span class="muted">-</span></dd>
 		{/if}
 
-		<dt>last used</dt>
+		<dt>最近使用</dt>
 		<dd>{#if acct.last_used_at}{timeAgo(acct.last_used_at)} <span class="muted">({new Date(acct.last_used_at).toLocaleTimeString('en-GB', { hour12: false })})</span>{:else}<span class="muted">-</span>{/if}</dd>
 
-		<dt>error</dt>
+		<dt>错误</dt>
 		<dd>
 			{#if acct.error_message}
 				<span class="r">{acct.error_message}</span>
@@ -388,53 +389,53 @@
 		</dd>
 	</dl>
 
-	<h2>egress</h2>
+	<h2>出口</h2>
 	<dl>
-		<dt>binding</dt>
+		<dt>绑定</dt>
 		<dd>
 			{#if editingCellBinding}
 				<select bind:value={selectedCellID} style="margin-right:8px;max-width:320px;">
-					<option value="">legacy direct</option>
+					<option value="">直连</option>
 					{#each bindableCells() as cell (cell.id)}
 						<option value={cell.id}>{optionLabel(cell)}</option>
 					{/each}
 				</select>
 				<button class="link" onclick={saveCellBinding} disabled={savingCell || !bindingChanged()}>
-					{savingCell ? 'saving...' : 'save'}
+					{savingCell ? '保存中...' : '保存'}
 				</button>
 				<button class="link" onclick={cancelCellBindingEdit} disabled={savingCell} style="margin-left:6px">
-					cancel
+					取消
 				</button>
 			{:else}
 				{#if acct.cell_id}
 					<a href="{base}/console/cells/{acct.cell_id}">{acct.cell?.name ?? acct.cell_id}</a>
 				{:else}
-					<span class="muted">legacy direct</span>
+					<span class="muted">直连</span>
 				{/if}
-				<button class="link" onclick={startCellBindingEdit} style="margin-left:6px">edit</button>
+				<button class="link compact-action" onclick={startCellBindingEdit}>编辑</button>
 			{/if}
 		</dd>
 
-		<dt>cell</dt>
+		<dt>节点</dt>
 		<dd>
 			{#if acct.cell_id}
 				<a href="{base}/console/cells/{acct.cell_id}">{acct.cell?.name ?? acct.cell_id}</a>
 			{:else}
-				<span class="muted">legacy direct</span>
+				<span class="muted">直连</span>
 			{/if}
 		</dd>
 
 		{#if editingCellBinding}
-			<dt>target</dt>
+			<dt>目标</dt>
 			<dd>
 				{#if selectedCell()}
 					{selectedCell()?.name || selectedCell()?.id}
 				{:else}
-					<span class="muted">legacy direct</span>
+					<span class="muted">直连</span>
 				{/if}
 			</dd>
 
-			<dt>target region</dt>
+			<dt>目标地区</dt>
 			<dd>
 				{#if selectedCell()}
 					{region(selectedCell())}
@@ -443,13 +444,13 @@
 				{/if}
 			</dd>
 
-			<dt>target status</dt>
+			<dt>目标状态</dt>
 			<dd>
 				{#if selectedCell()}
 					{#if cooldownActive(selectedCell())}
-						<span class="o">cooling</span>
+						<span class="o">冷却中</span>
 					{:else}
-						<span class={selectedCell()?.status === 'active' ? 'g' : selectedCell()?.status === 'error' ? 'r' : 'muted'}>{selectedCell()?.status}</span>
+						<span class={selectedCell()?.status === 'active' ? 'g' : selectedCell()?.status === 'error' ? 'r' : 'muted'}>{statusLabel(selectedCell()?.status)}</span>
 					{/if}
 				{:else}
 					<span class="muted">-</span>
@@ -457,20 +458,20 @@
 			</dd>
 		{/if}
 
-		<dt>cell status</dt>
+		<dt>节点状态</dt>
 		<dd>
 			{#if acct.cell}
 				{#if cooldownActive(acct.cell)}
-					<span class="o">cooling</span>
+					<span class="o">冷却中</span>
 				{:else}
-					<span class={acct.cell.status === 'active' ? 'g' : acct.cell.status === 'error' ? 'r' : 'muted'}>{acct.cell.status}</span>
+					<span class={acct.cell.status === 'active' ? 'g' : acct.cell.status === 'error' ? 'r' : 'muted'}>{statusLabel(acct.cell.status)}</span>
 				{/if}
 			{:else}
 				<span class="muted">-</span>
 			{/if}
 		</dd>
 
-		<dt>cell cooldown</dt>
+		<dt>节点冷却</dt>
 		<dd>
 			{#if activeCooldownUntil(acct.cell)}
 				<Countdown until={activeCooldownUntil(acct.cell)!} variant="cooldown" />
@@ -479,7 +480,7 @@
 			{/if}
 		</dd>
 
-		<dt>cell labels</dt>
+		<dt>节点标签</dt>
 		<dd>
 			{#if acct.cell?.labels && Object.keys(acct.cell.labels).length > 0}
 				{Object.entries(acct.cell.labels).map(([key, value]) => `${key}=${value}`).join(' / ')}
@@ -494,7 +495,7 @@
 	{/if}
 
 	{#if acct.stainless && Object.keys(acct.stainless).length > 0}
-		<h2>stainless fingerprint</h2>
+		<h2>Stainless 指纹</h2>
 		<dl>
 			{#each Object.entries(acct.stainless) as [key, value] (key)}
 				<dt>{key}</dt>
@@ -503,16 +504,16 @@
 		</dl>
 	{/if}
 
-	<h2>bound sessions <span class="muted">({acct.sessions?.length ?? 0})</span></h2>
+	<h2>绑定 session <span class="muted">({acct.sessions?.length ?? 0})</span></h2>
 	{#if !acct.sessions?.length}
-		<p class="muted">no active session bindings</p>
+		<p class="muted">暂无活跃 session 绑定</p>
 	{:else}
 		<div class="table-wrap">
 		<table><thead>
 			<tr>
 				<th>session uuid</th>
-				<th>last active</th>
-				<th>ttl</th>
+				<th>最近活跃</th>
+				<th>TTL</th>
 				<th></th>
 			</tr></thead><tbody>
 			{#each acct.sessions as s (s.session_uuid)}
@@ -520,12 +521,27 @@
 					<td class="muted">{s.session_uuid}</td>
 					<td>{timeAgo(s.last_used_at)}</td>
 					<td><Countdown until={s.expires_at} /></td>
-					<td><ConfirmAction label="unbind" onclick={() => unbindSession(s.session_uuid)} /></td>
+					<td><ConfirmAction label="解绑" onclick={() => unbindSession(s.session_uuid)} /></td>
 				</tr>
 			{/each}
 		</tbody></table>
 		</div>
 	{/if}
 
-	<p class="sub"><a href="{base}/console/accounts">back to accounts</a></p>
+	<p class="sub"><a href="{base}/console/accounts">返回账号池</a></p>
 {/if}
+
+<style>
+	.compact-action {
+		margin-left: 6px;
+		padding: 4px 7px;
+		font-size: 12px;
+	}
+
+	.email-edit {
+		width: 260px;
+		max-width: min(100%, 260px);
+		padding: 6px 8px;
+		font: 13px ui-monospace, SFMono-Regular, Menlo, monospace;
+	}
+</style>

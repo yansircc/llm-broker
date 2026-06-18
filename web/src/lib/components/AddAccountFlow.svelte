@@ -3,6 +3,7 @@
 	import { api } from '$lib/api';
 	import type { EgressCellView } from '$lib/admin-types';
 	import { addAccountPath, type ProviderOption } from '$lib/providers';
+	import { egressLabel, statusLabel } from '$lib/admin-i18n';
 
 	interface Props {
 		providerID: string;
@@ -49,7 +50,7 @@
 				selectedRoute = available[0]?.id ?? legacyDirectValue;
 			}
 			if (!provider) {
-				providerError = `unknown provider: ${id}`;
+				providerError = `未知上游类型：${id}`;
 			}
 		} catch (e: any) {
 			providerError = e.message;
@@ -164,26 +165,26 @@
 	}
 
 	function selectedRouteLabel(): string {
-		if (selectedRoute === legacyDirectValue) return 'legacy direct';
+		if (selectedRoute === legacyDirectValue) return egressLabel('');
 		return selectedCell()?.name ?? effectiveCellID();
 	}
 </script>
 
 <div class="page-header">
 	<div>
-		<div class="eyebrow">provider onboarding</div>
-		<h1>Add Account</h1>
-		<p class="lede">Generate provider auth, bind an egress route, and exchange the callback into a broker account.</p>
+		<div class="eyebrow">上游接入</div>
+		<h1>新增账号</h1>
+		<p class="lede">生成上游授权链接，选择出口线路，并把 callback 换成 Broker 账号。</p>
 	</div>
 </div>
 
 {#if loadingProvider}
-	<p class="loading">loading provider...</p>
+	<p class="loading">正在加载上游类型...</p>
 {:else if providerError}
 	<p class="error-msg">{providerError}</p>
 	{#if providers.length > 0}
 		<div class="bar">
-			available providers:
+			可用上游：
 			{#each providers as option, i (option.id)}
 				{#if i > 0}<span class="muted">|</span>{/if}
 				<a href={addAccountPath(base, option.id)}>{option.label}</a>
@@ -192,85 +193,85 @@
 	{/if}
 {:else if provider}
 	<div class="bar" style="margin-bottom:12px">
-		provider: <b>{provider.label}</b>
+		上游：<b>{provider.label}</b>
 	</div>
 
-	<h2>egress route {#if hasRouteSelection()}<span class="g">&#10003;</span>{/if}</h2>
+	<h2>出口线路 {#if hasRouteSelection()}<span class="g">&#10003;</span>{/if}</h2>
 	<div class="bar">
 		<select bind:value={selectedRoute} disabled={generating || exchanging || !!sessionId || !!result}>
-			<option value="">select route</option>
-			<option value={legacyDirectValue}>legacy direct</option>
+			<option value="">选择线路</option>
+			<option value={legacyDirectValue}>直连</option>
 			{#each availableCells() as cell (cell.id)}
 				<option value={cell.id}>{optionLabel(cell)}</option>
 			{/each}
 		</select>
 		<button class="link" onclick={() => void loadProvider(providerID)} disabled={loadingProvider || generating || exchanging} style="margin-left:8px">
-			refresh cells
+			刷新节点
 		</button>
 		{#if sessionId || result}
 			<button class="link" onclick={startOver} disabled={generating || exchanging} style="margin-left:8px">
-				start over
+				重新开始
 			</button>
 		{/if}
 		{#if selectedRoute === legacyDirectValue}
 			<br><br>
-			route: <b>legacy direct</b><br>
-			<span class="muted">use broker direct egress without binding this account to a cell</span>
+			线路：<b>直连</b><br>
+			<span class="muted">使用 Broker 直连出口，不把该账号绑定到节点。</span>
 		{:else if selectedCell()}
 			<br><br>
-			cell: <b>{selectedCell()?.name}</b><br>
-			region: <b>{region(selectedCell())}</b><br>
-			proxy: <b>{selectedCell()?.proxy?.type}://{selectedCell()?.proxy?.host}:{selectedCell()?.proxy?.port}</b>
+			节点：<b>{selectedCell()?.name}</b><br>
+			地区：<b>{region(selectedCell())}</b><br>
+			代理：<b>{selectedCell()?.proxy?.type}://{selectedCell()?.proxy?.host}:{selectedCell()?.proxy?.port}</b>
 		{:else if availableCells().length === 0}
 			<br><br>
-			<span class="error-msg">no available cells</span>
+			<span class="error-msg">暂无可用节点</span>
 		{/if}
 	</div>
 
-	<h2>authorize {#if sessionId}<span class="g">&#10003;</span>{/if}</h2>
+	<h2>授权 {#if sessionId}<span class="g">&#10003;</span>{/if}</h2>
 	{#if !sessionId}
-		<p class="hint">generate an OAuth URL, open it in browser, login and authorize.</p>
+		<p class="hint">生成 OAuth URL，在浏览器打开后登录并授权。</p>
 		<button class="link" onclick={generateAuthUrl} disabled={generating || !hasRouteSelection()}>
-			{generating ? 'generating...' : 'generate auth url'}
+			{generating ? '生成中...' : '生成授权链接'}
 		</button>
 		{#if genError}
 			<p class="error-msg">{genError}</p>
 		{/if}
 	{:else}
 		<div class="bar">
-			session: <b>{sessionId}</b> <span class="muted">(expires in 10m)</span>
+			session：<b>{sessionId}</b> <span class="muted">（10 分钟后过期）</span>
 			<br><br>
-			auth url:<br>
+			授权 URL：<br>
 			<a href={authUrl} target="_blank" class="auth-url">{authUrl}</a>
 			<br><br>
-			<span class="muted">open this URL, login and authorize. then paste the callback below.</span>
+			<span class="muted">打开这个 URL，登录并授权，然后把 callback 粘贴到下方。</span>
 		</div>
 	{/if}
 
 	{#if sessionId}
-		<h2>exchange code {#if result}<span class="g">&#10003;</span>{/if}</h2>
+		<h2>交换 code {#if result}<span class="g">&#10003;</span>{/if}</h2>
 		{#if !result}
-			<label for="callback-input">callback url or code</label>
+			<label for="callback-input">callback URL 或 code</label>
 			<input id="callback-input" type="text" bind:value={callbackInput} placeholder={provider.callback_placeholder}>
 			<p class="hint">{provider.callback_hint}</p>
 			{#if exchangeError}
 				<p class="error-msg">{exchangeError}</p>
 			{/if}
 			<button class="link" onclick={exchangeCode} disabled={exchanging || !callbackInput.trim()}>
-				{exchanging ? 'exchanging...' : 'exchange code'}
+				{exchanging ? '交换中...' : '交换 code'}
 			</button>
 		{:else}
 			<div class="bar">
-				<span class="g">&#10003; account created</span>
+				<span class="g">&#10003; 账号已创建</span>
 				<br><br>
-				email: <b>{result.email}</b><br>
-				status: <b class="g">{result.status}</b><br>
-				route: <b>{selectedRouteLabel()}</b><br>
+				邮箱：<b>{result.email}</b><br>
+				状态：<b class="g">{statusLabel(result.status)}</b><br>
+				线路：<b>{selectedRouteLabel()}</b><br>
 				<br>
-				<a href="{base}/console/accounts/{result.id}">view account &rarr;</a>
+				<a href="{base}/console/accounts/{result.id}">查看账号 &rarr;</a>
 			</div>
 		{/if}
 	{/if}
 {/if}
 
-<p class="sub"><a href="{base}/console/dashboard">back to ops</a></p>
+<p class="sub"><a href="{base}/console/dashboard">返回控制台</a></p>

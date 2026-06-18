@@ -57,35 +57,47 @@
 </script>
 
 {#if isAuto}
-	<span class="g">auto</span> <span class="muted">(weight: {autoWeight})</span>
-	<button class="link" style="font-size:12px;margin-left:6px" onclick={switchToManual}>[switch to manual]</button>
+	<span class="g">自动</span> <span class="muted">权重 {autoWeight}</span>
+	<button class="link compact" onclick={switchToManual}>切换手动</button>
 {:else}
-	<input
-		class="pri-edit"
-		type="text"
-		bind:value={input}
-		onkeydown={(e) => { if (e.key === 'Enter') save(); }}
-	>
-	<button class="link" style="font-size:12px" onclick={save} disabled={saving}>
-		{saving ? 'saving...' : 'save'}
-	</button>
-	<button class="link" style="font-size:12px;margin-left:6px" onclick={switchToAuto}>[switch to auto]</button>
+	<div class="priority-row">
+		<input
+			class="pri-edit"
+			type="text"
+			bind:value={input}
+			onkeydown={(e) => { if (e.key === 'Enter') save(); }}
+		>
+		<button class="link compact" onclick={save} disabled={saving}>
+			{saving ? '保存中...' : '保存'}
+		</button>
+		<button class="link compact" onclick={switchToAuto}>切换自动</button>
+	</div>
 {/if}
-<div class="hint muted">higher weight = higher pick probability</div>
+<div class="hint muted">权重越高，被调度选中的概率越高</div>
 {#if error}<span class="error-msg">{error}</span>{/if}
 
 <style>
-	.pri-edit {
-		width: 40px;
-		font: 13px monospace;
-		border: 1px solid #ccc;
-		padding: 0 4px;
+	.priority-row {
+		display: inline-flex;
+		align-items: center;
+		gap: 6px;
+		flex-wrap: wrap;
 	}
+
+	.pri-edit {
+		width: 64px;
+		max-width: 64px;
+		padding: 6px 8px;
+		font: 13px ui-monospace, SFMono-Regular, Menlo, monospace;
+	}
+
+	button.compact {
+		padding: 5px 8px;
+		font-size: 12px;
+	}
+
 	.hint {
 		font-size: 12px;
 		margin-top: 4px;
-	}
-	@media (prefers-color-scheme: dark) {
-		.pri-edit { background: #252525; color: #ccc; border-color: #555; }
 	}
 </style>

@@ -4,6 +4,7 @@
 	import { api } from '$lib/api';
 	import type { EgressCellView } from '$lib/admin-types';
 	import { fmtDate, dotClass } from '$lib/format';
+	import { providerLabel, statusLabel } from '$lib/admin-i18n';
 
 	let cell = $state<EgressCellView | null>(null);
 	let error = $state('');
@@ -24,7 +25,7 @@
 		try {
 			const cells = await api<EgressCellView[]>('/egress/cells');
 			cell = cells.find((item) => item.id === $page.params.id) ?? null;
-			if (!cell) error = 'cell not found';
+			if (!cell) error = '节点不存在';
 		} catch (e: any) {
 			error = e.message;
 		} finally {
@@ -85,21 +86,21 @@
 
 {#if error}
 	<p class="error-msg">{error}</p>
-	<p><a href="{base}/console/dashboard">&larr; back to ops</a></p>
+	<p><a href="{base}/console/dashboard">&larr; 返回控制台</a></p>
 {:else if loading || !cell}
-	<p class="loading">loading cell...</p>
+	<p class="loading">正在加载节点...</p>
 {:else}
 	<div class="page-header">
 		<div>
-			<div class="eyebrow">egress cell</div>
+			<div class="eyebrow">出口节点</div>
 			<h1>{cell.name}</h1>
 			<p class="lede mono">{cell.id}</p>
 		</div>
 		<div class="page-actions">
-			<button class="link" onclick={loadCell}>refresh</button>
-			<button class="link" onclick={testCell} disabled={testing}>{testing ? 'testing...' : 'test proxy'}</button>
+			<button class="link" onclick={loadCell}>刷新</button>
+			<button class="link" onclick={testCell} disabled={testing}>{testing ? '测试中...' : '测试代理'}</button>
 		{#if cooldownActive(cell)}
-				<button class="link o" onclick={clearCooldown} disabled={clearing}>{clearing ? 'clearing...' : 'clear cooldown'}</button>
+				<button class="link o" onclick={clearCooldown} disabled={clearing}>{clearing ? '清除中...' : '清除冷却'}</button>
 		{/if}
 		</div>
 	</div>
@@ -107,7 +108,7 @@
 	<div class="bar">
 		{#if testResult}
 			{#if testResult.ok}
-				<span class="g">ok {testResult.latency_ms}ms</span>
+				<span class="g">正常 {testResult.latency_ms}ms</span>
 			{:else}
 				<span class="r">{testResult.error}</span>
 			{/if}
@@ -119,22 +120,22 @@
 	{/if}
 
 	<dl>
-		<dt>status</dt>
+		<dt>状态</dt>
 		<dd>
 			{#if cooldownActive(cell)}
-				<span class="tag tag-overloaded">cooling</span>
+				<span class="tag tag-overloaded">冷却中</span>
 			{:else}
-				<span class={cell.status === 'active' ? 'tag tag-active' : cell.status === 'error' ? 'tag tag-error' : 'tag tag-disabled'}>{cell.status}</span>
+				<span class={cell.status === 'active' ? 'tag tag-active' : cell.status === 'error' ? 'tag tag-error' : 'tag tag-disabled'}>{statusLabel(cell.status)}</span>
 			{/if}
 		</dd>
 
-		<dt>region</dt>
+		<dt>地区</dt>
 		<dd>{region(cell)}</dd>
 
-		<dt>proxy</dt>
+		<dt>代理</dt>
 		<dd>{proxyLabel(cell)}</dd>
 
-		<dt>cooldown until</dt>
+		<dt>冷却到</dt>
 		<dd>
 			{#if activeCooldownUntil(cell)}
 				{fmtDate(activeCooldownUntil(cell)!)}
@@ -143,7 +144,7 @@
 			{/if}
 		</dd>
 
-		<dt>labels</dt>
+		<dt>标签</dt>
 		<dd>
 			{#if cell.labels && Object.keys(cell.labels).length > 0}
 				{Object.entries(cell.labels).map(([key, value]) => `${key}=${value}`).join(' / ')}
@@ -152,32 +153,32 @@
 			{/if}
 		</dd>
 
-		<dt>created</dt>
+		<dt>创建时间</dt>
 		<dd>{fmtDate(cell.created_at)}</dd>
 
-		<dt>updated</dt>
+		<dt>更新时间</dt>
 		<dd>{fmtDate(cell.updated_at)}</dd>
 	</dl>
 
-	<h2>Bound Accounts</h2>
+	<h2>绑定账号</h2>
 	{#if cellAccounts(cell).length === 0}
-		<p class="muted">no accounts bound</p>
+		<p class="muted">暂无绑定账号</p>
 	{:else}
 		<div class="table-wrap">
 			<table>
 				<thead>
 					<tr>
-						<th>email</th>
-						<th>provider</th>
-						<th>status</th>
+						<th>邮箱</th>
+						<th>上游</th>
+						<th>状态</th>
 					</tr>
 				</thead>
 				<tbody>
 					{#each cellAccounts(cell) as account (account.id)}
 						<tr>
 							<td><a href="{base}/console/accounts/{account.id}">{account.email}</a></td>
-							<td>{account.provider}</td>
-							<td><span class={dotClass(account.status)}>{account.status}</span></td>
+							<td>{providerLabel(account.provider)}</td>
+							<td><span class={dotClass(account.status)}>{statusLabel(account.status)}</span></td>
 						</tr>
 					{/each}
 				</tbody>
@@ -185,5 +186,5 @@
 		</div>
 	{/if}
 
-	<p class="sub"><a href="{base}/console/dashboard">back to ops</a></p>
+	<p class="sub"><a href="{base}/console/dashboard">返回控制台</a></p>
 {/if}

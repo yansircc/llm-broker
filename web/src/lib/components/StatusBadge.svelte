@@ -1,4 +1,6 @@
 <script lang="ts">
+	import { statusLabel } from '$lib/admin-i18n';
+
 	interface Props {
 		status: string;
 	}
@@ -26,4 +28,4 @@
 	}
 </script>
 
-<span class={badgeClass(status)}>{status || '-'}</span>
+<span class={badgeClass(status)}>{statusLabel(status)}</span>

@@ -4,6 +4,7 @@
 	import ConfirmAction from '$lib/components/ConfirmAction.svelte';
 	import MetricCard from '$lib/components/MetricCard.svelte';
 	import { eventTypeColor, fmtCost, fmtDate, fmtJSON, fmtNum, fmtTime, shortModel, statusColor } from '$lib/format';
+	import { egressLabel, healthLabel, providerLabel, surfaceLabel } from '$lib/admin-i18n';
 
 	let data = $state<ActivityData | null>(null);
 	let usage = $state<UsagePeriod[]>([]);
@@ -57,14 +58,14 @@
 
 	function eventFacts(ev: DashboardEvent): Array<{ label: string; value: string }> {
 		const facts: Array<{ label: string; value: string }> = [];
-		if (ev.user_id) facts.push({ label: 'user', value: ev.user_id });
-		if (ev.account_id) facts.push({ label: 'account', value: ev.account_id });
+		if (ev.user_id) facts.push({ label: '用户', value: ev.user_id });
+		if (ev.account_id) facts.push({ label: '账号', value: ev.account_id });
 		if (ev.bucket_key) facts.push({ label: 'bucket', value: ev.bucket_key });
-		if (ev.cell_id) facts.push({ label: 'cell', value: ev.cell_id });
-		if (ev.upstream_status) facts.push({ label: 'status', value: String(ev.upstream_status) });
-		if (ev.upstream_error_type) facts.push({ label: 'error_type', value: ev.upstream_error_type });
-		if (ev.upstream_error_message) facts.push({ label: 'error', value: ev.upstream_error_message });
-		if (ev.cooldown_until) facts.push({ label: 'cooldown', value: fmtDate(ev.cooldown_until) });
+		if (ev.cell_id) facts.push({ label: '节点', value: ev.cell_id });
+		if (ev.upstream_status) facts.push({ label: '状态', value: String(ev.upstream_status) });
+		if (ev.upstream_error_type) facts.push({ label: '错误类型', value: ev.upstream_error_type });
+		if (ev.upstream_error_message) facts.push({ label: '错误', value: ev.upstream_error_message });
+		if (ev.cooldown_until) facts.push({ label: '冷却', value: fmtDate(ev.cooldown_until) });
 		return facts;
 	}
 
@@ -121,45 +122,45 @@
 {#if error}
 	<p class="error-msg">{error}</p>
 {:else if !data}
-	<p class="loading">loading activity...</p>
+	<p class="loading">正在加载运行事件...</p>
 {:else}
 	<div class="page-header">
 		<div>
-			<div class="eyebrow">observability</div>
-			<h1>Activity</h1>
-			<p class="lede">Usage periods, failed relay evidence, and broker events for post-hoc debugging.</p>
+			<div class="eyebrow">观测</div>
+			<h1>运行事件</h1>
+			<p class="lede">查看用量周期、失败转发证据和 Broker 事件，用于事后排障。</p>
 		</div>
 		<div class="page-actions">
-			<button class="link" onclick={loadAll}>refresh</button>
+			<button class="link" onclick={loadAll}>刷新</button>
 			<span class="muted mono">{lastRefresh}</span>
 		</div>
 	</div>
 
 	<div class="metric-grid">
-		<MetricCard label="version" value={data.health.version} sub="broker build" />
-		<MetricCard label="uptime" value={data.health.uptime} sub="current process" />
-		<MetricCard label="sqlite" value={data.health.sqlite} sub="local store health" />
-		<MetricCard label="events" value={data.events.length} sub={`${data.recent_failures?.length ?? 0} recent failures`} />
+		<MetricCard label="版本" value={data.health.version} sub="broker build" />
+		<MetricCard label="运行时间" value={data.health.uptime} sub="当前进程" />
+		<MetricCard label="SQLite" value={healthLabel(data.health.sqlite)} sub="本地存储健康状态" />
+		<MetricCard label="事件" value={data.events.length} sub={`${data.recent_failures?.length ?? 0} 条最近失败`} />
 	</div>
 
-	<h2>Usage</h2>
+	<h2>用量</h2>
 	{#if usageLoading}
-		<p class="muted">loading usage...</p>
+		<p class="muted">正在加载用量...</p>
 	{:else if usageError}
 		<p class="error-msg">{usageError}</p>
 	{:else if usage.length === 0}
-		<p class="muted">no usage data yet</p>
+		<p class="muted">暂无用量数据</p>
 	{:else}
 		<div class="table-wrap">
 			<table>
 				<thead>
 					<tr>
 						<th></th>
-						<th class="num">requests</th>
-						<th class="num">input</th>
-						<th class="num">output</th>
-						<th class="num">cache read</th>
-						<th class="num">cost</th>
+						<th class="num">请求</th>
+						<th class="num">输入</th>
+						<th class="num">输出</th>
+						<th class="num">缓存读取</th>
+						<th class="num">成本</th>
 					</tr>
 				</thead>
 				<tbody>
@@ -179,29 +180,29 @@
 	{/if}
 
 	<div class="section-header">
-		<h2>Recent Failed Relays</h2>
+		<h2>最近失败转发</h2>
 	</div>
 	{#if !data.recent_failures || data.recent_failures.length === 0}
-		<p class="muted">no failed relays yet</p>
+		<p class="muted">暂无失败转发</p>
 	{:else}
 		<div class="table-wrap">
 			<table>
 				<thead>
 					<tr>
-						<th>time</th>
-						<th>key</th>
-						<th>provider</th>
-						<th>surface</th>
-						<th>model</th>
-						<th>path</th>
-						<th>account</th>
-						<th>cell</th>
-						<th>outcome</th>
+						<th>时间</th>
+						<th>用户</th>
+						<th>上游</th>
+						<th>接口面</th>
+						<th>模型</th>
+						<th>路径</th>
+						<th>账号</th>
+						<th>节点</th>
+						<th>结果</th>
 						<th>request id</th>
-						<th>error</th>
-						<th class="num">bytes</th>
-						<th class="num">attempt</th>
-						<th>details</th>
+						<th>错误</th>
+						<th class="num">字节</th>
+						<th class="num">尝试</th>
+						<th>详情</th>
 					</tr>
 				</thead>
 				<tbody>
@@ -209,12 +210,12 @@
 						<tr>
 							<td class="muted">{fmtTime(log.created_at)}</td>
 							<td>{userLabel(log.user_id)}</td>
-							<td>{log.provider}</td>
-							<td>{log.surface || '-'}</td>
+							<td>{providerLabel(log.provider)}</td>
+							<td>{surfaceLabel(log.surface)}</td>
 							<td>{shortModel(log.model)}</td>
 							<td>{log.path || '-'}</td>
 							<td>{accountLabel(log.account_id)}</td>
-							<td>{log.cell_id || 'legacy direct'}</td>
+							<td>{egressLabel(log.cell_id)}</td>
 							<td class={statusColor(log.status)}>{failureOutcome(log)}</td>
 							<td>{log.upstream_request_id || '-'}</td>
 							<td>{failureError(log)}</td>
@@ -223,22 +224,22 @@
 							<td>
 								{#if hasDetails(log)}
 									<details>
-										<summary>view</summary>
+										<summary>查看</summary>
 										<div class="detail-block">
-											<div><span class="muted">full account</span> <span class="mono">{log.account_id}</span></div>
+											<div><span class="muted">完整账号</span> <span class="mono">{log.account_id}</span></div>
 											<div><span class="muted">session</span> <span class="mono">{log.session_uuid || '-'}</span></div>
-											<div><span class="muted">binding</span> {log.binding_source || '-'}</div>
-											<div><span class="muted">error</span> {failureError(log)}</div>
-											<div><span class="muted">client body</span><pre>{log.client_body_excerpt || '-'}</pre></div>
-											<div><span class="muted">request meta</span><pre>{fmtJSON(log.request_meta)}</pre></div>
-											<div><span class="muted">client headers</span><pre>{fmtJSON(log.client_headers)}</pre></div>
-											<div><span class="muted">upstream url</span> <span class="mono">{log.upstream_url || '-'}</span></div>
-											<div><span class="muted">upstream request headers</span><pre>{fmtJSON(log.upstream_request_headers)}</pre></div>
-											<div><span class="muted">upstream request meta</span><pre>{fmtJSON(log.upstream_request_meta)}</pre></div>
-											<div><span class="muted">upstream request body</span><pre>{log.upstream_request_body_excerpt || '-'}</pre></div>
-											<div><span class="muted">upstream response headers</span><pre>{fmtJSON(log.upstream_headers)}</pre></div>
-											<div><span class="muted">upstream response meta</span><pre>{fmtJSON(log.upstream_response_meta)}</pre></div>
-											<div><span class="muted">upstream response body</span><pre>{log.upstream_response_body_excerpt || '-'}</pre></div>
+											<div><span class="muted">绑定</span> {log.binding_source || '-'}</div>
+											<div><span class="muted">错误</span> {failureError(log)}</div>
+											<div><span class="muted">客户端 body</span><pre>{log.client_body_excerpt || '-'}</pre></div>
+											<div><span class="muted">请求 meta</span><pre>{fmtJSON(log.request_meta)}</pre></div>
+											<div><span class="muted">客户端 headers</span><pre>{fmtJSON(log.client_headers)}</pre></div>
+											<div><span class="muted">上游 URL</span> <span class="mono">{log.upstream_url || '-'}</span></div>
+											<div><span class="muted">上游请求 headers</span><pre>{fmtJSON(log.upstream_request_headers)}</pre></div>
+											<div><span class="muted">上游请求 meta</span><pre>{fmtJSON(log.upstream_request_meta)}</pre></div>
+											<div><span class="muted">上游请求 body</span><pre>{log.upstream_request_body_excerpt || '-'}</pre></div>
+											<div><span class="muted">上游响应 headers</span><pre>{fmtJSON(log.upstream_headers)}</pre></div>
+											<div><span class="muted">上游响应 meta</span><pre>{fmtJSON(log.upstream_response_meta)}</pre></div>
+											<div><span class="muted">上游响应 body</span><pre>{log.upstream_response_body_excerpt || '-'}</pre></div>
 										</div>
 									</details>
 								{:else}
@@ -253,13 +254,13 @@
 	{/if}
 
 	<div class="section-header">
-		<h2>Recent Errors</h2>
+		<h2>最近错误</h2>
 		{#if data.events.length > 0}
-			<ConfirmAction label="clear" cls="r" onclick={clearEvents} />
+			<ConfirmAction label="清空" cls="r" onclick={clearEvents} />
 		{/if}
 	</div>
 	{#if data.events.length === 0}
-		<p class="muted">no errors yet</p>
+		<p class="muted">暂无错误</p>
 	{:else}
 		<ul class="event-list">
 			{#each data.events as ev, i (eventKey(ev, i))}

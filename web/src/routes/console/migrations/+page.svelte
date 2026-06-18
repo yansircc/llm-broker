@@ -4,6 +4,7 @@
 	import type { AccountListItem, EgressCellView } from '$lib/admin-types';
 	import MetricCard from '$lib/components/MetricCard.svelte';
 	import { dotClass, timeAgo } from '$lib/format';
+	import { egressLabel, providerLabel, statusLabel, weightModeLabel } from '$lib/admin-i18n';
 
 	let accounts = $state<AccountListItem[]>([]);
 	let cells = $state<EgressCellView[]>([]);
@@ -78,9 +79,9 @@
 		const cellRegion = region(cell);
 		if (cellRegion !== '-') parts.push(cellRegion);
 		if (cooldownActive(cell)) {
-			parts.push('cooling');
+			parts.push(statusLabel('cooling'));
 		} else if (cell.status !== 'active') {
-			parts.push(cell.status);
+			parts.push(statusLabel(cell.status));
 		}
 		return parts.join(' / ');
 	}
@@ -99,7 +100,7 @@
 
 	function currentEgress(account: AccountListItem | undefined): string {
 		if (!account) return '-';
-		return account.cell?.name ?? account.cell_id ?? 'legacy direct';
+		return account.cell?.name ?? egressLabel(account.cell_id);
 	}
 
 	async function bindAccount() {
@@ -114,7 +115,7 @@
 				method: 'POST',
 				body: JSON.stringify({ cell_id: selectedCellID })
 			});
-			bindResult = `bound ${account.email} -> ${selectedCellID}`;
+			bindResult = `已绑定 ${account.email} -> ${selectedCellID}`;
 			await loadAll();
 		} catch (e: any) {
 			actionError = e.message;
@@ -146,28 +147,28 @@
 {:else}
 	<div class="page-header">
 		<div>
-			<div class="eyebrow">migration</div>
-			<h1>Migration Workbench</h1>
-			<p class="lede">Move legacy direct accounts onto active egress cells, then probe the migrated account.</p>
+			<div class="eyebrow">迁移</div>
+			<h1>迁移工具</h1>
+			<p class="lede">把直连账号迁移到可用出口节点，并在迁移后测试账号可用性。</p>
 		</div>
 		<div class="page-actions">
-			<button class="link" onclick={loadAll}>refresh</button>
+			<button class="link" onclick={loadAll}>刷新</button>
 			<span class="muted mono">{lastRefresh}</span>
 		</div>
 	</div>
 
 	<div class="metric-grid">
-		<MetricCard label="legacy queue" value={legacyAccounts().length} sub="direct accounts" />
-		<MetricCard label="available cells" value={availableCells().length} sub="active targets" />
-		<MetricCard label="cooling" value={cells.filter(cooldownActive).length} sub="cooldown cells" />
-		<MetricCard label="accounts" value={accounts.length} sub="pool total" />
+		<MetricCard label="直连队列" value={legacyAccounts().length} sub="直连账号" />
+		<MetricCard label="可用节点" value={availableCells().length} sub="活跃目标" />
+		<MetricCard label="冷却中" value={cells.filter(cooldownActive).length} sub="冷却节点" />
+		<MetricCard label="账号" value={accounts.length} sub="账号池总数" />
 	</div>
 
 	<section class="panel workbench">
 		<div class="step">
-			<label for="migration-account">step 1: account</label>
+			<label for="migration-account">步骤 1：账号</label>
 			<select id="migration-account" bind:value={selectedAccountID} style="max-width:320px;">
-				<option value="">select account</option>
+				<option value="">选择账号</option>
 				{#each legacyAccounts() as account (account.id)}
 					<option value={account.id}>{account.email}</option>
 				{/each}
@@ -175,9 +176,9 @@
 		</div>
 
 		<div class="step">
-			<label for="migration-cell">step 2: target cell</label>
+			<label for="migration-cell">步骤 2：目标节点</label>
 			<select id="migration-cell" bind:value={selectedCellID} style="max-width:320px;">
-				<option value="">select cell</option>
+				<option value="">选择节点</option>
 				{#each availableCells() as cell (cell.id)}
 					<option value={cell.id}>{optionLabel(cell)}</option>
 				{/each}
@@ -186,10 +187,10 @@
 
 		<div class="step actions-row">
 			<button class="link" onclick={bindAccount} disabled={binding || !selectedAccountID || !selectedCellID}>
-				{binding ? 'migrating...' : 'migrate now'}
+				{binding ? '迁移中...' : '立即迁移'}
 			</button>
 			<button class="link" onclick={testAccount} disabled={testing || !selectedAccountID}>
-				{testing ? 'testing...' : 'test selected account'}
+				{testing ? '测试中...' : '测试所选账号'}
 			</button>
 		</div>
 	</section>
@@ -197,7 +198,7 @@
 	{#if selectedAccountID || selectedCellID}
 		<div class="bar">
 		<dl>
-			<dt>account</dt>
+			<dt>账号</dt>
 			<dd>
 				{#if selectedAccount()}
 					<a href="{base}/console/accounts/{selectedAccount()!.id}">{selectedAccount()!.email}</a>
@@ -206,22 +207,22 @@
 				{/if}
 			</dd>
 
-			<dt>status</dt>
+			<dt>状态</dt>
 			<dd>
 				{#if selectedAccount()}
-					<span class={dotClass(selectedAccount()!.status)}>{selectedAccount()!.status}</span>
+					<span class={dotClass(selectedAccount()!.status)}>{statusLabel(selectedAccount()!.status)}</span>
 				{:else}
 					<span class="muted">-</span>
 				{/if}
 			</dd>
 
-			<dt>current egress</dt>
+			<dt>当前出口</dt>
 			<dd>{currentEgress(selectedAccount())}</dd>
 
-			<dt>last used</dt>
+			<dt>最近使用</dt>
 			<dd>{selectedAccount() ? timeAgo(selectedAccount()!.last_used_at ?? '') : '-'}</dd>
 
-			<dt>target cell</dt>
+			<dt>目标节点</dt>
 			<dd>
 				{#if selectedCell()}
 					<a href="{base}/console/cells/{selectedCell()!.id}">{selectedCell()!.name ?? selectedCell()!.id}</a>
@@ -230,19 +231,19 @@
 				{/if}
 			</dd>
 
-			<dt>target region</dt>
+			<dt>目标地区</dt>
 			<dd>{selectedCell() ? region(selectedCell()) : '-'}</dd>
 
-			<dt>target load</dt>
+			<dt>目标负载</dt>
 			<dd>{selectedCell() ? cellAccounts(selectedCell()).length : '-'}</dd>
 
-			<dt>target status</dt>
+			<dt>目标状态</dt>
 			<dd>
 				{#if selectedCell()}
 					{#if cooldownActive(selectedCell())}
-						<span class="o">cooling</span>
+						<span class="o">冷却中</span>
 					{:else}
-						<span class={selectedCell()?.status === 'active' ? 'g' : selectedCell()?.status === 'error' ? 'r' : 'muted'}>{selectedCell()?.status}</span>
+						<span class={selectedCell()?.status === 'active' ? 'g' : selectedCell()?.status === 'error' ? 'r' : 'muted'}>{statusLabel(selectedCell()?.status)}</span>
 					{/if}
 				{:else}
 					<span class="muted">-</span>
@@ -258,9 +259,9 @@
 	{#if testResult}
 		<div class="bar">
 			{#if testResult.ok}
-				<span class="g">&#10003; ok</span> {#if testResult.latency_ms}( {(testResult.latency_ms / 1000).toFixed(1)}s ){/if}
+				<span class="g">&#10003; 正常</span> {#if testResult.latency_ms}( {(testResult.latency_ms / 1000).toFixed(1)}s ){/if}
 			{:else}
-				<span class="r">&#10007; failed</span> {testResult.error}
+				<span class="r">&#10007; 失败</span> {testResult.error}
 			{/if}
 		</div>
 	{/if}
@@ -269,19 +270,19 @@
 	{/if}
 
 	<details class="ops-details">
-		<summary>legacy queue ({legacyAccounts().length})</summary>
+		<summary>直连队列（{legacyAccounts().length}）</summary>
 		{#if legacyAccounts().length === 0}
-			<p class="muted">no legacy direct accounts</p>
+			<p class="muted">暂无直连账号</p>
 		{:else}
 			<div class="table-wrap">
 			<table>
 				<thead>
 					<tr>
-						<th>email</th>
-						<th>provider</th>
-						<th>status</th>
-						<th>weight</th>
-						<th>last used</th>
+						<th>邮箱</th>
+						<th>上游</th>
+						<th>状态</th>
+						<th>权重</th>
+						<th>最近使用</th>
 						<th></th>
 					</tr>
 				</thead>
@@ -289,11 +290,11 @@
 					{#each legacyAccounts() as account (account.id)}
 						<tr>
 							<td><a href="{base}/console/accounts/{account.id}">{account.email}</a></td>
-							<td>{account.provider}</td>
-							<td><span class={dotClass(account.status)}>{account.status}</span></td>
-							<td>{account.weight}{#if account.weight_mode === 'auto'} <span class="muted">(auto)</span>{/if}</td>
+							<td>{providerLabel(account.provider)}</td>
+							<td><span class={dotClass(account.status)}>{statusLabel(account.status)}</span></td>
+							<td>{account.weight}{#if account.weight_mode === 'auto'} <span class="muted">({weightModeLabel(account.weight_mode)})</span>{/if}</td>
 							<td>{timeAgo(account.last_used_at ?? '')}</td>
-							<td><a href="{base}/console/accounts/{account.id}">open</a></td>
+							<td><a href="{base}/console/accounts/{account.id}">打开</a></td>
 						</tr>
 					{/each}
 				</tbody>
@@ -303,18 +304,18 @@
 	</details>
 
 	<details class="ops-details">
-		<summary>cell inventory ({cells.length})</summary>
+		<summary>节点库存（{cells.length}）</summary>
 		{#if cells.length === 0}
-			<p class="muted">no cells</p>
+			<p class="muted">暂无节点</p>
 		{:else}
 			<div class="table-wrap">
 			<table>
 				<thead>
 					<tr>
-						<th>cell</th>
-						<th>region</th>
-						<th class="num">load</th>
-						<th>status</th>
+						<th>节点</th>
+						<th>地区</th>
+						<th class="num">负载</th>
+						<th>状态</th>
 						<th></th>
 					</tr>
 				</thead>
@@ -326,12 +327,12 @@
 							<td class="num">{cellAccounts(cell).length}</td>
 							<td>
 								{#if cooldownActive(cell)}
-									<span class="o">cooling</span>
+									<span class="o">冷却中</span>
 								{:else}
-									<span class={cell.status === 'active' ? 'g' : cell.status === 'error' ? 'r' : 'muted'}>{cell.status}</span>
+									<span class={cell.status === 'active' ? 'g' : cell.status === 'error' ? 'r' : 'muted'}>{statusLabel(cell.status)}</span>
 								{/if}
 							</td>
-							<td><a href="{base}/console/cells/{cell.id}">open</a></td>
+							<td><a href="{base}/console/cells/{cell.id}">打开</a></td>
 						</tr>
 					{/each}
 				</tbody>

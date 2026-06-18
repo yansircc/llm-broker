@@ -22,9 +22,31 @@
 </script>
 
 {#if confirming}
-	<span style="font-size:12px">
-		confirm? <button class="link" onclick={doConfirm}>yes</button> / <button class="link" onclick={cancel}>cancel</button>
+	<span class="confirm-inline">
+		确认？
+		<button class="link danger" onclick={doConfirm}>确认</button>
+		<button class="link" onclick={cancel}>取消</button>
 	</span>
 {:else}
 	<button class="link {cls}" onclick={startConfirm}>{label}</button>
 {/if}
+
+<style>
+	.confirm-inline {
+		display: inline-flex;
+		align-items: center;
+		gap: 6px;
+		color: var(--muted);
+		font-size: 12px;
+		white-space: nowrap;
+	}
+
+	.confirm-inline button.link {
+		padding: 4px 7px;
+		font-size: 12px;
+	}
+
+	button.danger {
+		color: var(--danger);
+	}
+</style>

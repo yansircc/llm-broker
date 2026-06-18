@@ -6,6 +6,7 @@
 	import { remainClass, remainTime, timeAgo, dotClass } from '$lib/format';
 	import Countdown from '$lib/components/Countdown.svelte';
 	import { addAccountPath, type ProviderOption } from '$lib/providers';
+	import { egressLabel, providerLabel, statusLabel, weightModeLabel } from '$lib/admin-i18n';
 
 	interface AccountGroup {
 		provider: string;
@@ -120,7 +121,7 @@
 	}
 
 	function cellLabel(account: AccountListItem): string {
-		return account.cell?.name ?? account.cell_id ?? 'legacy direct';
+		return account.cell?.name ?? egressLabel(account.cell_id);
 	}
 
 	function statusRank(status: string): number {
@@ -260,11 +261,6 @@
 		return ordered;
 	}
 
-	function providerLabel(provider: string): string {
-		if (provider === 'openai_compatible') return 'OpenAI-compatible';
-		return provider;
-	}
-
 	function hasOAuthProvider(provider: string): boolean {
 		return providers.some((option) => option.id === provider);
 	}
@@ -315,37 +311,37 @@
 {:else}
 	<div class="page-header">
 		<div>
-			<div class="eyebrow">account pool</div>
-			<h1>Accounts</h1>
-			<p class="lede">Provider account availability, cell binding, cooldowns, and utilization windows.</p>
+			<div class="eyebrow">账号池</div>
+			<h1>上游账号</h1>
+			<p class="lede">查看上游账号可用性、出口节点绑定、冷却状态和额度窗口。</p>
 		</div>
 		<div class="page-actions">
-			<button class="link" onclick={loadAll}>refresh</button>
+			<button class="link" onclick={loadAll}>刷新</button>
 			<span class="muted mono">{lastRefresh}</span>
 		</div>
 	</div>
 
 	<div class="metric-grid">
-		<MetricCard label="accounts" value={accounts.length} sub={`${activeCount(accounts)} active`} />
-		<MetricCard label="native available" value={availableCount(accounts, 'native')} sub="openai/responses surface" />
-		<MetricCard label="compat available" value={availableCount(accounts, 'compat')} sub="compatibility surface" />
-		<MetricCard label="providers" value={providers.length} sub="registered drivers" />
+		<MetricCard label="账号" value={accounts.length} sub={`${activeCount(accounts)} 个正常`} />
+		<MetricCard label="Responses 可用" value={availableCount(accounts, 'native')} sub="openai/responses 接口面" />
+		<MetricCard label="兼容层可用" value={availableCount(accounts, 'compat')} sub="OpenAI 兼容接口面" />
+		<MetricCard label="上游类型" value={providers.length} sub="已注册 driver" />
 	</div>
 
 	<div class="section-header">
 		<div>
-			<h2>OpenAI-compatible Fallback</h2>
-			<div class="sub">static upstream accounts used after Codex capacity is unavailable</div>
+			<h2>OpenAI 兼容兜底上游</h2>
+			<div class="sub">Codex 账号池不可用后使用的静态上游账号。</div>
 		</div>
 	</div>
 	<form class="form-panel" autocomplete="off" onsubmit={(e) => { e.preventDefault(); createStaticUpstream(); }}>
 		<div class="form-row wide">
 			<div>
-				<label for="static-name">name</label>
+				<label for="static-name">名称</label>
 				<input id="static-name" name="fallback_account_label" bind:value={staticName} autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="fallback-a">
 			</div>
 			<div>
-				<label for="static-base-url">base URL</label>
+				<label for="static-base-url">Base URL</label>
 				<input id="static-base-url" name="fallback_upstream_url" bind:value={staticBaseURL} autocomplete="off" autocapitalize="off" spellcheck="false" inputmode="url" placeholder="https://third.example/v1">
 			</div>
 			<div>
@@ -353,42 +349,42 @@
 				<input id="static-api-key" name="fallback_upstream_secret" bind:value={staticAPIKey} type="password" autocomplete="new-password" autocapitalize="off" spellcheck="false" placeholder="sk-...">
 			</div>
 			<div>
-				<label for="static-models">models</label>
+				<label for="static-models">模型</label>
 				<input id="static-models" name="fallback_model_allowlist" bind:value={staticModels} autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="gpt-5.5,gpt-5">
 			</div>
 			<button class="link" type="submit" disabled={staticSubmitting || !staticName.trim() || !staticBaseURL.trim() || !staticAPIKey.trim() || staticModelList().length === 0}>
-				{staticSubmitting ? 'adding...' : 'add'}
+				{staticSubmitting ? '添加中...' : '添加'}
 			</button>
 		</div>
 		{#if staticError}
 			<p class="error-msg">{staticError}</p>
 		{/if}
 		{#if staticResult}
-			<p class="g">created {staticResult.name} / {staticResult.base_url} / {staticResult.api_key_fingerprint}</p>
+			<p class="g">已创建 {staticResult.name} / {staticResult.base_url} / {staticResult.api_key_fingerprint}</p>
 		{/if}
 	</form>
 
 	{@const accountGroups = displayGroups(accounts, providers)}
 	{#if accountGroups.length === 0}
-		<p class="muted">no providers available</p>
+		<p class="muted">暂无可用上游类型</p>
 	{:else}
 		{#each accountGroups as group (group.provider)}
 			<div class="section-header">
 				<div>
-					<h2>{group.label} Accounts</h2>
+					<h2>{group.label} 账号</h2>
 					<div class="sub">
-						{group.accounts.length} total /
-						active {activeCount(group.accounts)} /
-						native {availableCount(group.accounts, 'native')} /
-						compat {availableCount(group.accounts, 'compat')}
+						共 {group.accounts.length} 个 /
+						正常 {activeCount(group.accounts)} /
+						Responses {availableCount(group.accounts, 'native')} /
+						兼容层 {availableCount(group.accounts, 'compat')}
 					</div>
 				</div>
 				{#if hasOAuthProvider(group.provider)}
-					<a href={addAccountPath(base, group.provider)} class="secondary-btn fit">add account</a>
+					<a href={addAccountPath(base, group.provider)} class="secondary-btn fit">新增账号</a>
 				{/if}
 			</div>
 			{#if group.accounts.length === 0}
-				<p class="muted">no {group.label} accounts</p>
+				<p class="muted">暂无 {group.label} 账号</p>
 			{:else}
 				<div class="table-wrap">
 					<table>
@@ -396,32 +392,32 @@
 							<tr>
 								<th aria-sort={ariaSort(group.provider, 'email')}>
 									<button type="button" class="link sort-link {isSortActive(group.provider, 'email') ? 'sort-active' : ''}" onclick={() => setSort(group.provider, 'email')}>
-										account <span class="sort-indicator">{sortIndicator(group.provider, 'email')}</span>
+										账号 <span class="sort-indicator">{sortIndicator(group.provider, 'email')}</span>
 									</button>
 								</th>
 								<th aria-sort={ariaSort(group.provider, 'status')}>
 									<button type="button" class="link sort-link {isSortActive(group.provider, 'status') ? 'sort-active' : ''}" onclick={() => setSort(group.provider, 'status')}>
-										status <span class="sort-indicator">{sortIndicator(group.provider, 'status')}</span>
+										状态 <span class="sort-indicator">{sortIndicator(group.provider, 'status')}</span>
 									</button>
 								</th>
 								<th aria-sort={ariaSort(group.provider, 'cell')}>
 									<button type="button" class="link sort-link {isSortActive(group.provider, 'cell') ? 'sort-active' : ''}" onclick={() => setSort(group.provider, 'cell')}>
-										cell <span class="sort-indicator">{sortIndicator(group.provider, 'cell')}</span>
+										节点 <span class="sort-indicator">{sortIndicator(group.provider, 'cell')}</span>
 									</button>
 								</th>
 								<th aria-sort={ariaSort(group.provider, 'weight')}>
 									<button type="button" class="link sort-link {isSortActive(group.provider, 'weight') ? 'sort-active' : ''}" onclick={() => setSort(group.provider, 'weight')}>
-										weight <span class="sort-indicator">{sortIndicator(group.provider, 'weight')}</span>
+										权重 <span class="sort-indicator">{sortIndicator(group.provider, 'weight')}</span>
 									</button>
 								</th>
 								<th aria-sort={ariaSort(group.provider, 'cooldown')}>
 									<button type="button" class="link sort-link {isSortActive(group.provider, 'cooldown') ? 'sort-active' : ''}" onclick={() => setSort(group.provider, 'cooldown')}>
-										cooldown <span class="sort-indicator">{sortIndicator(group.provider, 'cooldown')}</span>
+										冷却 <span class="sort-indicator">{sortIndicator(group.provider, 'cooldown')}</span>
 									</button>
 								</th>
 								<th aria-sort={ariaSort(group.provider, 'last_used')}>
 									<button type="button" class="link sort-link {isSortActive(group.provider, 'last_used') ? 'sort-active' : ''}" onclick={() => setSort(group.provider, 'last_used')}>
-										last used <span class="sort-indicator">{sortIndicator(group.provider, 'last_used')}</span>
+										最近使用 <span class="sort-indicator">{sortIndicator(group.provider, 'last_used')}</span>
 									</button>
 								</th>
 								{#each group.window_labels as label, index (`${group.provider}:${label}:${index}`)}
@@ -437,15 +433,15 @@
 							{#each group.accounts as account (account.id)}
 								<tr>
 									<td><a href="{base}/console/accounts/{account.id}">{account.email}</a></td>
-									<td><span class={dotClass(account.status)}>{account.status}</span></td>
+									<td><span class={dotClass(account.status)}>{statusLabel(account.status)}</span></td>
 									<td>
 										{#if account.cell_id}
 											<a href="{base}/console/cells/{account.cell_id}">{account.cell?.name ?? account.cell_id}</a>
 										{:else}
-											<span class="muted">legacy direct</span>
+											<span class="muted">直连</span>
 										{/if}
 									</td>
-									<td>{account.weight}{#if account.weight_mode === 'auto'} <span class="muted">(auto)</span>{/if}</td>
+									<td>{account.weight}{#if account.weight_mode === 'auto'} <span class="muted">({weightModeLabel(account.weight_mode)})</span>{/if}</td>
 									<Countdown until={account.cooldown_until} tag="td" variant="cooldown" />
 									<td>{timeAgo(account.last_used_at ?? '')}</td>
 									{#each group.window_labels as label, index (`${account.id}:${label}:${index}`)}
