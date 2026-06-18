@@ -253,15 +253,20 @@
 {:else if loading}
 	<p class="loading">loading account...</p>
 {:else if acct}
-	<h2>{acct.email} <span class="muted">{acct.provider}</span></h2>
-
-	<div class="actions">
-		<button class="link" onclick={testAccount} disabled={testing}>{testing ? '[testing...]' : '[test]'}</button>
-		<button class="link" onclick={forceRefresh}>[refresh token]</button>
-		<button class="link {acct.status === 'disabled' ? 'g' : 'r'}" onclick={toggleStatus}>
-			[{acct.status === 'disabled' ? 'enable' : 'disable'}]
-		</button>
-		<ConfirmAction label="[delete]" cls="r" onclick={deleteAccount} />
+	<div class="page-header">
+		<div>
+			<div class="eyebrow">account detail</div>
+			<h1>{acct.email}</h1>
+			<p class="lede">{acct.provider} / {acct.id}</p>
+		</div>
+		<div class="page-actions">
+			<button class="link" onclick={testAccount} disabled={testing}>{testing ? 'testing...' : 'test'}</button>
+			<button class="link" onclick={forceRefresh}>refresh token</button>
+			<button class="link {acct.status === 'disabled' ? 'g' : 'r'}" onclick={toggleStatus}>
+				{acct.status === 'disabled' ? 'enable' : 'disable'}
+			</button>
+			<ConfirmAction label="delete" cls="r" onclick={deleteAccount} />
+		</div>
 	</div>
 
 	{#if actionError}<p class="error-msg">{actionError}</p>{/if}
@@ -269,9 +274,9 @@
 	{#if testResult}
 		<div class="bar" style="margin-top:0">
 			{#if testResult.ok}
-				<span class="g">&#10003; ok</span> &mdash; {acct.probe_label} &mdash; {(testResult.latency_ms / 1000).toFixed(1)}s &mdash; <span class="muted">{testResult.time}</span>
+				<span class="g">ok</span> / {acct.probe_label} / {(testResult.latency_ms / 1000).toFixed(1)}s / <span class="muted">{testResult.time}</span>
 			{:else}
-				<span class="r">&#10007; failed</span> &mdash; {testResult.error} &mdash; <span class="muted">{testResult.time}</span>
+				<span class="r">failed</span> / {testResult.error} / <span class="muted">{testResult.time}</span>
 			{/if}
 		</div>
 	{/if}
@@ -305,11 +310,11 @@
 					maxlength={100}
 					style="width:240px;font:13px monospace;border:1px solid #ccc;padding:0 4px;"
 				>
-				<button class="link" style="font-size:12px" onclick={saveEmail} disabled={savingEmail}>{savingEmail ? 'saving...' : '[save]'}</button>
-				<button class="link" style="font-size:12px;margin-left:4px" onclick={() => { editingEmail = false; emailError = ''; }}>[cancel]</button>
+				<button class="link" style="font-size:12px" onclick={saveEmail} disabled={savingEmail}>{savingEmail ? 'saving...' : 'save'}</button>
+				<button class="link" style="font-size:12px;margin-left:4px" onclick={() => { editingEmail = false; emailError = ''; }}>cancel</button>
 			{:else}
 				{acct.email}
-				<button class="link" style="font-size:12px;margin-left:6px" onclick={() => { emailInput = acct!.email; editingEmail = true; emailError = ''; }}>[edit]</button>
+				<button class="link" style="font-size:12px;margin-left:6px" onclick={() => { emailInput = acct!.email; editingEmail = true; emailError = ''; }}>edit</button>
 			{/if}
 			{#if emailError}<span class="error-msg">{emailError}</span>{/if}
 		</dd>
@@ -395,10 +400,10 @@
 					{/each}
 				</select>
 				<button class="link" onclick={saveCellBinding} disabled={savingCell || !bindingChanged()}>
-					{savingCell ? '[saving...]' : '[save]'}
+					{savingCell ? 'saving...' : 'save'}
 				</button>
 				<button class="link" onclick={cancelCellBindingEdit} disabled={savingCell} style="margin-left:6px">
-					[cancel]
+					cancel
 				</button>
 			{:else}
 				{#if acct.cell_id}
@@ -406,7 +411,7 @@
 				{:else}
 					<span class="muted">legacy direct</span>
 				{/if}
-				<button class="link" onclick={startCellBindingEdit} style="margin-left:6px">[edit]</button>
+				<button class="link" onclick={startCellBindingEdit} style="margin-left:6px">edit</button>
 			{/if}
 		</dd>
 
@@ -502,6 +507,7 @@
 	{#if !acct.sessions?.length}
 		<p class="muted">no active session bindings</p>
 	{:else}
+		<div class="table-wrap">
 		<table><thead>
 			<tr>
 				<th>session uuid</th>
@@ -518,7 +524,8 @@
 				</tr>
 			{/each}
 		</tbody></table>
+		</div>
 	{/if}
 
-	<p style="margin-top:16px;font-size:12px"><a href="{base}/accounts">&larr; back</a></p>
+	<p class="sub"><a href="{base}/accounts">back to accounts</a></p>
 {/if}

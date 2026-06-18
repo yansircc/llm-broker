@@ -1,5 +1,7 @@
 <script lang="ts">
 	import { customerApi } from '$lib/customer-api';
+	import MetricCard from '$lib/components/MetricCard.svelte';
+	import StatusBadge from '$lib/components/StatusBadge.svelte';
 	import type { BillingSummary, PaymentOrder } from '$lib/customer-types';
 	import { fmtCost, fmtDate } from '$lib/format';
 
@@ -47,8 +49,16 @@
 	}
 </script>
 
-<span class="refresh"><button class="link" onclick={loadSummary}>[refresh]</button></span>
-<h2>billing</h2>
+<div class="page-header">
+	<div>
+		<div class="eyebrow">ledger</div>
+		<h1>Billing</h1>
+		<p class="lede">Prepaid credit balance, token debits, and 7pay recharge order creation.</p>
+	</div>
+	<div class="page-actions">
+		<button class="link" onclick={loadSummary}>refresh</button>
+	</div>
+</div>
 
 {#if error}
 	<p class="error-msg">{error}</p>
@@ -57,32 +67,56 @@
 {/if}
 
 {#if summary}
-	<div class="bar">
-		<span>plan {summary.plan}</span>
-		<span>status {summary.status}</span>
-		<span>balance {fmtCost(summary.balance_usd)}</span>
-		<span>credits {fmtCost(summary.credits_usd)}</span>
-		<span>usage {fmtCost(summary.usage_usd)}</span>
+	<div class="metric-grid">
+		<MetricCard label="balance" value={fmtCost(summary.balance_usd)} sub="current spendable credits" />
+		<MetricCard label="credits" value={fmtCost(summary.credits_usd)} sub="all successful credits" />
+		<MetricCard label="usage" value={fmtCost(summary.usage_usd)} sub="recorded token debits" />
+		<MetricCard label="plan" value={summary.plan} sub={summary.status} />
 	</div>
-	<dl>
-		<dt>period start</dt><dd>{summary.period_start ? fmtDate(summary.period_start) : '-'}</dd>
-		<dt>period end</dt><dd>{summary.period_end ? fmtDate(summary.period_end) : '-'}</dd>
-	</dl>
 {/if}
 
-<h2>add credit</h2>
-<div class="bar">
-	<input type="text" bind:value={amount} style="width:80px;max-width:80px;margin-right:6px;">
-	<button class="link" onclick={createPayment} disabled={creating}>{creating ? '[creating...]' : '[create payment]'}</button>
+<div class="split-grid">
+	<section class="panel">
+		<div class="section-header flush">
+			<div>
+				<h2>Add Credit</h2>
+				<p class="hint">Amount is entered as USD credit. Payment is collected in RMB by the configured ratio.</p>
+			</div>
+		</div>
+		<div class="form-row">
+			<label for="amount">amount</label>
+			<input id="amount" type="text" bind:value={amount}>
+			<button class="primary-btn" onclick={createPayment} disabled={creating}>{creating ? 'Creating...' : 'Create payment'}</button>
+		</div>
+	</section>
+
+	{#if summary}
+		<section class="panel">
+			<div class="section-header flush">
+				<h2>Billing State</h2>
+				<StatusBadge status={summary.status} />
+			</div>
+			<dl>
+				<dt>period start</dt><dd>{summary.period_start ? fmtDate(summary.period_start) : '-'}</dd>
+				<dt>period end</dt><dd>{summary.period_end ? fmtDate(summary.period_end) : '-'}</dd>
+				<dt>plan</dt><dd>{summary.plan}</dd>
+				<dt>status</dt><dd>{summary.status}</dd>
+			</dl>
+		</section>
+	{/if}
 </div>
 
 {#if order}
-	<h2>payment order</h2>
-	<dl>
-		<dt>id</dt><dd>{order.id}</dd>
-		<dt>status</dt><dd>{order.status}</dd>
-		<dt>amount</dt><dd>{fmtCost(order.amount_usd)}</dd>
-		<dt>created</dt><dd>{fmtDate(order.created_at)}</dd>
-		<dt>checkout</dt><dd>{#if order.checkout_url}<a href={order.checkout_url}>open</a>{:else}-{/if}</dd>
-	</dl>
+	<section class="panel">
+		<div class="section-header flush">
+			<h2>Payment Order</h2>
+			<StatusBadge status={order.status} />
+		</div>
+		<dl>
+			<dt>id</dt><dd>{order.id}</dd>
+			<dt>amount</dt><dd>{fmtCost(order.amount_usd)}</dd>
+			<dt>created</dt><dd>{fmtDate(order.created_at)}</dd>
+			<dt>checkout</dt><dd>{#if order.checkout_url}<a class="secondary-btn fit" href={order.checkout_url}>Open checkout</a>{:else}-{/if}</dd>
+		</dl>
+	</section>
 {/if}

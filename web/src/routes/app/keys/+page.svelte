@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { customerApi } from '$lib/customer-api';
+	import StatusBadge from '$lib/components/StatusBadge.svelte';
 	import type { CustomerApiKey, CustomerApiKeyCreated } from '$lib/customer-types';
 	import { fmtDate, timeAgo } from '$lib/format';
 
@@ -9,6 +10,7 @@
 	let error = $state('');
 	let loading = $state(false);
 	let creating = $state(false);
+	let copied = $state(false);
 
 	$effect(() => {
 		loadKeys();
@@ -37,26 +39,57 @@
 			});
 			name = '';
 			keys = [created, ...keys.filter((key) => key.id !== created?.id)];
+			copied = false;
 		} catch (e: any) {
 			error = e.message || 'failed to create key';
 		} finally {
 			creating = false;
 		}
 	}
+
+	async function copyToken() {
+		if (!created?.token) return;
+		await navigator.clipboard.writeText(created.token);
+		copied = true;
+		setTimeout(() => { copied = false; }, 2000);
+	}
 </script>
 
-<span class="refresh"><button class="link" onclick={loadKeys}>[refresh]</button></span>
-<h2>api keys</h2>
-
-<div class="bar">
-	<input type="text" placeholder="key name" bind:value={name} disabled={creating} style="width:180px;max-width:180px;margin-right:6px;">
-	<button class="link" onclick={createKey} disabled={creating}>{creating ? '[creating...]' : '[create]'}</button>
+<div class="page-header">
+	<div>
+		<div class="eyebrow">access</div>
+		<h1>API Keys</h1>
+		<p class="lede">Create customer relay keys for OpenAI Responses and compatible clients.</p>
+	</div>
+	<div class="page-actions">
+		<button class="link" onclick={loadKeys}>refresh</button>
+	</div>
 </div>
 
+<section class="panel form-panel">
+	<div class="section-header flush">
+		<h2>Create Key</h2>
+	</div>
+	<div class="form-row">
+		<label for="key-name">name</label>
+		<input id="key-name" type="text" placeholder="default" bind:value={name} disabled={creating}>
+		<button class="primary-btn" onclick={createKey} disabled={creating}>{creating ? 'Creating...' : 'Create'}</button>
+	</div>
+</section>
+
 {#if created}
-	<div class="bar">
-		<div><span class="g">&#10003; created</span> {created.name} token: <span style="user-select:all;">{created.token}</span> <button class="link" onclick={() => { created = null; }}>[dismiss]</button></div>
-		<div class="r" style="font-size:11px;margin-top:2px;">copy now - this token will not be shown again</div>
+	<div class="panel">
+		<div class="section-header flush">
+			<div>
+				<h2>New Token</h2>
+				<p class="hint">This token is shown once.</p>
+			</div>
+			<div class="page-actions">
+				<button class="link" onclick={copyToken}>{copied ? 'copied' : 'copy'}</button>
+				<button class="link" onclick={() => { created = null; copied = false; }}>dismiss</button>
+			</div>
+		</div>
+		<div class="copy-value mono">{created.token}</div>
 	</div>
 {/if}
 
@@ -67,20 +100,22 @@
 {:else if keys.length === 0}
 	<p class="muted">no keys</p>
 {:else}
-	<table>
-		<thead>
-			<tr><th>name</th><th>prefix</th><th>status</th><th>created</th><th>last used</th></tr>
-		</thead>
-		<tbody>
-			{#each keys as key (key.id)}
-				<tr>
-					<td>{key.name}</td>
-					<td class="muted">{key.prefix ?? '-'}</td>
-					<td>{key.status}</td>
-					<td>{fmtDate(key.created_at)}</td>
-					<td>{key.last_used_at ? timeAgo(key.last_used_at) : '-'}</td>
-				</tr>
-			{/each}
-		</tbody>
-	</table>
+	<div class="table-wrap">
+		<table>
+			<thead>
+				<tr><th>name</th><th>prefix</th><th>status</th><th>created</th><th>last used</th></tr>
+			</thead>
+			<tbody>
+				{#each keys as key (key.id)}
+					<tr>
+						<td>{key.name}</td>
+						<td class="muted mono">{key.prefix ?? '-'}</td>
+						<td><StatusBadge status={key.status} /></td>
+						<td>{fmtDate(key.created_at)}</td>
+						<td>{key.last_used_at ? timeAgo(key.last_used_at) : '-'}</td>
+					</tr>
+				{/each}
+			</tbody>
+		</table>
+	</div>
 {/if}

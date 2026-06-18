@@ -1,5 +1,8 @@
 <script lang="ts">
 	import { customerApi } from '$lib/customer-api';
+	import MetricCard from '$lib/components/MetricCard.svelte';
+	import StatusBadge from '$lib/components/StatusBadge.svelte';
+	import TerminalPanel from '$lib/components/TerminalPanel.svelte';
 	import type { BillingSummary, CustomerApiKey, CustomerMe, ReferralSummary } from '$lib/customer-types';
 	import { fmtCost, fmtDate } from '$lib/format';
 
@@ -39,21 +42,47 @@
 {:else if !me}
 	<p class="loading">loading customer dashboard...</p>
 {:else}
-	<span class="refresh"><button class="link" onclick={loadAll}>[refresh]</button> <span class="muted">{lastRefresh}</span></span>
-	<h2>dashboard</h2>
-	<div class="bar">
-		<span>status {me.user.status}</span>
-		<span>plan {billing?.plan ?? me.user.plan ?? '-'}</span>
-		<span>credits {billing ? fmtCost(billing.credits_usd) : '-'}</span>
-		<span>usage {billing ? fmtCost(billing.usage_usd) : '-'}</span>
-		<span>keys {keys.length}</span>
-		<span>referrals {referrals?.signups ?? 0}</span>
+	<div class="page-header">
+		<div>
+			<div class="eyebrow">customer console</div>
+			<h1>Dashboard</h1>
+			<p class="lede">Balance, key inventory, usage, and referral status for the current CDX account.</p>
+		</div>
+		<div class="page-actions">
+			<button class="link" onclick={loadAll}>refresh</button>
+			<span class="muted mono">{lastRefresh}</span>
+		</div>
 	</div>
 
-	<h2>account</h2>
-	<dl>
-		<dt>email</dt><dd>{me.user.email}</dd>
-		<dt>status</dt><dd>{me.user.status}</dd>
-		<dt>created</dt><dd>{me.user.created_at ? fmtDate(me.user.created_at) : '-'}</dd>
-	</dl>
+	<div class="metric-grid">
+		<MetricCard label="balance" value={billing ? fmtCost(billing.balance_usd) : '-'} sub="available prepaid credit" />
+		<MetricCard label="credits" value={billing ? fmtCost(billing.credits_usd) : '-'} sub="total credited amount" />
+		<MetricCard label="usage" value={billing ? fmtCost(billing.usage_usd) : '-'} sub="token debits recorded" />
+		<MetricCard label="api keys" value={keys.length} sub={`${referrals?.signups ?? 0} referral signups`} />
+	</div>
+
+	<div class="split-grid">
+		<section class="panel">
+			<div class="section-header flush">
+				<h2>Account</h2>
+				<StatusBadge status={me.user.status} />
+			</div>
+			<dl>
+				<dt>email</dt><dd>{me.user.email}</dd>
+				<dt>plan</dt><dd>{billing?.plan ?? me.user.plan ?? '-'}</dd>
+				<dt>created</dt><dd>{me.user.created_at ? fmtDate(me.user.created_at) : '-'}</dd>
+				<dt>billing status</dt><dd>{billing?.status ?? '-'}</dd>
+			</dl>
+		</section>
+
+		<TerminalPanel
+			title="relay contract"
+			lines={[
+				'surface: openai/responses',
+				'admission: balance > 0',
+				'pricing: token metering',
+				'currency: USD display / RMB recharge'
+			]}
+		/>
+	</div>
 {/if}

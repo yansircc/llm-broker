@@ -2,6 +2,7 @@
 	import { api } from '$lib/api';
 	import type { ActivityData, DashboardEvent, RecentRequestLog, UsagePeriod } from '$lib/admin-types';
 	import ConfirmAction from '$lib/components/ConfirmAction.svelte';
+	import MetricCard from '$lib/components/MetricCard.svelte';
 	import { eventTypeColor, fmtCost, fmtDate, fmtJSON, fmtNum, fmtTime, shortModel, statusColor } from '$lib/format';
 
 	let data = $state<ActivityData | null>(null);
@@ -122,10 +123,26 @@
 {:else if !data}
 	<p class="loading">loading activity...</p>
 {:else}
-	<span class="refresh"><button class="link" onclick={loadAll}>[refresh]</button> <span class="muted">{lastRefresh}</span></span>
-	<div class="sub">{data.health.version} &middot; up {data.health.uptime} &middot; sqlite <span class={data.health.sqlite === 'ok' ? 'g' : 'r'}>{data.health.sqlite}</span></div>
+	<div class="page-header">
+		<div>
+			<div class="eyebrow">observability</div>
+			<h1>Activity</h1>
+			<p class="lede">Usage periods, failed relay evidence, and broker events for post-hoc debugging.</p>
+		</div>
+		<div class="page-actions">
+			<button class="link" onclick={loadAll}>refresh</button>
+			<span class="muted mono">{lastRefresh}</span>
+		</div>
+	</div>
 
-	<h2>usage</h2>
+	<div class="metric-grid">
+		<MetricCard label="version" value={data.health.version} sub="broker build" />
+		<MetricCard label="uptime" value={data.health.uptime} sub="current process" />
+		<MetricCard label="sqlite" value={data.health.sqlite} sub="local store health" />
+		<MetricCard label="events" value={data.events.length} sub={`${data.recent_failures?.length ?? 0} recent failures`} />
+	</div>
+
+	<h2>Usage</h2>
 	{#if usageLoading}
 		<p class="muted">loading usage...</p>
 	{:else if usageError}
@@ -133,108 +150,112 @@
 	{:else if usage.length === 0}
 		<p class="muted">no usage data yet</p>
 	{:else}
-		<table>
-			<thead>
-				<tr>
-					<th></th>
-					<th class="num">requests</th>
-					<th class="num">input</th>
-					<th class="num">output</th>
-					<th class="num">cache read</th>
-					<th class="num">cost</th>
-				</tr>
-			</thead>
-			<tbody>
-				{#each usage as period, i (period.label)}
+		<div class="table-wrap">
+			<table>
+				<thead>
 					<tr>
-						<td>{period.label}</td>
-						<td class="num">{fmtNum(period.requests)}</td>
-						<td class="num">{fmtNum(period.input_tokens)}</td>
-						<td class="num">{fmtNum(period.output_tokens)}</td>
-						<td class="num">{fmtNum(period.cache_read_tokens)}</td>
-						<td class="num">{#if i === usage.length - 1}<b>{fmtCost(period.cost_usd)}</b>{:else}{fmtCost(period.cost_usd)}{/if}</td>
+						<th></th>
+						<th class="num">requests</th>
+						<th class="num">input</th>
+						<th class="num">output</th>
+						<th class="num">cache read</th>
+						<th class="num">cost</th>
 					</tr>
-				{/each}
-			</tbody>
-		</table>
+				</thead>
+				<tbody>
+					{#each usage as period, i (period.label)}
+						<tr>
+							<td>{period.label}</td>
+							<td class="num">{fmtNum(period.requests)}</td>
+							<td class="num">{fmtNum(period.input_tokens)}</td>
+							<td class="num">{fmtNum(period.output_tokens)}</td>
+							<td class="num">{fmtNum(period.cache_read_tokens)}</td>
+							<td class="num">{#if i === usage.length - 1}<b>{fmtCost(period.cost_usd)}</b>{:else}{fmtCost(period.cost_usd)}{/if}</td>
+						</tr>
+					{/each}
+				</tbody>
+			</table>
+		</div>
 	{/if}
 
 	<div class="section-header">
-		<h2>recent failed relays</h2>
+		<h2>Recent Failed Relays</h2>
 	</div>
 	{#if !data.recent_failures || data.recent_failures.length === 0}
 		<p class="muted">no failed relays yet</p>
 	{:else}
-		<table>
-			<thead>
-				<tr>
-					<th>time</th>
-					<th>key</th>
-					<th>provider</th>
-					<th>surface</th>
-					<th>model</th>
-					<th>path</th>
-					<th>account</th>
-					<th>cell</th>
-					<th>outcome</th>
-					<th>request id</th>
-					<th>error</th>
-					<th class="num">bytes</th>
-					<th class="num">attempt</th>
-					<th>details</th>
-				</tr>
-			</thead>
-			<tbody>
-				{#each data.recent_failures as log (log.id)}
+		<div class="table-wrap">
+			<table>
+				<thead>
 					<tr>
-						<td class="muted">{fmtTime(log.created_at)}</td>
-						<td>{userLabel(log.user_id)}</td>
-						<td>{log.provider}</td>
-						<td>{log.surface || '-'}</td>
-						<td>{shortModel(log.model)}</td>
-						<td>{log.path || '-'}</td>
-						<td>{accountLabel(log.account_id)}</td>
-						<td>{log.cell_id || 'legacy direct'}</td>
-						<td class={statusColor(log.status)}>{failureOutcome(log)}</td>
-						<td>{log.upstream_request_id || '-'}</td>
-						<td>{failureError(log)}</td>
-						<td class="num">{fmtNum(log.request_bytes)}</td>
-						<td class="num">{fmtNum(log.attempt_count)}</td>
-						<td>
-							{#if hasDetails(log)}
-								<details>
-									<summary>view</summary>
-									<div class="detail-block">
-										<div><span class="muted">full account</span> <span class="mono">{log.account_id}</span></div>
-										<div><span class="muted">session</span> <span class="mono">{log.session_uuid || '-'}</span></div>
-										<div><span class="muted">binding</span> {log.binding_source || '-'}</div>
-										<div><span class="muted">error</span> {failureError(log)}</div>
-										<div><span class="muted">client body</span><pre>{log.client_body_excerpt || '-'}</pre></div>
-										<div><span class="muted">request meta</span><pre>{fmtJSON(log.request_meta)}</pre></div>
-										<div><span class="muted">client headers</span><pre>{fmtJSON(log.client_headers)}</pre></div>
-										<div><span class="muted">upstream url</span> <span class="mono">{log.upstream_url || '-'}</span></div>
-										<div><span class="muted">upstream request headers</span><pre>{fmtJSON(log.upstream_request_headers)}</pre></div>
-										<div><span class="muted">upstream request meta</span><pre>{fmtJSON(log.upstream_request_meta)}</pre></div>
-										<div><span class="muted">upstream request body</span><pre>{log.upstream_request_body_excerpt || '-'}</pre></div>
-										<div><span class="muted">upstream response headers</span><pre>{fmtJSON(log.upstream_headers)}</pre></div>
-										<div><span class="muted">upstream response meta</span><pre>{fmtJSON(log.upstream_response_meta)}</pre></div>
-										<div><span class="muted">upstream response body</span><pre>{log.upstream_response_body_excerpt || '-'}</pre></div>
-									</div>
-								</details>
-							{:else}
-								<span class="muted">-</span>
-							{/if}
-						</td>
+						<th>time</th>
+						<th>key</th>
+						<th>provider</th>
+						<th>surface</th>
+						<th>model</th>
+						<th>path</th>
+						<th>account</th>
+						<th>cell</th>
+						<th>outcome</th>
+						<th>request id</th>
+						<th>error</th>
+						<th class="num">bytes</th>
+						<th class="num">attempt</th>
+						<th>details</th>
 					</tr>
-				{/each}
-			</tbody>
-		</table>
+				</thead>
+				<tbody>
+					{#each data.recent_failures as log (log.id)}
+						<tr>
+							<td class="muted">{fmtTime(log.created_at)}</td>
+							<td>{userLabel(log.user_id)}</td>
+							<td>{log.provider}</td>
+							<td>{log.surface || '-'}</td>
+							<td>{shortModel(log.model)}</td>
+							<td>{log.path || '-'}</td>
+							<td>{accountLabel(log.account_id)}</td>
+							<td>{log.cell_id || 'legacy direct'}</td>
+							<td class={statusColor(log.status)}>{failureOutcome(log)}</td>
+							<td>{log.upstream_request_id || '-'}</td>
+							<td>{failureError(log)}</td>
+							<td class="num">{fmtNum(log.request_bytes)}</td>
+							<td class="num">{fmtNum(log.attempt_count)}</td>
+							<td>
+								{#if hasDetails(log)}
+									<details>
+										<summary>view</summary>
+										<div class="detail-block">
+											<div><span class="muted">full account</span> <span class="mono">{log.account_id}</span></div>
+											<div><span class="muted">session</span> <span class="mono">{log.session_uuid || '-'}</span></div>
+											<div><span class="muted">binding</span> {log.binding_source || '-'}</div>
+											<div><span class="muted">error</span> {failureError(log)}</div>
+											<div><span class="muted">client body</span><pre>{log.client_body_excerpt || '-'}</pre></div>
+											<div><span class="muted">request meta</span><pre>{fmtJSON(log.request_meta)}</pre></div>
+											<div><span class="muted">client headers</span><pre>{fmtJSON(log.client_headers)}</pre></div>
+											<div><span class="muted">upstream url</span> <span class="mono">{log.upstream_url || '-'}</span></div>
+											<div><span class="muted">upstream request headers</span><pre>{fmtJSON(log.upstream_request_headers)}</pre></div>
+											<div><span class="muted">upstream request meta</span><pre>{fmtJSON(log.upstream_request_meta)}</pre></div>
+											<div><span class="muted">upstream request body</span><pre>{log.upstream_request_body_excerpt || '-'}</pre></div>
+											<div><span class="muted">upstream response headers</span><pre>{fmtJSON(log.upstream_headers)}</pre></div>
+											<div><span class="muted">upstream response meta</span><pre>{fmtJSON(log.upstream_response_meta)}</pre></div>
+											<div><span class="muted">upstream response body</span><pre>{log.upstream_response_body_excerpt || '-'}</pre></div>
+										</div>
+									</details>
+								{:else}
+									<span class="muted">-</span>
+								{/if}
+							</td>
+						</tr>
+					{/each}
+				</tbody>
+			</table>
+		</div>
 	{/if}
 
 	<div class="section-header">
-		<h2>recent errors</h2>
+		<h2>Recent Errors</h2>
 		{#if data.events.length > 0}
-			<ConfirmAction label="[clear]" cls="r" onclick={clearEvents} />
+			<ConfirmAction label="clear" cls="r" onclick={clearEvents} />
 		{/if}
 	</div>
 	{#if data.events.length === 0}

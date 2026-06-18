@@ -2,6 +2,7 @@
 	import '$lib/global.css';
 	import { base } from '$app/paths';
 	import { page } from '$app/stores';
+	import Logo from '$lib/components/Logo.svelte';
 
 	interface Props {
 		children: import('svelte').Snippet;
@@ -26,21 +27,36 @@
 
 	function showAdminNav() {
 		const path = $page.url.pathname;
-		return !path.endsWith('/login') && path !== `${base}/app/login` && !path.startsWith(`${base}/app/`);
+		return path !== `${base}/` && path !== base && !path.endsWith('/login') && !path.startsWith(`${base}/app/`);
 	}
 </script>
 
 {#if showAdminNav()}
-	<h1><a href="{base}/dashboard" style="text-decoration:none;color:inherit;">broker</a></h1>
-	<div class="topnav">
-		{#each navItems as item (item.href)}
-			{#if activeNav(item.href)}
-				<span class="active">[{item.label}]</span>
-			{:else}
-				<a href="{base}{item.href}">[{item.label}]</a>
-			{/if}
-		{/each}
+	<div class="admin-shell">
+		<header class="top-glass">
+			<div class="nav-inner">
+				<Logo href={`${base}/dashboard`} label="CDX Admin" />
+				<nav class="nav-links" aria-label="Admin navigation">
+					<a href="{base}/dashboard" class:active={activeNav('/dashboard')}>control</a>
+					<a href="{base}/app/dashboard">customer app</a>
+					<a href="{base}/">site</a>
+				</nav>
+			</div>
+		</header>
+		<main class="admin-grid">
+			<aside class="admin-side">
+				<div class="eyebrow">operations</div>
+				<nav class="nav-links" aria-label="Operations navigation">
+					{#each navItems as item (item.href)}
+						<a href="{base}{item.href}" class:active={activeNav(item.href)}>{item.label}</a>
+					{/each}
+				</nav>
+			</aside>
+			<section class="admin-content">
+				{@render children()}
+			</section>
+		</main>
 	</div>
+{:else}
+	{@render children()}
 {/if}
-
-{@render children()}

@@ -2,6 +2,7 @@
 	import { base } from '$app/paths';
 	import { page } from '$app/stores';
 	import { customerApi } from '$lib/customer-api';
+	import Logo from '$lib/components/Logo.svelte';
 	import type { CustomerMe } from '$lib/customer-types';
 
 	interface Props {
@@ -55,26 +56,33 @@
 </script>
 
 {#if showCustomerNav()}
-	<h1><a href="{base}/app/dashboard" style="text-decoration:none;color:inherit;">broker app</a></h1>
-	<div class="topnav">
-		{#each navItems as item (item.href)}
-			{#if activeNav(item.href)}
-				<span class="active">[{item.label}]</span>
-			{:else}
-				<a href="{base}{item.href}">[{item.label}]</a>
-			{/if}
-		{/each}
-		<button class="link" onclick={logout}>[logout]</button>
+	<div class="customer-shell">
+		<header class="top-glass">
+			<div class="nav-inner">
+				<div>
+					<Logo href={`${base}/app/dashboard`} label="CDX Console" />
+					<div class="sub">
+						{#if me}
+							{me.user.email} · {me.user.status}{me.user.plan ? ` / ${me.user.plan}` : ''}
+						{:else if error}
+							<span class="r">{error}</span>
+						{:else}
+							<span class="loading">loading session...</span>
+						{/if}
+					</div>
+				</div>
+				<nav class="nav-links" aria-label="Customer navigation">
+					{#each navItems as item (item.href)}
+						<a href="{base}{item.href}" class:active={activeNav(item.href)}>{item.label}</a>
+					{/each}
+					<button class="link" onclick={logout}>logout</button>
+				</nav>
+			</div>
+		</header>
+		<main class="shell-main">
+			{@render children()}
+		</main>
 	</div>
-	<div class="sub">
-		{#if me}
-			{me.user.email} &middot; {me.user.status}{me.user.plan ? ` / ${me.user.plan}` : ''}
-		{:else if error}
-			<span class="r">{error}</span>
-		{:else}
-			<span class="loading">loading session...</span>
-		{/if}
-	</div>
+{:else}
+	{@render children()}
 {/if}
-
-{@render children()}

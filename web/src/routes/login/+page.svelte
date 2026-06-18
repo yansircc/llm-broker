@@ -1,5 +1,7 @@
 <script lang="ts">
 	import { base } from '$app/paths';
+	import Logo from '$lib/components/Logo.svelte';
+	import TerminalPanel from '$lib/components/TerminalPanel.svelte';
 
 	let token = $state('');
 	let error = $state('');
@@ -31,19 +33,35 @@
 	}
 </script>
 
-<h2>admin login</h2>
+<div class="auth-page">
+	<div class="auth-grid">
+		<section class="auth-intro">
+			<div>
+				<Logo href={`${base}/`} label="CDX Admin" />
+				<div class="eyebrow auth-eyebrow">operator access</div>
+				<h1>Broker control plane.</h1>
+				<p class="lede">Account pool state, relay failures, user billing, and payment orders stay behind the admin token gate.</p>
+			</div>
+			<TerminalPanel title="admin boundary" lines={['surface: /admin/*', 'auth: token session', 'scope: operations']} />
+		</section>
 
-<form onsubmit={handleLogin}>
-	<fieldset>
-		<legend>authenticate</legend>
-		<label for="admin-token">admin token</label>
-		<input id="admin-token" type="password" bind:value={token} placeholder="enter admin token...">
-		{#if error}
-			<p class="error-msg">{error}</p>
-		{/if}
-		<br>
-		<button type="submit" disabled={loading || !token.trim()}>
-			{loading ? 'logging in...' : 'login'}
-		</button>
-	</fieldset>
-</form>
+		<section class="auth-card">
+			<div class="page-header compact">
+				<div>
+					<div class="eyebrow">login</div>
+					<h2>Admin Login</h2>
+				</div>
+			</div>
+			<form onsubmit={handleLogin}>
+				<label for="admin-token">admin token</label>
+				<input id="admin-token" type="password" bind:value={token} placeholder="enter admin token">
+				{#if error}
+					<p class="error-msg">{error}</p>
+				{/if}
+				<button class="primary-btn" type="submit" disabled={loading || !token.trim()}>
+					{loading ? 'Logging in...' : 'Login'}
+				</button>
+			</form>
+		</section>
+	</div>
+</div>

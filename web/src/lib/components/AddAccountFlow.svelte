@@ -169,7 +169,13 @@
 	}
 </script>
 
-<h2>add account</h2>
+<div class="page-header">
+	<div>
+		<div class="eyebrow">provider onboarding</div>
+		<h1>Add Account</h1>
+		<p class="lede">Generate provider auth, bind an egress route, and exchange the callback into a broker account.</p>
+	</div>
+</div>
 
 {#if loadingProvider}
 	<p class="loading">loading provider...</p>
@@ -199,11 +205,11 @@
 			{/each}
 		</select>
 		<button class="link" onclick={() => void loadProvider(providerID)} disabled={loadingProvider || generating || exchanging} style="margin-left:8px">
-			[refresh cells]
+			refresh cells
 		</button>
 		{#if sessionId || result}
 			<button class="link" onclick={startOver} disabled={generating || exchanging} style="margin-left:8px">
-				[start over]
+				start over
 			</button>
 		{/if}
 		{#if selectedRoute === legacyDirectValue}
@@ -225,7 +231,7 @@
 	{#if !sessionId}
 		<p class="hint">generate an OAuth URL, open it in browser, login and authorize.</p>
 		<button class="link" onclick={generateAuthUrl} disabled={generating || !hasRouteSelection()}>
-			{generating ? '[generating...]' : '[generate auth url]'}
+			{generating ? 'generating...' : 'generate auth url'}
 		</button>
 		{#if genError}
 			<p class="error-msg">{genError}</p>
@@ -251,7 +257,7 @@
 				<p class="error-msg">{exchangeError}</p>
 			{/if}
 			<button class="link" onclick={exchangeCode} disabled={exchanging || !callbackInput.trim()}>
-				{exchanging ? '[exchanging...]' : '[exchange code]'}
+				{exchanging ? 'exchanging...' : 'exchange code'}
 			</button>
 		{:else}
 			<div class="bar">
@@ -267,4 +273,4 @@
 	{/if}
 {/if}
 
-<p style="margin-top:16px;font-size:12px"><a href="{base}/dashboard">&larr; back</a></p>
+<p class="sub"><a href="{base}/dashboard">back to ops</a></p>

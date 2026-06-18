@@ -1,6 +1,8 @@
 <script lang="ts">
 	import { base } from '$app/paths';
 	import { customerApi } from '$lib/customer-api';
+	import Logo from '$lib/components/Logo.svelte';
+	import TerminalPanel from '$lib/components/TerminalPanel.svelte';
 
 	let email = $state('');
 	let password = $state('');
@@ -26,17 +28,36 @@
 	}
 </script>
 
-<h2>customer login</h2>
+<div class="auth-page">
+	<div class="auth-grid">
+		<section class="auth-intro">
+			<div>
+				<Logo href={`${base}/`} label="CDX" />
+				<div class="eyebrow auth-eyebrow">customer console</div>
+				<h1>API keys, prepaid balance, token usage.</h1>
+				<p class="lede">Sign in to manage relay access, recharge credits, and inspect referral rewards.</p>
+			</div>
+			<TerminalPanel title="session gate" lines={['auth: customer', 'surface: openai/responses', 'billing: prepaid ledger']} />
+		</section>
 
-<form onsubmit={login}>
-	<fieldset>
-		<legend>authenticate</legend>
-		<label for="email">email</label>
-		<input id="email" type="text" autocomplete="email" bind:value={email}>
-		<label for="password">password</label>
-		<input id="password" type="password" autocomplete="current-password" bind:value={password}>
-		{#if error}<p class="error-msg">{error}</p>{/if}
-		<button type="submit" disabled={loading || !email.trim() || !password}>{loading ? 'logging in...' : 'login'}</button>
-		<span class="add-link"><a href="{base}/app/register">[register]</a></span>
-	</fieldset>
-</form>
+		<section class="auth-card">
+			<div class="page-header compact">
+				<div>
+					<div class="eyebrow">login</div>
+					<h2>Customer Login</h2>
+				</div>
+			</div>
+			<form onsubmit={login}>
+				<label for="email">email</label>
+				<input id="email" type="text" autocomplete="email" bind:value={email}>
+				<label for="password">password</label>
+				<input id="password" type="password" autocomplete="current-password" bind:value={password}>
+				{#if error}<p class="error-msg">{error}</p>{/if}
+				<button class="primary-btn" type="submit" disabled={loading || !email.trim() || !password}>
+					{loading ? 'Logging in...' : 'Login'}
+				</button>
+				<a class="secondary-btn" href="{base}/app/register">Create account</a>
+			</form>
+		</section>
+	</div>
+</div>

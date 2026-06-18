@@ -181,14 +181,44 @@ func (s *Server) requireCustomer(w http.ResponseWriter, r *http.Request) (*custo
 }
 
 func (s *Server) publicURL(r *http.Request, path string) string {
-	if s.cfg != nil && s.cfg.SiteURL != "" {
+	if origin := s.requestOrigin(r); origin != "" {
+		return origin + path
+	}
+	if s != nil && s.cfg != nil && s.cfg.SiteURL != "" {
 		return strings.TrimRight(s.cfg.SiteURL, "/") + path
 	}
+	return path
+}
+
+func (s *Server) requestOrigin(r *http.Request) string {
+	if r == nil {
+		return ""
+	}
+	host := firstHeaderValue(r.Header.Get("X-Forwarded-Host"))
+	if host == "" {
+		host = strings.TrimSpace(r.Host)
+	}
+	if host == "" {
+		return ""
+	}
+
 	scheme := "http"
-	if r.TLS != nil {
+	if forwardedProto := firstHeaderValue(r.Header.Get("X-Forwarded-Proto")); forwardedProto == "https" || forwardedProto == "http" {
+		scheme = forwardedProto
+	} else if r.TLS != nil {
+		scheme = "https"
+	} else if s != nil && s.cfg != nil && strings.HasPrefix(strings.ToLower(strings.TrimSpace(s.cfg.SiteURL)), "https://") {
 		scheme = "https"
 	}
-	return scheme + "://" + r.Host + path
+	return scheme + "://" + host
+}
+
+func firstHeaderValue(raw string) string {
+	value := strings.TrimSpace(raw)
+	if value == "" {
+		return ""
+	}
+	return strings.TrimSpace(strings.Split(value, ",")[0])
 }
 
 func (s *Server) secureCookie(r *http.Request) bool {

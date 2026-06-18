@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { base } from '$app/paths';
 	import { api } from '$lib/api';
+	import MetricCard from '$lib/components/MetricCard.svelte';
 	import { fmtCost } from '$lib/format';
 
 	interface AdminBillingSummary {
@@ -34,10 +35,17 @@
 	}
 </script>
 
-<span class="refresh"><button class="link" onclick={loadSummary}>[refresh]</button> <span class="muted">{lastRefresh}</span></span>
-<h2>billing admin</h2>
-<div class="topnav">
-	<a href="{base}/admin-billing/orders">[orders]</a>
+<div class="page-header">
+	<div>
+		<div class="eyebrow">billing ops</div>
+		<h1>Billing Admin</h1>
+		<p class="lede">Customer count, paid revenue, issued credits, and open recharge orders.</p>
+	</div>
+	<div class="page-actions">
+		<a class="secondary-btn fit" href="{base}/admin-billing/orders">orders</a>
+		<button class="link" onclick={loadSummary}>refresh</button>
+		<span class="muted mono">{lastRefresh}</span>
+	</div>
 </div>
 
 {#if error}
@@ -45,12 +53,11 @@
 {:else if loading}
 	<p class="loading">loading billing admin...</p>
 {:else if summary}
-	<div class="bar">
-		<span>users {summary.users}</span>
-		<span>active {summary.active_users}</span>
-		<span>open orders {summary.open_orders}</span>
-		<span>revenue {fmtCost(summary.revenue_usd)}</span>
-		<span>credits {fmtCost(summary.credits_usd)}</span>
+	<div class="metric-grid">
+		<MetricCard label="users" value={summary.users} sub={`${summary.active_users} active`} />
+		<MetricCard label="open orders" value={summary.open_orders} sub="pending payment" />
+		<MetricCard label="revenue" value={fmtCost(summary.revenue_usd)} sub="paid order total" />
+		<MetricCard label="credits" value={fmtCost(summary.credits_usd)} sub="ledger credits issued" />
 	</div>
 {:else}
 	<p class="muted">no billing summary</p>

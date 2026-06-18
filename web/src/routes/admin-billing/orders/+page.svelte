@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { api } from '$lib/api';
+	import StatusBadge from '$lib/components/StatusBadge.svelte';
 	import { fmtCost, fmtDate } from '$lib/format';
 
 	interface AdminBillingOrder {
@@ -36,8 +37,17 @@
 	}
 </script>
 
-<span class="refresh"><button class="link" onclick={loadOrders}>[refresh]</button> <span class="muted">{lastRefresh}</span></span>
-<h2>billing orders</h2>
+<div class="page-header">
+	<div>
+		<div class="eyebrow">payments</div>
+		<h1>Billing Orders</h1>
+		<p class="lede">Recharge orders created by customer billing pages.</p>
+	</div>
+	<div class="page-actions">
+		<button class="link" onclick={loadOrders}>refresh</button>
+		<span class="muted mono">{lastRefresh}</span>
+	</div>
+</div>
 
 {#if error}
 	<p class="error-msg">{error}</p>
@@ -46,22 +56,24 @@
 {:else if orders.length === 0}
 	<p class="muted">no orders</p>
 {:else}
-	<table>
-		<thead>
-			<tr><th>order</th><th>user</th><th>status</th><th class="num">amount</th><th>provider</th><th>created</th><th>paid</th></tr>
-		</thead>
-		<tbody>
-			{#each orders as order (order.id)}
-				<tr>
-					<td>{order.id}</td>
-					<td>{order.user_email || order.user_id}</td>
-					<td>{order.status}</td>
-					<td class="num">{fmtCost(order.amount_usd)}</td>
-					<td>{order.provider ?? '-'}</td>
-					<td>{fmtDate(order.created_at)}</td>
-					<td>{order.paid_at ? fmtDate(order.paid_at) : '-'}</td>
-				</tr>
-			{/each}
-		</tbody>
-	</table>
+	<div class="table-wrap">
+		<table>
+			<thead>
+				<tr><th>order</th><th>user</th><th>status</th><th class="num">amount</th><th>provider</th><th>created</th><th>paid</th></tr>
+			</thead>
+			<tbody>
+				{#each orders as order (order.id)}
+					<tr>
+						<td class="mono">{order.id}</td>
+						<td>{order.user_email || order.user_id}</td>
+						<td><StatusBadge status={order.status} /></td>
+						<td class="num">{fmtCost(order.amount_usd)}</td>
+						<td>{order.provider ?? '-'}</td>
+						<td>{fmtDate(order.created_at)}</td>
+						<td>{order.paid_at ? fmtDate(order.paid_at) : '-'}</td>
+					</tr>
+				{/each}
+			</tbody>
+		</table>
+	</div>
 {/if}

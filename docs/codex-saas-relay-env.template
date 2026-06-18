@@ -27,7 +27,7 @@ SNAPSHOT_ROOT=
 # Server
 HOST=127.0.0.1
 PORT=3000
-SITE_URL=https://cdx.210k.cc
+SITE_URL=https://your-domain.example
 
 # Storage
 DB_PATH=/var/lib/llm-broker/llm-broker.db

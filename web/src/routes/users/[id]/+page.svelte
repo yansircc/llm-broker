@@ -4,8 +4,9 @@
 	import { base } from '$app/paths';
 	import { api } from '$lib/api';
 	import type { AccountListItem, RecentRequestLog, UserSurface } from '$lib/admin-types';
-	import { timeAgo, fmtNum, fmtCost, fmtDate, fmtJSON, tagClass, statusColor, shortModel } from '$lib/format';
+	import { timeAgo, fmtNum, fmtCost, fmtDate, fmtJSON, statusColor, shortModel } from '$lib/format';
 	import ConfirmAction from '$lib/components/ConfirmAction.svelte';
+	import StatusBadge from '$lib/components/StatusBadge.svelte';
 
 	interface UsagePeriod {
 		label: string;
@@ -233,28 +234,32 @@
 	{@const models = user.model_usage ?? []}
 	{@const requests = user.recent_requests ?? []}
 
-	<h2>{user.name} <span class={tagClass(user.status)}>{user.status}</span></h2>
-
-	<div class="actions">
-		<ConfirmAction label="[regenerate token]" onclick={regenerateToken} />
-		<button class="link {user.status === 'active' ? 'r' : 'g'}" onclick={toggleStatus}>
-			[{user.status === 'active' ? 'disable' : 'enable'}]
-		</button>
-		<ConfirmAction label="[delete]" cls="r" onclick={deleteUser} />
+	<div class="page-header">
+		<div>
+			<div class="eyebrow">user detail</div>
+			<h1>{user.name}</h1>
+			<p class="lede mono">{user.id}</p>
+		</div>
+		<div class="page-actions">
+			<StatusBadge status={user.status} />
+			<ConfirmAction label="regenerate token" onclick={regenerateToken} />
+			<button class="link {user.status === 'active' ? 'r' : 'g'}" onclick={toggleStatus}>
+				{user.status === 'active' ? 'disable' : 'enable'}
+			</button>
+			<ConfirmAction label="delete" cls="r" onclick={deleteUser} />
+		</div>
 	</div>
 
 	{#if actionError}<p class="error-msg">{actionError}</p>{/if}
 
 	{#if newToken}
-		<div class="bar">
-			token: <b>{newToken}</b>
-			<br><br>
-			<span class="r">Copy now -- this token will not be shown again.</span>
-			<br>
-			Configure Claude Code:
-			<br>
-			&nbsp;&nbsp;export ANTHROPIC_API_KEY={newToken}
-		</div>
+		<section class="panel">
+			<div class="section-header flush">
+				<h2>New Token</h2>
+				<p class="hint">This token is shown once.</p>
+			</div>
+			<div class="copy-value mono">{newToken}</div>
+		</section>
 	{/if}
 
 	<dl>
@@ -304,13 +309,13 @@
 	<div class="actions" style="margin-top:0">
 		{#if editingPolicy}
 			<button class="link" onclick={savePolicy} disabled={savingPolicy || !policyChanged()}>
-				{savingPolicy ? '[saving...]' : '[save policy]'}
+				{savingPolicy ? 'saving...' : 'save policy'}
 			</button>
 			<button class="link" onclick={cancelPolicyEdit} disabled={savingPolicy}>
-				[cancel]
+				cancel
 			</button>
 		{:else}
-			<button class="link" onclick={startPolicyEdit}>[edit]</button>
+			<button class="link" onclick={startPolicyEdit}>edit</button>
 		{/if}
 	</div>
 
@@ -322,6 +327,7 @@
 	{#if usage.length === 0}
 		<p class="muted">no usage data</p>
 	{:else}
+		<div class="table-wrap">
 		<table><thead>
 			<tr>
 				<th></th>
@@ -342,6 +348,7 @@
 				</tr>
 			{/each}
 		</tbody></table>
+		</div>
 	{/if}
 
 	<!-- Per-model breakdown -->
@@ -349,6 +356,7 @@
 	{#if models.length === 0}
 		<p class="muted">no model data</p>
 	{:else}
+		<div class="table-wrap">
 		<table><thead>
 			<tr>
 				<th>model</th>
@@ -369,6 +377,7 @@
 				</tr>
 			{/each}
 		</tbody></table>
+		</div>
 	{/if}
 
 	<!-- Recent requests -->
@@ -376,6 +385,7 @@
 	{#if requests.length === 0}
 		<p class="muted">no recent requests</p>
 	{:else}
+		<div class="table-wrap">
 		<table><thead>
 			<tr>
 				<th>time</th>
@@ -434,9 +444,10 @@
 				</tr>
 			{/each}
 		</tbody></table>
+		</div>
 	{/if}
 
-	<p style="margin-top:16px;font-size:12px"><a href="{base}/users">&larr; back</a></p>
+	<p class="sub"><a href="{base}/users">back to users</a></p>
 {/if}
 
 <style>

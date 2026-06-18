@@ -271,6 +271,37 @@ func TestCustomerSessionCookieSecureWhenSiteURLIsHTTPS(t *testing.T) {
 	}
 }
 
+func TestPublicURLUsesCurrentRequestOrigin(t *testing.T) {
+	srv := newTestServer(t)
+	srv.cfg.SiteURL = "https://configured.example"
+
+	req := httptest.NewRequest(http.MethodGet, "/api/referrals", nil)
+	req.Host = "current.example"
+	req.Header.Set("X-Forwarded-Proto", "https")
+
+	got := srv.publicURL(req, "/app/register?ref=INVITE")
+	want := "https://current.example/app/register?ref=INVITE"
+	if got != want {
+		t.Fatalf("publicURL() = %q, want %q", got, want)
+	}
+}
+
+func TestPublicURLUsesForwardedHost(t *testing.T) {
+	srv := newTestServer(t)
+	srv.cfg.SiteURL = "https://configured.example"
+
+	req := httptest.NewRequest(http.MethodGet, "/api/payments/create", nil)
+	req.Host = "127.0.0.1:3000"
+	req.Header.Set("X-Forwarded-Host", "pay.example.com")
+	req.Header.Set("X-Forwarded-Proto", "https")
+
+	got := srv.publicURL(req, "/api/payments/notify")
+	want := "https://pay.example.com/api/payments/notify"
+	if got != want {
+		t.Fatalf("publicURL() = %q, want %q", got, want)
+	}
+}
+
 func customerCookie(t *testing.T, w *httptest.ResponseRecorder) *http.Cookie {
 	t.Helper()
 	for _, cookie := range w.Result().Cookies() {

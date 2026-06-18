@@ -2,6 +2,7 @@
 	import { base } from '$app/paths';
 	import { api } from '$lib/api';
 	import type { AccountListItem, EgressCellView } from '$lib/admin-types';
+	import MetricCard from '$lib/components/MetricCard.svelte';
 	import { dotClass, timeAgo } from '$lib/format';
 
 	let accounts = $state<AccountListItem[]>([]);
@@ -143,17 +144,26 @@
 {#if error}
 	<p class="error-msg">{error}</p>
 {:else}
-	<span class="refresh"><button class="link" onclick={loadAll}>[refresh]</button> <span class="muted">{lastRefresh}</span></span>
-	<div class="bar">
-		<span>legacy queue {legacyAccounts().length}</span>
-		<span>available cells {availableCells().length}</span>
-		<span>cooling {cells.filter(cooldownActive).length}</span>
+	<div class="page-header">
+		<div>
+			<div class="eyebrow">migration</div>
+			<h1>Migration Workbench</h1>
+			<p class="lede">Move legacy direct accounts onto active egress cells, then probe the migrated account.</p>
+		</div>
+		<div class="page-actions">
+			<button class="link" onclick={loadAll}>refresh</button>
+			<span class="muted mono">{lastRefresh}</span>
+		</div>
 	</div>
 
-	<h2>migration workbench <span class="muted">temporary</span></h2>
-	<p class="hint">move one legacy direct account onto one empty active cell, then optionally probe it.</p>
+	<div class="metric-grid">
+		<MetricCard label="legacy queue" value={legacyAccounts().length} sub="direct accounts" />
+		<MetricCard label="available cells" value={availableCells().length} sub="active targets" />
+		<MetricCard label="cooling" value={cells.filter(cooldownActive).length} sub="cooldown cells" />
+		<MetricCard label="accounts" value={accounts.length} sub="pool total" />
+	</div>
 
-	<div class="bar workbench">
+	<section class="panel workbench">
 		<div class="step">
 			<label for="migration-account">step 1: account</label>
 			<select id="migration-account" bind:value={selectedAccountID} style="max-width:320px;">
@@ -176,13 +186,13 @@
 
 		<div class="step actions-row">
 			<button class="link" onclick={bindAccount} disabled={binding || !selectedAccountID || !selectedCellID}>
-				{binding ? '[migrating...]' : '[migrate now]'}
+				{binding ? 'migrating...' : 'migrate now'}
 			</button>
 			<button class="link" onclick={testAccount} disabled={testing || !selectedAccountID}>
-				{testing ? '[testing...]' : '[test selected account]'}
+				{testing ? 'testing...' : 'test selected account'}
 			</button>
 		</div>
-	</div>
+	</section>
 
 	{#if selectedAccountID || selectedCellID}
 		<div class="bar">
@@ -263,6 +273,7 @@
 		{#if legacyAccounts().length === 0}
 			<p class="muted">no legacy direct accounts</p>
 		{:else}
+			<div class="table-wrap">
 			<table>
 				<thead>
 					<tr>
@@ -287,6 +298,7 @@
 					{/each}
 				</tbody>
 			</table>
+			</div>
 		{/if}
 	</details>
 
@@ -295,6 +307,7 @@
 		{#if cells.length === 0}
 			<p class="muted">no cells</p>
 		{:else}
+			<div class="table-wrap">
 			<table>
 				<thead>
 					<tr>
@@ -323,6 +336,7 @@
 					{/each}
 				</tbody>
 			</table>
+			</div>
 		{/if}
 	</details>
 {/if}

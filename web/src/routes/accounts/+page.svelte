@@ -2,6 +2,7 @@
 	import { base } from '$app/paths';
 	import { api } from '$lib/api';
 	import type { AccountListItem } from '$lib/admin-types';
+	import MetricCard from '$lib/components/MetricCard.svelte';
 	import { remainClass, remainTime, timeAgo, dotClass } from '$lib/format';
 	import Countdown from '$lib/components/Countdown.svelte';
 	import { addAccountPath, type ProviderOption } from '$lib/providers';
@@ -264,98 +265,121 @@
 {#if error}
 	<p class="error-msg">{error}</p>
 {:else}
-	<span class="refresh"><button class="link" onclick={loadAll}>[refresh]</button> <span class="muted">{lastRefresh}</span></span>
-	<div class="sub">{accounts.length} accounts</div>
+	<div class="page-header">
+		<div>
+			<div class="eyebrow">account pool</div>
+			<h1>Accounts</h1>
+			<p class="lede">Provider account availability, cell binding, cooldowns, and utilization windows.</p>
+		</div>
+		<div class="page-actions">
+			<button class="link" onclick={loadAll}>refresh</button>
+			<span class="muted mono">{lastRefresh}</span>
+		</div>
+	</div>
+
+	<div class="metric-grid">
+		<MetricCard label="accounts" value={accounts.length} sub={`${activeCount(accounts)} active`} />
+		<MetricCard label="native available" value={availableCount(accounts, 'native')} sub="openai/responses surface" />
+		<MetricCard label="compat available" value={availableCount(accounts, 'compat')} sub="compatibility surface" />
+		<MetricCard label="providers" value={providers.length} sub="registered drivers" />
+	</div>
 
 	{@const accountGroups = displayGroups(accounts, providers)}
 	{#if accountGroups.length === 0}
 		<p class="muted">no providers available</p>
 	{:else}
 		{#each accountGroups as group (group.provider)}
-			<h2>{group.provider} accounts <a href={addAccountPath(base, group.provider)} class="add-link">[+ add]</a></h2>
-			<div class="sub">
-				{group.accounts.length} total
-				&middot; active {activeCount(group.accounts)}
-				&middot; available(native) {availableCount(group.accounts, 'native')}
-				&middot; available(compat) {availableCount(group.accounts, 'compat')}
+			<div class="section-header">
+				<div>
+					<h2>{group.label} Accounts</h2>
+					<div class="sub">
+						{group.accounts.length} total /
+						active {activeCount(group.accounts)} /
+						native {availableCount(group.accounts, 'native')} /
+						compat {availableCount(group.accounts, 'compat')}
+					</div>
+				</div>
+				<a href={addAccountPath(base, group.provider)} class="secondary-btn fit">add account</a>
 			</div>
 			{#if group.accounts.length === 0}
 				<p class="muted">no {group.label} accounts</p>
 			{:else}
-				<table>
-					<thead>
-						<tr>
-							<th aria-sort={ariaSort(group.provider, 'email')}>
-								<button type="button" class="link sort-link {isSortActive(group.provider, 'email') ? 'sort-active' : ''}" onclick={() => setSort(group.provider, 'email')}>
-									account <span class="sort-indicator">{sortIndicator(group.provider, 'email')}</span>
-								</button>
-							</th>
-							<th aria-sort={ariaSort(group.provider, 'status')}>
-								<button type="button" class="link sort-link {isSortActive(group.provider, 'status') ? 'sort-active' : ''}" onclick={() => setSort(group.provider, 'status')}>
-									status <span class="sort-indicator">{sortIndicator(group.provider, 'status')}</span>
-								</button>
-							</th>
-							<th aria-sort={ariaSort(group.provider, 'cell')}>
-								<button type="button" class="link sort-link {isSortActive(group.provider, 'cell') ? 'sort-active' : ''}" onclick={() => setSort(group.provider, 'cell')}>
-									cell <span class="sort-indicator">{sortIndicator(group.provider, 'cell')}</span>
-								</button>
-							</th>
-							<th aria-sort={ariaSort(group.provider, 'weight')}>
-								<button type="button" class="link sort-link {isSortActive(group.provider, 'weight') ? 'sort-active' : ''}" onclick={() => setSort(group.provider, 'weight')}>
-									weight <span class="sort-indicator">{sortIndicator(group.provider, 'weight')}</span>
-								</button>
-							</th>
-							<th aria-sort={ariaSort(group.provider, 'cooldown')}>
-								<button type="button" class="link sort-link {isSortActive(group.provider, 'cooldown') ? 'sort-active' : ''}" onclick={() => setSort(group.provider, 'cooldown')}>
-									cooldown <span class="sort-indicator">{sortIndicator(group.provider, 'cooldown')}</span>
-								</button>
-							</th>
-							<th aria-sort={ariaSort(group.provider, 'last_used')}>
-								<button type="button" class="link sort-link {isSortActive(group.provider, 'last_used') ? 'sort-active' : ''}" onclick={() => setSort(group.provider, 'last_used')}>
-									last used <span class="sort-indicator">{sortIndicator(group.provider, 'last_used')}</span>
-								</button>
-							</th>
-							{#each group.window_labels as label, index (`${group.provider}:${label}:${index}`)}
-								<th class="num" aria-sort={ariaSort(group.provider, windowSortKey(index))}>
-									<button type="button" class="link sort-link sort-link-num {isSortActive(group.provider, windowSortKey(index)) ? 'sort-active' : ''}" onclick={() => setSort(group.provider, windowSortKey(index))}>
-										{label} <span class="sort-indicator">{sortIndicator(group.provider, windowSortKey(index))}</span>
+				<div class="table-wrap">
+					<table>
+						<thead>
+							<tr>
+								<th aria-sort={ariaSort(group.provider, 'email')}>
+									<button type="button" class="link sort-link {isSortActive(group.provider, 'email') ? 'sort-active' : ''}" onclick={() => setSort(group.provider, 'email')}>
+										account <span class="sort-indicator">{sortIndicator(group.provider, 'email')}</span>
 									</button>
 								</th>
-							{/each}
-						</tr>
-					</thead>
-					<tbody>
-						{#each group.accounts as account (account.id)}
-							<tr>
-								<td><a href="{base}/accounts/{account.id}">{account.email}</a></td>
-								<td><span class={dotClass(account.status)}>{account.status}</span></td>
-								<td>
-									{#if account.cell_id}
-										<a href="{base}/cells/{account.cell_id}">{account.cell?.name ?? account.cell_id}</a>
-									{:else}
-										<span class="muted">legacy direct</span>
-									{/if}
-								</td>
-								<td>{account.weight}{#if account.weight_mode === 'auto'} <span class="muted">(auto)</span>{/if}</td>
-								<Countdown until={account.cooldown_until} tag="td" variant="cooldown" />
-								<td>{timeAgo(account.last_used_at ?? '')}</td>
-								{#each group.window_labels as label, index (`${account.id}:${label}:${index}`)}
-									{@const window = windowAt(account, index)}
-									<td class="num">
-										{#if account.status === 'blocked' || account.status === 'disabled'}
-											<span class="muted">&ndash;</span>
-										{:else if window}
-											{@const remain = 100 - window.pct}
-											<span class={remainClass(remain)}>{remain}%</span>{#if window.sub_pct != null}{@const subRemain = 100 - window.sub_pct}/<span class={remainClass(subRemain)}>{subRemain}%</span>{/if} <span class="muted">{remainTime(window.reset ?? null)}</span>
-										{:else}
-											<span class="muted">&ndash;</span>
-										{/if}
-									</td>
+								<th aria-sort={ariaSort(group.provider, 'status')}>
+									<button type="button" class="link sort-link {isSortActive(group.provider, 'status') ? 'sort-active' : ''}" onclick={() => setSort(group.provider, 'status')}>
+										status <span class="sort-indicator">{sortIndicator(group.provider, 'status')}</span>
+									</button>
+								</th>
+								<th aria-sort={ariaSort(group.provider, 'cell')}>
+									<button type="button" class="link sort-link {isSortActive(group.provider, 'cell') ? 'sort-active' : ''}" onclick={() => setSort(group.provider, 'cell')}>
+										cell <span class="sort-indicator">{sortIndicator(group.provider, 'cell')}</span>
+									</button>
+								</th>
+								<th aria-sort={ariaSort(group.provider, 'weight')}>
+									<button type="button" class="link sort-link {isSortActive(group.provider, 'weight') ? 'sort-active' : ''}" onclick={() => setSort(group.provider, 'weight')}>
+										weight <span class="sort-indicator">{sortIndicator(group.provider, 'weight')}</span>
+									</button>
+								</th>
+								<th aria-sort={ariaSort(group.provider, 'cooldown')}>
+									<button type="button" class="link sort-link {isSortActive(group.provider, 'cooldown') ? 'sort-active' : ''}" onclick={() => setSort(group.provider, 'cooldown')}>
+										cooldown <span class="sort-indicator">{sortIndicator(group.provider, 'cooldown')}</span>
+									</button>
+								</th>
+								<th aria-sort={ariaSort(group.provider, 'last_used')}>
+									<button type="button" class="link sort-link {isSortActive(group.provider, 'last_used') ? 'sort-active' : ''}" onclick={() => setSort(group.provider, 'last_used')}>
+										last used <span class="sort-indicator">{sortIndicator(group.provider, 'last_used')}</span>
+									</button>
+								</th>
+								{#each group.window_labels as label, index (`${group.provider}:${label}:${index}`)}
+									<th class="num" aria-sort={ariaSort(group.provider, windowSortKey(index))}>
+										<button type="button" class="link sort-link sort-link-num {isSortActive(group.provider, windowSortKey(index)) ? 'sort-active' : ''}" onclick={() => setSort(group.provider, windowSortKey(index))}>
+											{label} <span class="sort-indicator">{sortIndicator(group.provider, windowSortKey(index))}</span>
+										</button>
+									</th>
 								{/each}
 							</tr>
-						{/each}
-					</tbody>
-				</table>
+						</thead>
+						<tbody>
+							{#each group.accounts as account (account.id)}
+								<tr>
+									<td><a href="{base}/accounts/{account.id}">{account.email}</a></td>
+									<td><span class={dotClass(account.status)}>{account.status}</span></td>
+									<td>
+										{#if account.cell_id}
+											<a href="{base}/cells/{account.cell_id}">{account.cell?.name ?? account.cell_id}</a>
+										{:else}
+											<span class="muted">legacy direct</span>
+										{/if}
+									</td>
+									<td>{account.weight}{#if account.weight_mode === 'auto'} <span class="muted">(auto)</span>{/if}</td>
+									<Countdown until={account.cooldown_until} tag="td" variant="cooldown" />
+									<td>{timeAgo(account.last_used_at ?? '')}</td>
+									{#each group.window_labels as label, index (`${account.id}:${label}:${index}`)}
+										{@const window = windowAt(account, index)}
+										<td class="num">
+											{#if account.status === 'blocked' || account.status === 'disabled'}
+												<span class="muted">&ndash;</span>
+											{:else if window}
+												{@const remain = 100 - window.pct}
+												<span class={remainClass(remain)}>{remain}%</span>{#if window.sub_pct != null}{@const subRemain = 100 - window.sub_pct}/<span class={remainClass(subRemain)}>{subRemain}%</span>{/if} <span class="muted">{remainTime(window.reset ?? null)}</span>
+											{:else}
+												<span class="muted">&ndash;</span>
+											{/if}
+										</td>
+									{/each}
+								</tr>
+							{/each}
+						</tbody>
+					</table>
+				</div>
 			{/if}
 		{/each}
 	{/if}

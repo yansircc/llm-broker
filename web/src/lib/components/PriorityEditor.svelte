@@ -67,7 +67,7 @@
 		onkeydown={(e) => { if (e.key === 'Enter') save(); }}
 	>
 	<button class="link" style="font-size:12px" onclick={save} disabled={saving}>
-		{saving ? 'saving...' : '[save]'}
+		{saving ? 'saving...' : 'save'}
 	</button>
 	<button class="link" style="font-size:12px;margin-left:6px" onclick={switchToAuto}>[switch to auto]</button>
 {/if}

@@ -89,14 +89,22 @@
 {:else if loading || !cell}
 	<p class="loading">loading cell...</p>
 {:else}
-	<h2>{cell.name} <span class="muted">{cell.id}</span></h2>
-
-	<div class="actions">
-		<button class="link" onclick={loadCell}>[refresh]</button>
-		<button class="link" onclick={testCell} disabled={testing}>{testing ? '[testing...]' : '[test proxy]'}</button>
+	<div class="page-header">
+		<div>
+			<div class="eyebrow">egress cell</div>
+			<h1>{cell.name}</h1>
+			<p class="lede mono">{cell.id}</p>
+		</div>
+		<div class="page-actions">
+			<button class="link" onclick={loadCell}>refresh</button>
+			<button class="link" onclick={testCell} disabled={testing}>{testing ? 'testing...' : 'test proxy'}</button>
 		{#if cooldownActive(cell)}
-			<button class="link o" onclick={clearCooldown} disabled={clearing}>{clearing ? '[clearing...]' : '[clear cooldown]'}</button>
+				<button class="link o" onclick={clearCooldown} disabled={clearing}>{clearing ? 'clearing...' : 'clear cooldown'}</button>
 		{/if}
+		</div>
+	</div>
+
+	<div class="bar">
 		{#if testResult}
 			{#if testResult.ok}
 				<span class="g">ok {testResult.latency_ms}ms</span>
@@ -151,29 +159,31 @@
 		<dd>{fmtDate(cell.updated_at)}</dd>
 	</dl>
 
-	<h2>bound accounts</h2>
+	<h2>Bound Accounts</h2>
 	{#if cellAccounts(cell).length === 0}
 		<p class="muted">no accounts bound</p>
 	{:else}
-		<table>
-			<thead>
-				<tr>
-					<th>email</th>
-					<th>provider</th>
-					<th>status</th>
-				</tr>
-			</thead>
-			<tbody>
-				{#each cellAccounts(cell) as account (account.id)}
+		<div class="table-wrap">
+			<table>
+				<thead>
 					<tr>
-						<td><a href="{base}/accounts/{account.id}">{account.email}</a></td>
-						<td>{account.provider}</td>
-						<td><span class={dotClass(account.status)}>{account.status}</span></td>
+						<th>email</th>
+						<th>provider</th>
+						<th>status</th>
 					</tr>
-				{/each}
-			</tbody>
-		</table>
+				</thead>
+				<tbody>
+					{#each cellAccounts(cell) as account (account.id)}
+						<tr>
+							<td><a href="{base}/accounts/{account.id}">{account.email}</a></td>
+							<td>{account.provider}</td>
+							<td><span class={dotClass(account.status)}>{account.status}</span></td>
+						</tr>
+					{/each}
+				</tbody>
+			</table>
+		</div>
 	{/if}
 
-	<p style="margin-top:16px;font-size:12px"><a href="{base}/dashboard">&larr; back to ops</a></p>
+	<p class="sub"><a href="{base}/dashboard">back to ops</a></p>
 {/if}
