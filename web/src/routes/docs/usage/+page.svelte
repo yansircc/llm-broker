@@ -1,9 +1,9 @@
 <script lang="ts">
 	import { browser } from '$app/environment';
 	import { base } from '$app/paths';
-	import { BRAND_DESCRIPTION, BRAND_NAME } from '$lib/brand';
+	import { BRAND_NAME } from '$lib/brand';
 
-	const activeHref = '/docs';
+	const activeHref = '/docs/usage';
 	const docsNav = [
 		{ href: '/docs', label: `${BRAND_NAME} 文档`, summary: '产品说明、文档导航和快速开始' },
 		{ href: '/docs/getting-started', label: '新手入门', summary: '理解 OpenAI、Anthropic、API 和终端工具' },
@@ -37,7 +37,7 @@
 </script>
 
 <svelte:head>
-	<title>文档 | {BRAND_NAME}</title>
+	<title>入门使用手册 | {BRAND_NAME}</title>
 </svelte:head>
 
 <section class={`min-h-screen border-t ${borderClass} ${shellClass}`}>
@@ -96,45 +96,73 @@
 		</aside>
 
 		<article class="min-w-0">
-			<div class="font-mono text-xs uppercase tracking-wider text-brand">docs</div>
-			<h1 class="mt-3 text-4xl font-bold tracking-tight sm:text-5xl">文档</h1>
+			<div class="font-mono text-xs uppercase tracking-wider text-brand">Usage</div>
+			<h1 class="mt-3 text-4xl font-bold tracking-tight sm:text-5xl">入门使用手册</h1>
 			<p class={`max-w-3xl text-base leading-7 ${mutedClass}`}>
-				AI API 中转服务使用指南 —— Claude Code / Codex / Cursor 零门槛接入
+				配置完成后，先用最小任务验证链路，再把它接入真实项目。不要一开始就让 AI 改大范围代码。
 			</p>
 
 			<section class={`mt-10 border-t pt-8 ${borderClass}`}>
-				<h2 class="text-2xl font-semibold">什么是产品</h2>
+				<h2 class="text-2xl font-semibold">启动前确认</h2>
+				<ul class={`mt-4 space-y-3 leading-7 ${mutedClass}`}>
+					<li>控制台里已经有可用余额。</li>
+					<li>API Key 没有被禁用，且复制时没有多出空格。</li>
+					<li>终端能看到正确的 base URL 和 API Key 环境变量。</li>
+					<li>当前要用的模型在模型页面或控制台列表里存在。</li>
+				</ul>
+			</section>
+
+			<section class={`mt-8 border-t pt-8 ${borderClass}`}>
+				<h2 class="text-2xl font-semibold">先用 Claude 还是 Codex</h2>
 				<p class={`mt-3 leading-7 ${mutedClass}`}>
-					{BRAND_NAME} 是{BRAND_DESCRIPTION}。它把账号、密钥、余额、模型路由和请求记录收在一个网关里，用户侧只需要一把 API Key 和一个 base URL。
-					当前 Codex 可用，Claude 家族即将接入；文档中的 Claude Code 配置用于说明同一套网关接入方式，不代表所有 Claude 模型已经全量上线。
+					当前先用 Codex。Claude 家族即将接入后，再把 Claude Code 配置到同一套网关。两类工具的核心差异是环境变量名不同，不是充值和密钥体系不同。
 				</p>
 			</section>
 
 			<section class={`mt-8 border-t pt-8 ${borderClass}`}>
-				<h2 class="text-2xl font-semibold">文档导航</h2>
+				<h2 class="text-2xl font-semibold">启动 Claude Code</h2>
+				<p class={`mt-3 leading-7 ${mutedClass}`}>Claude 家族接入后，进入项目目录，设置 Anthropic 兼容变量并启动。</p>
+				<pre class={`mt-5 whitespace-pre-wrap text-sm ${codeClass}`}>cd /path/to/project
+export ANTHROPIC_BASE_URL="{origin}"
+export ANTHROPIC_API_KEY="sk-xxx"
+claude</pre>
+			</section>
+
+			<section class={`mt-8 border-t pt-8 ${borderClass}`}>
+				<h2 class="text-2xl font-semibold">启动 Codex</h2>
+				<p class={`mt-3 leading-7 ${mutedClass}`}>Codex 当前可用。进入项目目录，设置 OpenAI 兼容变量并启动。</p>
+				<pre class={`mt-5 whitespace-pre-wrap text-sm ${codeClass}`}>cd /path/to/project
+export OPENAI_BASE_URL="{origin}/openai"
+export OPENAI_API_KEY="sk-xxx"
+codex</pre>
+			</section>
+
+			<section class={`mt-8 border-t pt-8 ${borderClass}`}>
+				<h2 class="text-2xl font-semibold">常用操作</h2>
 				<div class="mt-5 grid gap-4 md:grid-cols-2">
-					{#each docsNav.slice(1) as item (item.href)}
-						<a class={`rounded-lg border p-5 hover:border-brand/50 ${panelClass}`} href="{base}{item.href}">
-							<h3 class="text-lg font-semibold">{item.label}</h3>
-							<p class={`mt-2 text-sm leading-6 ${mutedClass}`}>{item.summary}</p>
-						</a>
-					{/each}
+					<div class={`rounded-lg border p-5 ${panelClass}`}>
+						<h3 class="text-lg font-semibold">切换模型</h3>
+						<p class={`mt-2 text-sm leading-6 ${mutedClass}`}>优先使用工具内置的 model 参数或配置文件。模型名必须来自 {BRAND_NAME} 的模型列表。</p>
+					</div>
+					<div class={`rounded-lg border p-5 ${panelClass}`}>
+						<h3 class="text-lg font-semibold">对话乱了</h3>
+						<p class={`mt-2 text-sm leading-6 ${mutedClass}`}>新开会话，重新给目标、约束和当前文件。上下文污染时继续追问通常会放大错误。</p>
+					</div>
+					<div class={`rounded-lg border p-5 ${panelClass}`}>
+						<h3 class="text-lg font-semibold">让 AI 看文件/图片</h3>
+						<p class={`mt-2 text-sm leading-6 ${mutedClass}`}>在项目目录启动工具，给出相对路径或把图片放到工具可访问的位置。不要把密钥文件发给 AI。</p>
+					</div>
+					<div class={`rounded-lg border p-5 ${panelClass}`}>
+						<h3 class="text-lg font-semibold">看用量</h3>
+						<p class={`mt-2 text-sm leading-6 ${mutedClass}`}>进入 <a class="text-brand" href="{base}/app/usage">用量记录</a> 查看请求、模型、token 和扣费。按 Key 拆分能更快定位异常消耗。</p>
+					</div>
 				</div>
 			</section>
 
 			<section class={`mt-8 border-t pt-8 ${borderClass}`}>
-				<h2 class="text-2xl font-semibold">快速开始</h2>
-				<ol class={`mt-4 space-y-3 leading-7 ${mutedClass}`}>
-					<li>1. 注册账号并完成充值，余额大于 0 后再创建 API Key。</li>
-					<li>2. 在控制台创建 API Key，按项目或工具分开管理。</li>
-					<li>3. Codex CLI 使用 <span class="font-mono text-brand">{origin}/openai</span> 作为 base URL；OpenAI Responses 兼容调用可使用 <span class="font-mono text-brand">{origin}/v1</span>。</li>
-					<li>4. 先用最小请求验证密钥和余额，再迁移日常工具。</li>
-				</ol>
-				<pre class={`mt-5 whitespace-pre-wrap text-sm ${codeClass}`}>curl {origin}/v1/responses \
-  -H "Authorization: Bearer sk-xxx" \
-  -H "Content-Type: application/json" \
-  -d '&#123;"model":"gpt-5.3-codex","input":"hello"&#125;'</pre>
-				<p class={`mt-4 text-sm ${faintClass}`}>如果返回 401、余额不足或模型不存在，先进入故障排查页确认密钥、余额和模型名。</p>
+				<h2 class="text-2xl font-semibold">建议的第一条任务</h2>
+				<pre class={`mt-5 whitespace-pre-wrap text-sm ${codeClass}`}>请阅读当前项目结构，只总结你看到的主要目录和启动方式。不要修改文件。</pre>
+				<p class={`mt-3 text-sm ${faintClass}`}>这条任务能验证工具是否能读取项目，又不会产生代码改动。</p>
 			</section>
 		</article>
 	</div>

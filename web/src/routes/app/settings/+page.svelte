@@ -99,6 +99,15 @@
 	</section>
 
 	<section class="mt-5 max-w-2xl rounded-lg border border-line bg-card/60 p-5">
+		<h2 class="m-0 text-base font-semibold">修改用户名</h2>
+		<p class="mt-2 text-sm text-faint">用户自行修改用户名的视觉入口已保留；本分支尚未提供更新用户名 API。</p>
+		<div class="mt-5 flex flex-col gap-3 sm:flex-row">
+			<input class="h-11 rounded-md border border-line bg-black/30 px-3 text-sm outline-none placeholder:text-faint focus:border-brand" placeholder="新用户名" value={me.user.name || ''} disabled>
+			<button class="h-11 rounded-md border border-line bg-black/20 px-5 text-sm text-faint" type="button" disabled>更新</button>
+		</div>
+	</section>
+
+	<section class="mt-5 max-w-2xl rounded-lg border border-line bg-card/60 p-5">
 		<h2 class="m-0 text-base font-semibold">修改密码</h2>
 		<form class="mt-5 grid gap-4" onsubmit={changePassword}>
 			<div>

@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { base } from '$app/paths';
+	import { BRAND_NAME } from '$lib/brand';
 	import { customerApi } from '$lib/customer-api';
 	import type {
 		BillingSummary,
@@ -51,13 +52,13 @@
 
 	const today = $derived(usage?.periods?.find((p) => p.label === 'today'));
 	const sevenDays = $derived(usage?.periods?.find((p) => p.label === '7 days'));
+	const todayTokens = $derived((today?.input_tokens ?? 0) + (today?.output_tokens ?? 0) + (today?.cache_read_tokens ?? 0));
 </script>
 
 <div class="mb-8 flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
 	<div>
-		<div class="font-mono text-xs uppercase tracking-wider text-brand">customer console</div>
+		<div class="font-mono text-xs uppercase tracking-wider text-brand">账户概览与使用统计</div>
 		<h1 class="mt-2 text-3xl font-bold tracking-tight sm:text-4xl">仪表盘</h1>
-		<p class="mt-2 text-sm text-muted">账户余额、API Key、Token 消耗和邀请奖励概览。</p>
 	</div>
 	<button class="h-10 rounded-md border border-line bg-card px-4 text-sm hover:border-brand/50" onclick={loadAll}>刷新</button>
 </div>
@@ -72,11 +73,34 @@
 			余额已低于 ${billing.low_balance_threshold_usd?.toFixed(2) ?? '5.00'}，建议及时充值，避免请求被拒绝。
 		</p>
 	{/if}
-	<div class="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+	<section class="mb-5 rounded-xl border border-brand/30 bg-brand/[0.06] p-5">
+		<div class="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+			<div>
+				<div class="font-mono text-xs text-brand">六月印章活动 · 进行中</div>
+				<h2 class="mt-2 text-xl font-semibold">登录赠 1 枚 · 每充 ¥49 得 1 枚 · 邀好友首充各 +1 枚</h2>
+				<p class="mt-2 text-sm text-faint">已集 1 / 4 枚，还差 3 枚。盲盒奖励：$20 / $50 / $100 额度随机。</p>
+			</div>
+			<div class="grid min-w-72 grid-cols-4 gap-2 text-center font-mono">
+				{#each [1, 2, 3, 4] as stamp}
+					<div class={`rounded-lg border p-3 ${stamp === 1 ? 'border-brand bg-brand text-black' : 'border-line bg-black/25 text-faint'}`}>{stamp}</div>
+				{/each}
+			</div>
+		</div>
+		<div class="mt-4 flex flex-col gap-2 sm:flex-row sm:items-center">
+			<div class="min-w-0 flex-1 truncate rounded-md border border-line bg-black/25 px-3 py-2 font-mono text-sm text-brand">{referrals?.url ?? 'https://your-domain.example/register?ref=...'}</div>
+			<a class="rounded-md border border-line bg-card px-3 py-2 text-sm hover:border-brand/50" href="{base}/app/referrals">我的推广链接</a>
+		</div>
+	</section>
+	<div class="grid gap-4 sm:grid-cols-2 xl:grid-cols-5">
 		<div class="rounded-lg border border-line bg-card/70 p-5">
 			<div class="text-sm text-faint">余额</div>
 			<div class="mt-3 font-mono text-3xl font-bold text-brand">{billing ? fmtCost(billing.balance_usd) : '-'}</div>
 			<div class="mt-2 text-xs text-faint">请求时余额需大于 0</div>
+		</div>
+		<div class="rounded-lg border border-line bg-card/70 p-5">
+			<div class="text-sm text-faint">API 密钥</div>
+			<div class="mt-3 font-mono text-3xl font-bold">{keys.length}</div>
+			<div class="mt-2 text-xs text-faint">启用: {keys.filter((key) => key.status === 'active').length}</div>
 		</div>
 		<div class="rounded-lg border border-line bg-card/70 p-5">
 			<div class="text-sm text-faint">今日请求</div>
@@ -84,14 +108,14 @@
 			<div class="mt-2 text-xs text-faint">7 天: {fmtNum(sevenDays?.requests ?? 0)}</div>
 		</div>
 		<div class="rounded-lg border border-line bg-card/70 p-5">
+			<div class="text-sm text-faint">今日 Token</div>
+			<div class="mt-3 font-mono text-3xl font-bold">{fmtNum(todayTokens)}</div>
+			<div class="mt-2 text-xs text-faint">输入 + 输出 + 缓存读</div>
+		</div>
+		<div class="rounded-lg border border-line bg-card/70 p-5">
 			<div class="text-sm text-faint">今日消费</div>
 			<div class="mt-3 font-mono text-3xl font-bold">{fmtCost(today?.cost_usd ?? 0)}</div>
 			<div class="mt-2 text-xs text-faint">总消费: {billing ? fmtCost(billing.usage_usd) : '-'}</div>
-		</div>
-		<div class="rounded-lg border border-line bg-card/70 p-5">
-			<div class="text-sm text-faint">API Key</div>
-			<div class="mt-3 font-mono text-3xl font-bold">{keys.length}</div>
-			<div class="mt-2 text-xs text-faint">邀请注册: {referrals?.signups ?? 0}</div>
 		</div>
 	</div>
 
@@ -123,8 +147,8 @@
 		<section class="rounded-lg border border-brand/20 bg-brand/[0.04] p-5">
 			<div class="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
 				<div>
-					<h2 class="m-0 text-base font-semibold">邀请奖励</h2>
-					<p class="mt-1 text-sm text-faint">受邀方注册即得奖励，邀请方在受邀方首次付费后获得奖励。</p>
+					<h2 class="m-0 text-base font-semibold">分销奖励</h2>
+					<p class="mt-1 text-sm text-faint">推广 {BRAND_NAME}，受邀用户首充后获得奖励。</p>
 				</div>
 				<a href="{base}/app/referrals" class="rounded-md border border-line bg-card px-3 py-2 text-sm hover:border-brand/50">查看</a>
 			</div>
@@ -182,4 +206,62 @@
 			{/if}
 		</section>
 	</div>
+
+	<section class="mt-6 rounded-lg border border-line bg-card/60 p-5">
+		<div class="mb-4 flex items-center justify-between gap-3">
+			<h2 class="m-0 text-base font-semibold">Token 使用趋势（7 天）</h2>
+			<a class="text-sm text-brand hover:underline" href="{base}/app/usage">查看明细</a>
+		</div>
+		<div class="grid gap-3 sm:grid-cols-3">
+			<div class="rounded-md border border-line bg-black/20 p-4">
+				<div class="text-xs text-faint">输入 Token</div>
+				<div class="mt-2 font-mono text-2xl font-bold">{fmtNum(sevenDays?.input_tokens ?? 0)}</div>
+			</div>
+			<div class="rounded-md border border-line bg-black/20 p-4">
+				<div class="text-xs text-faint">输出 Token</div>
+				<div class="mt-2 font-mono text-2xl font-bold">{fmtNum(sevenDays?.output_tokens ?? 0)}</div>
+			</div>
+			<div class="rounded-md border border-line bg-black/20 p-4">
+				<div class="text-xs text-faint">缓存读 Token</div>
+				<div class="mt-2 font-mono text-2xl font-bold text-brand">{fmtNum(sevenDays?.cache_read_tokens ?? 0)}</div>
+			</div>
+		</div>
+	</section>
+
+	<section class="mt-6 rounded-lg border border-line bg-card/60 p-5">
+		<h2 class="m-0 text-base font-semibold">VIP 等级</h2>
+		<div class="mt-4 flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+			<div>
+				<div class="text-sm text-faint">普通 · 1x 倍率</div>
+				<div class="mt-1 font-mono text-sm">累计充值 {billing ? fmtCost(billing.credits_usd).replace('$', '¥') : '¥0'}</div>
+			</div>
+			<div class="grid flex-1 gap-2 sm:grid-cols-5">
+				{#each [['普通', '1x'], ['VIP1', '0.98x'], ['VIP2', '0.95x'], ['VIP3', '0.93x'], ['VIP8', '0.88x']] as vip, i}
+					<div class={`rounded-md border p-3 text-center text-xs ${i === 0 ? 'border-brand bg-brand text-black' : 'border-line bg-black/20 text-faint'}`}>
+						<div class="font-semibold">{vip[0]}</div>
+						<div class="font-mono">{vip[1]}</div>
+					</div>
+				{/each}
+			</div>
+		</div>
+		<p class="mt-3 text-xs text-faint">VIP 等级根据累计充值金额自动升级，倍率越低费用越省。</p>
+	</section>
+
+	<section class="mt-6">
+		<h2 class="mb-3 text-base font-semibold">快捷操作</h2>
+		<div class="grid gap-3 md:grid-cols-3">
+			<a class="rounded-lg border border-line bg-card/60 p-4 hover:border-brand/50" href="{base}/app/keys">
+				<div class="font-medium">创建 API 密钥</div>
+				<p class="mt-1 text-sm text-faint">管理您的 API 访问凭证</p>
+			</a>
+			<a class="rounded-lg border border-line bg-card/60 p-4 hover:border-brand/50" href="{base}/app/usage">
+				<div class="font-medium">查看使用记录</div>
+				<p class="mt-1 text-sm text-faint">详细的 API 调用和消费统计</p>
+			</a>
+			<a class="rounded-lg border border-line bg-card/60 p-4 hover:border-brand/50" href="{base}/app/redeem">
+				<div class="font-medium">兑换码</div>
+				<p class="mt-1 text-sm text-faint">使用兑换码充值额度</p>
+			</a>
+		</div>
+	</section>
 {/if}

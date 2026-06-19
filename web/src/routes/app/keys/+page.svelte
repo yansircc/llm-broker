@@ -2,13 +2,15 @@
 	import { browser } from '$app/environment';
 	import { customerApi } from '$lib/customer-api';
 	import type { CustomerApiKey, CustomerApiKeyCreated } from '$lib/customer-types';
-	import { fmtDate, timeAgo } from '$lib/format';
+	import { timeAgo } from '$lib/format';
 
 	let keys = $state<CustomerApiKey[]>([]);
 	let created = $state<CustomerApiKeyCreated | null>(null);
 	let name = $state('');
 	let dailyBudget = $state('');
 	let monthlyBudget = $state('');
+	let search = $state('');
+	let statusFilter = $state('all');
 	let error = $state('');
 	let loading = $state(false);
 	let creating = $state(false);
@@ -16,6 +18,14 @@
 	let copied = $state('');
 	let origin = $state('https://your-domain.example');
 	let drafts = $state<Record<string, { name: string; status: string; daily: string; monthly: string }>>({});
+	const filteredKeys = $derived(
+		keys.filter((key) => {
+			const q = search.trim().toLowerCase();
+			const matchesStatus = statusFilter === 'all' || key.status === statusFilter;
+			const matchesSearch = !q || [key.name, key.prefix, key.status].some((value) => String(value ?? '').toLowerCase().includes(q));
+			return matchesStatus && matchesSearch;
+		})
+	);
 
 	$effect(() => {
 		if (browser) origin = window.location.origin;
@@ -126,7 +136,6 @@
 	<div>
 		<div class="font-mono text-xs uppercase tracking-wider text-brand">access</div>
 		<h1 class="mt-2 text-3xl font-bold tracking-tight sm:text-4xl">API 密钥</h1>
-		<p class="mt-2 text-sm text-muted">创建客户 relay key，用于 OpenAI Responses。</p>
 	</div>
 	<button class="h-10 rounded-md border border-line bg-card px-4 text-sm hover:border-brand/50" onclick={loadKeys}>刷新</button>
 </div>
@@ -137,34 +146,36 @@
 
 <section class="rounded-lg border border-line bg-card/60 p-5">
 	<div class="grid gap-4 lg:grid-cols-[1fr_1.2fr]">
-		<div>
-			<h2 class="m-0 text-base font-semibold">创建密钥</h2>
-			<p class="mt-1 text-sm text-faint">密钥只在创建后展示一次，请及时保存。</p>
+			<div>
+				<h2 class="m-0 text-base font-semibold">创建密钥</h2>
+				<p class="mt-1 text-sm text-faint">目标能力：平台 Key 现在会安全保存，后续可随时回来复制使用，不再是一次性展示。当前后端仍只在创建时返回完整 token，请先复制保存。</p>
 			<div class="mt-4 flex flex-col gap-3 sm:flex-row">
 				<input class="h-11 rounded-md border border-line bg-black/30 px-3 text-sm outline-none focus:border-brand" placeholder="default" bind:value={name} disabled={creating}>
 				<input class="h-11 rounded-md border border-line bg-black/30 px-3 text-sm outline-none focus:border-brand sm:w-40" inputmode="decimal" placeholder="日预算 $，可空" bind:value={dailyBudget} disabled={creating}>
 				<input class="h-11 rounded-md border border-line bg-black/30 px-3 text-sm outline-none focus:border-brand sm:w-40" inputmode="decimal" placeholder="月预算 $，可空" bind:value={monthlyBudget} disabled={creating}>
 				<button class="h-11 min-w-[96px] whitespace-nowrap rounded-md bg-brand px-5 text-sm font-semibold text-black disabled:opacity-50" onclick={createKey} disabled={creating}>
-					{creating ? '创建中...' : '创建'}
+					{creating ? '创建中...' : '创建密钥'}
 				</button>
 			</div>
 		</div>
 		<div class="rounded-md border border-line bg-black/25 p-4">
-			<div class="text-xs text-faint">推荐接入地址</div>
-			<div class="mt-2 space-y-1 font-mono text-sm">
-				<div>Responses base_url: <span class="text-brand">{origin}/openai</span></div>
+				<div class="text-xs text-faint">推荐接入地址</div>
+				<div class="mt-2 space-y-1 font-mono text-sm">
+					<div>OpenAI 兼容（Codex 当前可用）: <span class="text-brand">{origin}/v1</span></div>
+					<div>Anthropic（Claude 家族预留）: <span class="text-faint">{origin}</span></div>
+					<div>Responses base_url（Codex 当前可用）: <span class="text-brand">{origin}/openai</span></div>
+				</div>
 			</div>
-		</div>
 	</div>
 </section>
 
 {#if created}
 	<section class="mt-5 rounded-lg border border-brand/30 bg-brand/[0.05] p-5">
 		<div class="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-			<div>
-				<h2 class="m-0 text-base font-semibold">新密钥</h2>
-				<p class="mt-1 text-sm text-faint">这个 token 只显示一次。</p>
-			</div>
+				<div>
+					<h2 class="m-0 text-base font-semibold">新密钥</h2>
+					<p class="mt-1 text-sm text-faint">当前版本只在创建时显示一次完整 token，完整回看能力已列入功能缺口。</p>
+				</div>
 			<div class="flex gap-2">
 				<button class="rounded-md border border-line bg-card px-3 py-2 text-sm hover:border-brand/50" onclick={() => copy(created?.token ?? '', 'new-token')}>
 					{copied === 'new-token' ? '已复制' : '复制'}
@@ -177,12 +188,20 @@
 {/if}
 
 <section class="mt-6 rounded-lg border border-line bg-card/60">
-	<div class="border-b border-line px-5 py-4">
+	<div class="flex flex-col gap-3 border-b border-line px-5 py-4 sm:flex-row sm:items-center sm:justify-between">
 		<h2 class="m-0 text-base font-semibold">密钥列表</h2>
+		<div class="flex flex-col gap-2 sm:flex-row">
+			<input class="h-10 max-w-sm rounded-md border border-line bg-black/30 px-3 text-sm outline-none placeholder:text-faint focus:border-brand" placeholder="搜索名称、Key 或分组..." bind:value={search}>
+			<select class="h-10 rounded-md border border-line bg-black/30 px-3 text-sm outline-none focus:border-brand sm:w-36" bind:value={statusFilter}>
+				<option value="all">全部状态</option>
+				<option value="active">active</option>
+				<option value="disabled">disabled</option>
+			</select>
+		</div>
 	</div>
 	{#if loading}
 		<p class="p-5 text-sm text-faint">正在加载...</p>
-	{:else if keys.length === 0}
+	{:else if filteredKeys.length === 0}
 		<p class="p-5 text-sm text-faint">暂无 API 密钥。</p>
 	{:else}
 		<div class="overflow-x-auto">
@@ -190,39 +209,34 @@
 				<thead class="bg-white/[0.03] font-mono text-xs text-faint">
 					<tr>
 						<th class="px-5 py-3 font-medium">名称</th>
-						<th class="px-5 py-3 font-medium">前缀</th>
+						<th class="px-5 py-3 font-medium">API 密钥</th>
+						<th class="px-5 py-3 font-medium">分组</th>
+						<th class="px-5 py-3 font-medium">速率限制</th>
+						<th class="px-5 py-3 font-medium">过期</th>
 						<th class="px-5 py-3 font-medium">状态</th>
-						<th class="px-5 py-3 font-medium">预算</th>
-						<th class="px-5 py-3 font-medium">已用</th>
-						<th class="px-5 py-3 font-medium">创建时间</th>
 						<th class="px-5 py-3 font-medium">上次使用</th>
 						<th class="px-5 py-3 font-medium">操作</th>
 					</tr>
 				</thead>
 				<tbody class="divide-y divide-line">
-					{#each keys as key (key.id)}
+					{#each filteredKeys as key (key.id)}
 						<tr class="hover:bg-white/[0.02]">
 							<td class="px-5 py-3">
 								<input class="h-9 w-40 rounded-md border border-line bg-black/30 px-2 text-sm outline-none focus:border-brand" bind:value={drafts[key.id].name}>
 							</td>
-							<td class="px-5 py-3 font-mono text-faint">{key.prefix ?? '-'}</td>
+							<td class="px-5 py-3 font-mono text-faint">{key.prefix ?? 'sk-***'}</td>
+							<td class="px-5 py-3"><span class="rounded-full border border-line px-2 py-1 text-xs text-faint">默认分组</span></td>
+							<td class="px-5 py-3 text-xs text-faint">
+								<div>日：{drafts[key.id].daily || '不限'}</div>
+								<div>月：{drafts[key.id].monthly || '不限'}</div>
+							</td>
+							<td class="px-5 py-3 text-faint">永久</td>
 							<td class="px-5 py-3">
 								<select class="h-9 rounded-md border border-line bg-black/30 px-2 text-sm outline-none focus:border-brand" bind:value={drafts[key.id].status}>
 									<option value="active">active</option>
 									<option value="disabled">disabled</option>
 								</select>
 							</td>
-							<td class="px-5 py-3">
-								<div class="flex gap-2">
-									<input class="h-9 w-24 rounded-md border border-line bg-black/30 px-2 text-sm outline-none focus:border-brand" inputmode="decimal" placeholder="日" bind:value={drafts[key.id].daily}>
-									<input class="h-9 w-24 rounded-md border border-line bg-black/30 px-2 text-sm outline-none focus:border-brand" inputmode="decimal" placeholder="月" bind:value={drafts[key.id].monthly}>
-								</div>
-							</td>
-							<td class="px-5 py-3 text-xs text-faint">
-								<div>日：${(key.daily_usage_usd ?? 0).toFixed(4)}</div>
-								<div>月：${(key.monthly_usage_usd ?? 0).toFixed(4)}</div>
-							</td>
-							<td class="px-5 py-3">{fmtDate(key.created_at)}</td>
 							<td class="px-5 py-3">{key.last_used_at ? timeAgo(key.last_used_at) : '-'}</td>
 							<td class="px-5 py-3">
 								<div class="flex gap-2">

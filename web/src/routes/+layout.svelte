@@ -4,6 +4,7 @@
 	import { page } from '$app/stores';
 	import { onMount } from 'svelte';
 	import Logo from '$lib/components/Logo.svelte';
+	import { BRAND_COPYRIGHT, BRAND_DESCRIPTION, BRAND_NAME, BRAND_TAGLINE } from '$lib/brand';
 	import type { CustomerMe, CustomerUser } from '$lib/customer-types';
 
 	interface Props {
@@ -31,13 +32,14 @@
 		{ label: '观测', items: [{ href: '/console/activity', label: '运行事件' }] }
 	];
 	const publicNavItems = [
-		{ href: '/pricing', label: '定价' },
 		{ href: '/models', label: '模型' },
+		{ href: '/pricing', label: '定价' },
 		{ href: '/docs', label: '文档' },
-		{ href: '/contact', label: '联系' }
+		{ href: '/blog', label: '博客' },
+		{ href: '/partner', label: '分销合伙人' }
 	];
-	const publicPaths = ['/', '/pricing', '/models', '/contact', '/privacy-policy', '/terms-of-service', '/acceptable-use-policy'];
-	const publicPrefixes = ['/docs'];
+	const publicPaths = ['/', '/pricing', '/models', '/blog', '/partner', '/contact', '/privacy-policy', '/terms-of-service', '/acceptable-use-policy'];
+	const publicPrefixes = ['/docs', '/blog'];
 
 	let { children }: Props = $props();
 	let currentUser = $state<CustomerUser | null>(null);
@@ -97,7 +99,7 @@
 	<div class="admin-shell">
 		<header class="top-glass">
 			<div class="nav-inner">
-				<Logo href={`${base}/console/dashboard`} label="CDX Console" />
+				<Logo href={`${base}/console/dashboard`} label={`${BRAND_NAME} Console`} />
 				<nav class="nav-links" aria-label="管理后台导航">
 					<a href="{base}/console/dashboard" class:active={activeNav('/console/dashboard')}>管理后台</a>
 					<a href="{base}/app/dashboard">用户端</a>
@@ -128,8 +130,8 @@
 		<header class="sticky top-0 z-50 border-b border-line bg-bg/85 backdrop-blur-md">
 			<div class="mx-auto flex h-16 max-w-6xl items-center justify-between px-5">
 				<a href="{base}/" class="flex items-center gap-3 font-semibold">
-					<span class="flex h-8 w-8 items-center justify-center rounded-md border border-brand/50 bg-black text-xs font-bold text-brand">CD</span>
-					<span>CDX</span>
+					<span class="brand-mark" aria-hidden="true"></span>
+					<span class="text-xl font-semibold">{BRAND_NAME}</span>
 				</a>
 				<nav class="hidden items-center gap-5 text-sm text-slate-300 sm:flex" aria-label="Site navigation">
 					{#each publicNavItems as item (item.href)}
@@ -141,7 +143,7 @@
 						<a class="rounded-md bg-brand px-3 py-2 text-sm font-semibold text-black" href="{base}{consoleHref}">控制台</a>
 					{:else}
 						<a class="rounded-md border border-line px-3 py-2 text-sm hover:border-brand/50" href="{base}/app/login">登录</a>
-						<a class="rounded-md bg-brand px-3 py-2 text-sm font-semibold text-black" href="{base}/app/register">开始使用</a>
+						<a class="rounded-md bg-brand px-3 py-2 text-sm font-semibold text-black" href="{base}/app/register">立即体验</a>
 					{/if}
 				</div>
 			</div>
@@ -155,14 +157,27 @@
 			{@render children()}
 		</main>
 		<footer class="border-t border-line">
-			<div class="mx-auto flex max-w-6xl flex-col gap-3 px-5 py-8 text-sm text-faint sm:flex-row sm:items-center sm:justify-between">
-				<span>CDX relay</span>
-				<div class="flex flex-wrap gap-4">
+			<div class="mx-auto grid max-w-6xl gap-8 px-5 py-10 text-sm text-faint sm:grid-cols-[1.2fr_2fr]">
+				<div>
+					<a href="{base}/" class="flex items-center gap-3 font-semibold text-slate-100">
+						<span class="brand-mark" aria-hidden="true"></span>
+						<span class="text-xl">{BRAND_NAME}</span>
+					</a>
+					<p class="mt-3 max-w-sm">{BRAND_TAGLINE}。{BRAND_DESCRIPTION}。</p>
+				</div>
+				<div class="grid gap-3 sm:grid-cols-3">
+					<a class="hover:text-brand" href="{base}/pricing">按量付费</a>
+					<a class="hover:text-brand" href="{base}/models">支持模型</a>
+					<a class="hover:text-brand" href="{base}/docs">使用文档</a>
+					<a class="hover:text-brand" href="{base}/blog">博客</a>
+					<a class="hover:text-brand" href="{base}/partner">分销合作</a>
+					<a class="hover:text-brand" href="{base}/contact">联系我们</a>
 					<a class="hover:text-brand" href="{base}/terms-of-service">服务条款</a>
 					<a class="hover:text-brand" href="{base}/privacy-policy">隐私政策</a>
 					<a class="hover:text-brand" href="{base}/acceptable-use-policy">使用政策</a>
 				</div>
 			</div>
+			<div class="mx-auto max-w-6xl px-5 pb-8 text-xs text-faint">{BRAND_COPYRIGHT}</div>
 		</footer>
 	</div>
 {:else}

@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { base } from '$app/paths';
+	import { BRAND_NAME } from '$lib/brand';
 	import { customerApi } from '$lib/customer-api';
 	import type { AuthResponse } from '$lib/customer-types';
 	import { onMount, tick } from 'svelte';
@@ -13,6 +14,13 @@
 	let turnstileWidgetId = $state<string | number | null>(null);
 	let error = $state('');
 	let loading = $state(false);
+	const authHighlights = [
+		['1 元用 1 刀', '按 USD 额度入账，按实际调用扣费。'],
+		['满血不掺水', '模型能力以实际已接入服务为准。'],
+		['一把 Key 接入 8+ 工具', 'Codex 当前可用，Claude 家族接入后共用同一控制台。'],
+		['1 元 = 1 刀', '充值额度以账户余额为唯一消费来源。'],
+		['永不断线', '多账号池调度，异常状态可观察、可切换。']
+	];
 
 	onMount(async () => {
 		await loadPublicConfig();
@@ -93,35 +101,41 @@
 </script>
 
 <main class="min-h-screen bg-bg text-slate-100">
-	<div class="mx-auto grid min-h-screen max-w-6xl items-center gap-10 px-5 py-10 lg:grid-cols-[1.1fr_0.9fr]">
+	<a href="{base}/" class="absolute left-4 top-4 text-sm text-faint transition-colors hover:text-white md:left-8 md:top-8">← 返回首页</a>
+	<div class="mx-auto grid min-h-screen max-w-6xl items-center gap-10 px-5 py-16 lg:grid-cols-[1fr_0.95fr]">
 		<section>
 			<a href="{base}/" class="inline-flex items-center gap-3 font-semibold">
-				<span class="flex h-9 w-9 items-center justify-center rounded-md border border-brand/50 bg-black text-xs font-bold text-brand">CD</span>
-				<span>CDX</span>
+				<span class="brand-mark" aria-hidden="true"></span>
+				<span class="text-2xl">{BRAND_NAME}</span>
 			</a>
-			<div class="mt-10 font-mono text-xs uppercase tracking-wider text-brand">customer console</div>
-			<h1 class="mt-4 max-w-xl text-5xl font-bold leading-tight tracking-tight">API keys, prepaid balance, token usage.</h1>
-			<p class="mt-5 max-w-lg text-base text-muted">登录后管理 OpenAI/Codex relay 访问、充值额度、查看 token 消费和邀请奖励。</p>
-			<div class="mt-8 rounded-lg border border-line bg-card/60 p-5 font-mono text-sm text-brand">
-				<div>$ export OPENAI_API_KEY=cdx_live_***</div>
-				<div>$ curl /v1/responses</div>
-				<div class="text-faint">&lt; balance checked, token metered</div>
+			<h1 class="mt-8 max-w-xl text-3xl font-semibold tracking-tight">1 元用 1 刀，登录 {BRAND_NAME} 控制台</h1>
+			<p class="mt-4 max-w-lg text-sm leading-relaxed text-muted">当前提供 Codex 中转；Claude Opus / Sonnet / Haiku 家族正在接入，后续沿用同一套密钥、用量和账本。</p>
+			<div class="mt-8 grid max-w-lg gap-3 text-sm text-muted">
+				{#each authHighlights as item}
+					<div class="rounded-lg border border-line bg-card/60 p-4">
+						<div class="font-medium text-slate-100">{item[0]}</div>
+						<div class="mt-1 text-xs leading-relaxed text-faint">{item[1]}</div>
+					</div>
+				{/each}
 			</div>
 		</section>
 
 		<section class="rounded-xl border border-line bg-card/70 p-6 shadow-2xl">
-			<div>
-				<div class="font-mono text-xs uppercase tracking-wider text-brand">login</div>
-				<h2 class="mt-2 text-2xl font-bold">登录 CDX</h2>
+			<div class="text-center">
+				<a href="{base}/" class="inline-flex items-center justify-center gap-2 font-semibold">
+					<span class="brand-mark" aria-hidden="true"></span>
+					<span>{BRAND_NAME}</span>
+				</a>
+				<h2 class="mt-6 text-2xl font-semibold tracking-tight">登录</h2>
 			</div>
 			<form class="mt-7 space-y-4" onsubmit={login}>
 				<div>
 					<label class="mb-1.5 block text-sm text-muted" for="email">邮箱</label>
-					<input id="email" class="h-11 w-full rounded-md border border-line bg-black/30 px-3 text-sm outline-none focus:border-brand" type="email" autocomplete="email" bind:value={email}>
+					<input id="email" class="h-10 w-full rounded-md border border-line bg-transparent px-3 text-sm outline-none placeholder:text-faint focus:border-brand" placeholder="请输入邮箱" type="email" autocomplete="email" bind:value={email}>
 				</div>
 				<div>
 					<label class="mb-1.5 block text-sm text-muted" for="password">密码</label>
-					<input id="password" class="h-11 w-full rounded-md border border-line bg-black/30 px-3 text-sm outline-none focus:border-brand" type="password" autocomplete="current-password" bind:value={password}>
+					<input id="password" class="h-10 w-full rounded-md border border-line bg-transparent px-3 text-sm outline-none placeholder:text-faint focus:border-brand" placeholder="请输入密码" type="password" autocomplete="current-password" bind:value={password}>
 				</div>
 				{#if turnstileEnabled}
 					<div bind:this={turnstileEl}></div>
@@ -129,10 +143,14 @@
 				{#if error}
 					<p class="rounded-md border border-red-500/30 bg-red-500/10 px-3 py-2 text-sm text-red-300">{error}</p>
 				{/if}
-				<button class="h-11 w-full rounded-md bg-brand text-sm font-semibold text-black disabled:opacity-50" type="submit" disabled={loading || !email.trim() || !password}>
+				<button class="h-10 w-full rounded-md bg-brand text-sm font-semibold text-black disabled:opacity-50" type="submit" disabled={loading || !email.trim() || !password}>
 					{loading ? '登录中...' : '登录'}
 				</button>
-				<a class="flex h-11 w-full items-center justify-center rounded-md border border-line text-sm hover:border-brand/50" href="{base}/app/register">创建账号</a>
+				<div class="flex items-center justify-between text-xs text-muted">
+					<button class="border-0 bg-transparent p-0 text-xs text-faint hover:text-brand disabled:cursor-not-allowed disabled:opacity-60" type="button" disabled>忘记密码？</button>
+					<span>没有账户？<a class="ml-1 text-brand hover:underline" href="{base}/app/register">注册</a></span>
+				</div>
+				<p class="text-center text-xs text-faint">登录即表示同意 <a class="underline underline-offset-4 hover:text-white" href="{base}/terms-of-service">服务条款</a> 和 <a class="underline underline-offset-4 hover:text-white" href="{base}/privacy-policy">隐私政策</a></p>
 			</form>
 		</section>
 	</div>

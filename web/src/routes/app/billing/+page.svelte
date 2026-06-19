@@ -11,9 +11,26 @@
 		{ name: '专业', amount: 1000, desc: '专业开发者' },
 		{ name: '企业', amount: 5000, desc: '企业级用量' }
 	];
+	const monthlyPlans = [
+		['入门版', '¥99/月', '$10/天额度'],
+		['轻量版', '¥199/月', '$20/天额度'],
+		['标准版', '¥499/月', '$50/天额度'],
+		['高级版', '¥999/月', '$100/天额度'],
+		['团队版', '¥1,888/月', '$200/天额度'],
+		['商业版', '¥3,888/月', '$500/天额度'],
+		['企业版', '联系销售', '专属额度与并发']
+	];
+	const supportedModels = [
+		['Codex', '已上线'],
+		['Claude Sonnet / Opus / Haiku', '接入中'],
+		['GPT / o3 / o4', '预留'],
+		['Gemini', '预留']
+	];
 
 	let summary = $state<BillingSummary | null>(null);
 	let order = $state<PaymentOrder | null>(null);
+	let activeTab = $state<'usage' | 'monthly'>('usage');
+	let paymentMethod = $state('wechat');
 	let error = $state('');
 	let loading = $state(false);
 	let creating = $state(false);
@@ -76,9 +93,9 @@
 
 <div class="mb-8 flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
 	<div>
-		<div class="font-mono text-xs uppercase tracking-wider text-brand">billing</div>
-		<h1 class="mt-2 text-3xl font-bold tracking-tight sm:text-4xl">充值</h1>
-		<p class="mt-2 text-sm text-muted">充值人民币，获得 USD 额度；模型调用按 token 计费扣除。</p>
+		<div class="font-mono text-xs uppercase tracking-wider text-brand">purchase</div>
+		<h1 class="mt-2 text-3xl font-bold tracking-tight sm:text-4xl">订阅 / 充值</h1>
+		<p class="mt-2 text-sm text-muted">按量付费永不过期，月卡用户每日享有固定额度。当前覆盖 Codex 中转，Claude 家族接入中；其他模型家族先保留套餐表达。</p>
 	</div>
 	<button class="h-10 rounded-md border border-line bg-card px-4 text-sm hover:border-brand/50" onclick={loadSummary}>刷新</button>
 </div>
@@ -111,35 +128,90 @@
 	</div>
 {/if}
 
-<div class="mb-5 text-sm text-faint">
-	选择要购买的 USD 额度；实际应付人民币金额以下单后展示为准。额度永不过期。
+<div class="mb-5 grid gap-4 lg:grid-cols-[1.2fr_0.8fr]">
+	<section class="rounded-lg border border-line bg-card/60 p-4">
+		<h2 class="m-0 text-base font-semibold">支持模型列表</h2>
+		<div class="mt-4 grid gap-2 sm:grid-cols-2">
+			{#each supportedModels as item}
+				<div class="flex items-center justify-between gap-3 rounded-md border border-line bg-black/20 px-3 py-2 text-sm">
+					<span>{item[0]}</span>
+					<span class={`rounded-full border px-2 py-0.5 text-xs ${item[1] === '已上线' ? 'border-brand/40 text-brand' : 'border-line text-faint'}`}>{item[1]}</span>
+				</div>
+			{/each}
+		</div>
+	</section>
+	<section class="rounded-lg border border-line bg-card/60 p-4">
+		<h2 class="m-0 text-base font-semibold">支付方式</h2>
+		<div class="mt-4 grid grid-cols-3 gap-2">
+			{#each [{ value: 'wechat', label: '微信' }, { value: 'alipay', label: '支付宝' }, { value: 'usdt', label: 'USDT' }] as method}
+				<button
+					class={`rounded-md px-3 py-2 text-sm ${paymentMethod === method.value ? 'border-brand bg-brand text-black' : 'border-line bg-black/20 text-slate-300'}`}
+					type="button"
+					onclick={() => (paymentMethod = method.value)}
+				>
+					{method.label}
+				</button>
+			{/each}
+		</div>
+		<p class="mt-3 text-xs text-faint">当前下单接口不区分支付方式，实际支付渠道以下单返回为准。</p>
+	</section>
 </div>
 
-<div class="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-	{#each packs as pack}
-		<section class={`relative flex flex-col rounded-lg border bg-card/70 p-6 ${pack.badge ? 'border-brand/50' : 'border-line'}`}>
-			{#if pack.badge}
-				<span class="absolute right-4 top-4 rounded-full bg-brand px-2 py-0.5 text-xs font-medium text-black">{pack.badge}</span>
-			{/if}
-			<h2 class="m-0 text-lg font-semibold">{pack.name}</h2>
-			<p class="mt-1 text-sm text-faint">{pack.desc}</p>
-			<div class="mt-5 text-3xl font-bold">${pack.amount.toLocaleString()}</div>
-			<div class="mt-1 font-mono text-sm text-brand">购买 {fmtCost(pack.amount)} 额度</div>
-			<ul class="mt-5 flex-1 space-y-2 text-sm text-slate-300">
-				<li><span class="text-brand">✓</span> 支持 OpenAI Responses</li>
-				<li><span class="text-brand">✓</span> 适合 Codex CLI 使用</li>
-				<li><span class="text-brand">✓</span> 按实际 token 扣费</li>
-			</ul>
-			<button
-				class="mt-6 h-11 rounded-md bg-brand text-sm font-semibold text-black disabled:opacity-50"
-				onclick={() => createPayment(pack.amount)}
-				disabled={creating}
-			>
-				{creating ? '创建订单中...' : '立即充值'}
-			</button>
-		</section>
-	{/each}
+<div class="mb-5 inline-flex rounded-md border border-line bg-black/20 p-1">
+	<button class={`rounded px-4 py-1.5 text-sm ${activeTab === 'usage' ? 'bg-brand font-semibold text-black' : 'text-slate-300 hover:bg-white/[0.04]'}`} type="button" onclick={() => (activeTab = 'usage')}>按量付费</button>
+	<button class={`rounded px-4 py-1.5 text-sm ${activeTab === 'monthly' ? 'bg-brand font-semibold text-black' : 'text-slate-300 hover:bg-white/[0.04]'}`} type="button" onclick={() => (activeTab = 'monthly')}>月卡订阅</button>
 </div>
+
+{#if activeTab === 'usage'}
+	<div class="mb-5 text-sm text-faint">选择要购买的 USD 额度；实际应付人民币金额以下单后展示为准。额度永不过期。</div>
+	<div class="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+		{#each packs as pack}
+			<section class={`relative flex flex-col rounded-lg border bg-card/70 p-6 ${pack.badge ? 'border-brand/50' : 'border-line'}`}>
+				{#if pack.badge}
+					<span class="absolute right-4 top-4 rounded-full bg-brand px-2 py-0.5 text-xs font-medium text-black">{pack.badge}</span>
+				{/if}
+				<h2 class="m-0 text-lg font-semibold">{pack.name}</h2>
+				<p class="mt-1 text-sm text-faint">{pack.desc}</p>
+				<div class="mt-5 text-3xl font-bold">${pack.amount.toLocaleString()}</div>
+				<div class="mt-1 font-mono text-sm text-brand">购买 {fmtCost(pack.amount)} 额度</div>
+				<ul class="mt-5 flex-1 space-y-2 text-sm text-slate-300">
+					<li><span class="text-brand">✓</span> Codex 中转当前可用</li>
+					<li><span class="text-brand">✓</span> 适合 Codex CLI 使用</li>
+					<li><span class="text-brand">✓</span> 按实际 token 扣费</li>
+				</ul>
+				<button
+					class="mt-6 h-11 rounded-md bg-brand text-sm font-semibold text-black disabled:opacity-50"
+					onclick={() => createPayment(pack.amount)}
+					disabled={creating}
+				>
+					{creating ? '创建订单中...' : '立即充值'}
+				</button>
+			</section>
+		{/each}
+	</div>
+{:else}
+	<section>
+		<div class="mb-5">
+			<h2 class="m-0 text-xl font-semibold">月卡订阅</h2>
+			<p class="mt-1 text-sm text-faint">月卡订阅后端待补，当前先保持完整方案视觉。到期后自动停止，升级套餐时剩余天数可按比例折算。</p>
+		</div>
+		<div class="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+			{#each monthlyPlans as plan, i}
+				<section class={`rounded-lg border bg-card/70 p-6 ${i === 2 ? 'border-brand/60' : 'border-line'}`}>
+					<h3 class="text-lg font-semibold">{plan[0]}</h3>
+					<div class="mt-4 text-3xl font-bold">{plan[1]}</div>
+					<p class="mt-2 text-sm text-faint">{plan[2]}，UTC+8 每日刷新。</p>
+					<ul class="mt-5 space-y-2 text-sm text-slate-300">
+						<li><span class="text-brand">✓</span> Codex 当前可用，Claude 家族接入中</li>
+						<li><span class="text-brand">✓</span> 可与按量余额同时使用</li>
+						<li><span class="text-brand">✓</span> 适合高频编码场景</li>
+					</ul>
+					<button class="mt-6 h-11 w-full rounded-md border border-line bg-black/20 text-sm text-faint" type="button" disabled>立即订阅</button>
+				</section>
+			{/each}
+		</div>
+	</section>
+{/if}
 
 {#if order}
 	<div class="fixed inset-0 z-[100] flex items-center justify-center p-4">

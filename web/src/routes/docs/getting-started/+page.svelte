@@ -1,9 +1,8 @@
 <script lang="ts">
-	import { browser } from '$app/environment';
 	import { base } from '$app/paths';
-	import { BRAND_DESCRIPTION, BRAND_NAME } from '$lib/brand';
+	import { BRAND_NAME } from '$lib/brand';
 
-	const activeHref = '/docs';
+	const activeHref = '/docs/getting-started';
 	const docsNav = [
 		{ href: '/docs', label: `${BRAND_NAME} 文档`, summary: '产品说明、文档导航和快速开始' },
 		{ href: '/docs/getting-started', label: '新手入门', summary: '理解 OpenAI、Anthropic、API 和终端工具' },
@@ -14,7 +13,6 @@
 		{ href: '/docs/faq', label: '常见问题', summary: '基础、计费、能力、安全和稳定性问题' }
 	];
 
-	let origin = $state('https://your-domain.example');
 	let query = $state('');
 	let searchOpen = $state(false);
 	let lightMode = $state(false);
@@ -29,15 +27,10 @@
 	const mutedClass = $derived(lightMode ? 'text-slate-600' : 'text-muted');
 	const faintClass = $derived(lightMode ? 'text-slate-500' : 'text-faint');
 	const borderClass = $derived(lightMode ? 'border-slate-200' : 'border-line');
-	const codeClass = $derived(lightMode ? 'border-slate-200 bg-slate-950 text-brand' : 'border-line bg-black/40 text-brand');
-
-	$effect(() => {
-		if (browser) origin = window.location.origin;
-	});
 </script>
 
 <svelte:head>
-	<title>文档 | {BRAND_NAME}</title>
+	<title>新手入门 | {BRAND_NAME}</title>
 </svelte:head>
 
 <section class={`min-h-screen border-t ${borderClass} ${shellClass}`}>
@@ -96,45 +89,68 @@
 		</aside>
 
 		<article class="min-w-0">
-			<div class="font-mono text-xs uppercase tracking-wider text-brand">docs</div>
-			<h1 class="mt-3 text-4xl font-bold tracking-tight sm:text-5xl">文档</h1>
+			<div class="font-mono text-xs uppercase tracking-wider text-brand">Getting started</div>
+			<h1 class="mt-3 text-4xl font-bold tracking-tight sm:text-5xl">新手入门</h1>
 			<p class={`max-w-3xl text-base leading-7 ${mutedClass}`}>
-				AI API 中转服务使用指南 —— Claude Code / Codex / Cursor 零门槛接入
+				先把几个概念对齐，再开始配置工具。{BRAND_NAME} 的核心目标是让用户不用自己处理海外账号、网络、余额和模型路由。
 			</p>
 
 			<section class={`mt-10 border-t pt-8 ${borderClass}`}>
-				<h2 class="text-2xl font-semibold">什么是产品</h2>
+				<h2 class="text-2xl font-semibold">OpenAI 和 Anthropic 是什么</h2>
 				<p class={`mt-3 leading-7 ${mutedClass}`}>
-					{BRAND_NAME} 是{BRAND_DESCRIPTION}。它把账号、密钥、余额、模型路由和请求记录收在一个网关里，用户侧只需要一把 API Key 和一个 base URL。
-					当前 Codex 可用，Claude 家族即将接入；文档中的 Claude Code 配置用于说明同一套网关接入方式，不代表所有 Claude 模型已经全量上线。
+					OpenAI 和 Anthropic 是模型提供方。Codex 属于 OpenAI 生态，Claude Code 属于 Anthropic 生态。
+					它们的 API、鉴权、模型名和错误格式不同，但最终都可以被开发工具当成“给 AI 发请求、拿结果”的接口来使用。
 				</p>
 			</section>
 
 			<section class={`mt-8 border-t pt-8 ${borderClass}`}>
-				<h2 class="text-2xl font-semibold">文档导航</h2>
+				<h2 class="text-2xl font-semibold">网页聊天版 vs 终端工具</h2>
 				<div class="mt-5 grid gap-4 md:grid-cols-2">
-					{#each docsNav.slice(1) as item (item.href)}
-						<a class={`rounded-lg border p-5 hover:border-brand/50 ${panelClass}`} href="{base}{item.href}">
-							<h3 class="text-lg font-semibold">{item.label}</h3>
-							<p class={`mt-2 text-sm leading-6 ${mutedClass}`}>{item.summary}</p>
-						</a>
-					{/each}
+					<div class={`rounded-lg border p-5 ${panelClass}`}>
+						<h3 class="text-lg font-semibold">网页聊天版</h3>
+						<p class={`mt-2 text-sm leading-6 ${mutedClass}`}>适合问答、写作和临时分析。它通常跑在浏览器里，不能天然读取你的项目目录，也不适合反复执行命令。</p>
+					</div>
+					<div class={`rounded-lg border p-5 ${panelClass}`}>
+						<h3 class="text-lg font-semibold">终端工具</h3>
+						<p class={`mt-2 text-sm leading-6 ${mutedClass}`}>适合写代码、看文件、跑测试和修改项目。Claude Code、Codex CLI、Cursor 这类工具会在你的电脑或开发环境里工作。</p>
+					</div>
 				</div>
 			</section>
 
 			<section class={`mt-8 border-t pt-8 ${borderClass}`}>
-				<h2 class="text-2xl font-semibold">快速开始</h2>
-				<ol class={`mt-4 space-y-3 leading-7 ${mutedClass}`}>
-					<li>1. 注册账号并完成充值，余额大于 0 后再创建 API Key。</li>
-					<li>2. 在控制台创建 API Key，按项目或工具分开管理。</li>
-					<li>3. Codex CLI 使用 <span class="font-mono text-brand">{origin}/openai</span> 作为 base URL；OpenAI Responses 兼容调用可使用 <span class="font-mono text-brand">{origin}/v1</span>。</li>
-					<li>4. 先用最小请求验证密钥和余额，再迁移日常工具。</li>
-				</ol>
-				<pre class={`mt-5 whitespace-pre-wrap text-sm ${codeClass}`}>curl {origin}/v1/responses \
-  -H "Authorization: Bearer sk-xxx" \
-  -H "Content-Type: application/json" \
-  -d '&#123;"model":"gpt-5.3-codex","input":"hello"&#125;'</pre>
-				<p class={`mt-4 text-sm ${faintClass}`}>如果返回 401、余额不足或模型不存在，先进入故障排查页确认密钥、余额和模型名。</p>
+				<h2 class="text-2xl font-semibold">终端、API、工具跑在哪儿</h2>
+				<p class={`mt-3 leading-7 ${mutedClass}`}>
+					终端是你输入命令的地方。API 是工具和模型服务之间的通信入口。工具本身运行在你的电脑、服务器或云开发环境里；
+					它读取本地文件、发起 API 请求，然后把模型返回的结果变成命令、补丁或回答。
+				</p>
+			</section>
+
+			<section class={`mt-8 border-t pt-8 ${borderClass}`}>
+				<h2 class="text-2xl font-semibold">为什么很多人用不起来</h2>
+				<ul class={`mt-4 space-y-3 leading-7 ${mutedClass}`}>
+					<li>海外账号、银行卡、手机号或组织限制导致账号注册失败。</li>
+					<li>网络链路不稳定，工具能安装但请求经常超时。</li>
+					<li>API Key、base URL、模型名和工具配置混在一起，错一个就不能用。</li>
+					<li>不同工具使用不同环境变量，新手很难判断到底是哪一层出错。</li>
+				</ul>
+			</section>
+
+			<section class={`mt-8 border-t pt-8 ${borderClass}`}>
+				<h2 class="text-2xl font-semibold">产品解决什么</h2>
+				<p class={`mt-3 leading-7 ${mutedClass}`}>
+					{BRAND_NAME} 把可用账号、请求转发、余额扣费、密钥管理和用量记录放在同一个控制台里。
+					用户只需要充值、创建 API Key，并把工具的 base URL 指向网关。当前 Codex 可用，Claude 家族即将接入同一套账号和账本体验。
+				</p>
+			</section>
+
+			<section class={`mt-8 border-t pt-8 ${borderClass}`}>
+				<h2 class="text-2xl font-semibold">谁适合用</h2>
+				<ul class={`mt-4 space-y-3 leading-7 ${mutedClass}`}>
+					<li>想尽快把 Codex CLI 接到稳定 API 的开发者。</li>
+					<li>需要给团队统一管理 Key、余额和使用记录的小团队。</li>
+					<li>正在从网页聊天过渡到终端 AI 编程工具的新手。</li>
+					<li>未来准备同时使用 Codex、Claude Code、Cursor 等工具的人。</li>
+				</ul>
 			</section>
 		</article>
 	</div>

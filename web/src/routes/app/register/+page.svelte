@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { base } from '$app/paths';
 	import { page } from '$app/stores';
+	import { BRAND_NAME } from '$lib/brand';
 	import { customerApi } from '$lib/customer-api';
 	import type { AuthResponse } from '$lib/customer-types';
 	import { onMount, tick } from 'svelte';
@@ -17,6 +18,13 @@
 	let turnstileWidgetId = $state<string | number | null>(null);
 	let error = $state('');
 	let loading = $state(false);
+	const authHighlights = [
+		['1 元用 1 刀', '按 USD 额度入账，按实际调用扣费。'],
+		['满血不掺水', '模型能力以实际已接入服务为准。'],
+		['一把 Key 接入 8+ 工具', 'Codex 当前可用，Claude 家族接入后共用同一控制台。'],
+		['1 元 = 1 刀', '余额、消费和奖励统一进入账户账本。'],
+		['永不断线', '多账号池调度，异常状态可观察、可切换。']
+	];
 
 	onMount(async () => {
 		await loadPublicConfig();
@@ -110,43 +118,54 @@
 </script>
 
 <main class="min-h-screen bg-bg text-slate-100">
-	<div class="mx-auto grid min-h-screen max-w-6xl items-center gap-10 px-5 py-10 lg:grid-cols-[1.1fr_0.9fr]">
+	<a href="{base}/" class="absolute left-4 top-4 text-sm text-faint transition-colors hover:text-white md:left-8 md:top-8">← 返回首页</a>
+	<div class="mx-auto grid min-h-screen max-w-6xl items-center gap-10 px-5 py-16 lg:grid-cols-[1fr_0.95fr]">
 		<section>
 			<a href="{base}/" class="inline-flex items-center gap-3 font-semibold">
-				<span class="flex h-9 w-9 items-center justify-center rounded-md border border-brand/50 bg-black text-xs font-bold text-brand">CD</span>
-				<span>CDX</span>
+				<span class="brand-mark" aria-hidden="true"></span>
+				<span class="text-2xl">{BRAND_NAME}</span>
 			</a>
-			<div class="mt-10 font-mono text-xs uppercase tracking-wider text-brand">prepaid relay</div>
-			<h1 class="mt-4 max-w-xl text-5xl font-bold leading-tight tracking-tight">创建 CDX 账号。</h1>
-			<p class="mt-5 max-w-lg text-base text-muted">充值人民币获得 USD 额度，OpenAI/Codex 请求按实际 token 消费扣费。</p>
-			<div class="mt-8 rounded-lg border border-line bg-card/60 p-5 text-sm text-muted">
-				<div class="font-medium text-slate-100">邀请奖励规则</div>
-				<div class="mt-2">受邀方注册后自动获得奖励；邀请方在受邀方首次付费后获得奖励。</div>
+			<h1 class="mt-8 max-w-xl text-3xl font-semibold tracking-tight">注册 {BRAND_NAME}，创建你的 API 中转账户</h1>
+			<p class="mt-4 max-w-lg text-sm leading-relaxed text-muted">注册账号、充值、创建 API Key，然后把客户端 base URL 指向 {BRAND_NAME}。当前提供 Codex 中转，Claude 家族接入中。</p>
+			<div class="mt-8 grid max-w-lg gap-3 text-sm text-muted">
+				{#each authHighlights as item}
+					<div class="rounded-lg border border-line bg-card/60 p-4">
+						<div class="font-medium text-slate-100">{item[0]}</div>
+						<div class="mt-1 text-xs leading-relaxed text-faint">{item[1]}</div>
+					</div>
+				{/each}
+			</div>
+			<div class="mt-5 rounded-lg border border-line bg-card/60 p-5 text-sm text-muted">
+				<div class="font-medium text-slate-100">新用户与分销奖励</div>
+				<div class="mt-2">邀请码会自动绑定推广关系。受邀方注册可得奖励，邀请方在受邀方首次付费后获得佣金或额度奖励。</div>
 			</div>
 		</section>
 
 		<section class="rounded-xl border border-line bg-card/70 p-6 shadow-2xl">
-			<div>
-				<div class="font-mono text-xs uppercase tracking-wider text-brand">register</div>
-				<h2 class="mt-2 text-2xl font-bold">客户注册</h2>
+			<div class="text-center">
+				<a href="{base}/" class="inline-flex items-center justify-center gap-2 font-semibold">
+					<span class="brand-mark" aria-hidden="true"></span>
+					<span>{BRAND_NAME}</span>
+				</a>
+				<h2 class="mt-6 text-2xl font-semibold tracking-tight">注册</h2>
 			</div>
 			<form class="mt-7 space-y-4" onsubmit={register}>
 				<div>
-					<label class="mb-1.5 block text-sm text-muted" for="name">名称</label>
-					<input id="name" class="h-11 w-full rounded-md border border-line bg-black/30 px-3 text-sm outline-none focus:border-brand" type="text" autocomplete="name" bind:value={name}>
+					<label class="mb-1.5 block text-sm text-muted" for="name">用户名</label>
+					<input id="name" class="h-10 w-full rounded-md border border-line bg-transparent px-3 text-sm outline-none placeholder:text-faint focus:border-brand" placeholder="请输入用户名" type="text" autocomplete="name" bind:value={name}>
 				</div>
 				<div>
 					<label class="mb-1.5 block text-sm text-muted" for="email">邮箱</label>
-					<input id="email" class="h-11 w-full rounded-md border border-line bg-black/30 px-3 text-sm outline-none focus:border-brand" type="email" autocomplete="email" bind:value={email}>
+					<input id="email" class="h-10 w-full rounded-md border border-line bg-transparent px-3 text-sm outline-none placeholder:text-faint focus:border-brand" placeholder="请输入邮箱" type="email" autocomplete="email" bind:value={email}>
 				</div>
 				<div>
 					<label class="mb-1.5 block text-sm text-muted" for="password">密码</label>
-					<input id="password" class="h-11 w-full rounded-md border border-line bg-black/30 px-3 text-sm outline-none focus:border-brand" type="password" autocomplete="new-password" bind:value={password}>
+					<input id="password" class="h-10 w-full rounded-md border border-line bg-transparent px-3 text-sm outline-none placeholder:text-faint focus:border-brand" placeholder="请输入密码" type="password" autocomplete="new-password" bind:value={password}>
 					<div class="mt-1 text-xs text-faint">至少 8 个字符。</div>
 				</div>
 				<div>
 					<label class="mb-1.5 block text-sm text-muted" for="referral">邀请码</label>
-					<input id="referral" class="h-11 w-full rounded-md border border-line bg-black/30 px-3 text-sm outline-none focus:border-brand" type="text" autocomplete="off" bind:value={referralCode}>
+					<input id="referral" class="h-10 w-full rounded-md border border-line bg-transparent px-3 text-sm outline-none placeholder:text-faint focus:border-brand" placeholder="可选" type="text" autocomplete="off" bind:value={referralCode}>
 				</div>
 				{#if turnstileEnabled}
 					<div bind:this={turnstileEl}></div>
@@ -154,10 +173,11 @@
 				{#if error}
 					<p class="rounded-md border border-red-500/30 bg-red-500/10 px-3 py-2 text-sm text-red-300">{error}</p>
 				{/if}
-				<button class="h-11 w-full rounded-md bg-brand text-sm font-semibold text-black disabled:opacity-50" type="submit" disabled={loading || !email.trim() || !password}>
+				<button class="h-10 w-full rounded-md bg-brand text-sm font-semibold text-black disabled:opacity-50" type="submit" disabled={loading || !email.trim() || !password}>
 					{loading ? '创建中...' : '创建账号'}
 				</button>
-				<a class="flex h-11 w-full items-center justify-center rounded-md border border-line text-sm hover:border-brand/50" href="{base}/app/login">已有账号，去登录</a>
+				<div class="text-center text-xs text-muted">已有账户？<a class="ml-1 text-brand hover:underline" href="{base}/app/login">登录</a></div>
+				<p class="text-center text-xs text-faint">注册即表示同意 <a class="underline underline-offset-4 hover:text-white" href="{base}/terms-of-service">服务条款</a> 和 <a class="underline underline-offset-4 hover:text-white" href="{base}/privacy-policy">隐私政策</a></p>
 			</form>
 		</section>
 	</div>

@@ -1,9 +1,8 @@
 <script lang="ts">
-	import { browser } from '$app/environment';
 	import { base } from '$app/paths';
-	import { BRAND_DESCRIPTION, BRAND_NAME } from '$lib/brand';
+	import { BRAND_NAME } from '$lib/brand';
 
-	const activeHref = '/docs';
+	const activeHref = '/docs/pricing';
 	const docsNav = [
 		{ href: '/docs', label: `${BRAND_NAME} 文档`, summary: '产品说明、文档导航和快速开始' },
 		{ href: '/docs/getting-started', label: '新手入门', summary: '理解 OpenAI、Anthropic、API 和终端工具' },
@@ -14,7 +13,6 @@
 		{ href: '/docs/faq', label: '常见问题', summary: '基础、计费、能力、安全和稳定性问题' }
 	];
 
-	let origin = $state('https://your-domain.example');
 	let query = $state('');
 	let searchOpen = $state(false);
 	let lightMode = $state(false);
@@ -29,15 +27,10 @@
 	const mutedClass = $derived(lightMode ? 'text-slate-600' : 'text-muted');
 	const faintClass = $derived(lightMode ? 'text-slate-500' : 'text-faint');
 	const borderClass = $derived(lightMode ? 'border-slate-200' : 'border-line');
-	const codeClass = $derived(lightMode ? 'border-slate-200 bg-slate-950 text-brand' : 'border-line bg-black/40 text-brand');
-
-	$effect(() => {
-		if (browser) origin = window.location.origin;
-	});
 </script>
 
 <svelte:head>
-	<title>文档 | {BRAND_NAME}</title>
+	<title>注册与充值 | {BRAND_NAME}</title>
 </svelte:head>
 
 <section class={`min-h-screen border-t ${borderClass} ${shellClass}`}>
@@ -96,45 +89,67 @@
 		</aside>
 
 		<article class="min-w-0">
-			<div class="font-mono text-xs uppercase tracking-wider text-brand">docs</div>
-			<h1 class="mt-3 text-4xl font-bold tracking-tight sm:text-5xl">文档</h1>
+			<div class="font-mono text-xs uppercase tracking-wider text-brand">Billing</div>
+			<h1 class="mt-3 text-4xl font-bold tracking-tight sm:text-5xl">注册与充值</h1>
 			<p class={`max-w-3xl text-base leading-7 ${mutedClass}`}>
-				AI API 中转服务使用指南 —— Claude Code / Codex / Cursor 零门槛接入
+				先注册，再充值，最后创建 API Key。余额是请求准入的真实边界；没有余额时请求不会进入上游。
 			</p>
 
 			<section class={`mt-10 border-t pt-8 ${borderClass}`}>
-				<h2 class="text-2xl font-semibold">什么是产品</h2>
+				<h2 class="text-2xl font-semibold">第一步：注册账号</h2>
 				<p class={`mt-3 leading-7 ${mutedClass}`}>
-					{BRAND_NAME} 是{BRAND_DESCRIPTION}。它把账号、密钥、余额、模型路由和请求记录收在一个网关里，用户侧只需要一把 API Key 和一个 base URL。
-					当前 Codex 可用，Claude 家族即将接入；文档中的 Claude Code 配置用于说明同一套网关接入方式，不代表所有 Claude 模型已经全量上线。
+					进入 <a class="text-brand" href="{base}/app/register">注册页面</a>，使用邮箱创建账号。注册完成后登录控制台，确认账户状态正常。
 				</p>
 			</section>
 
 			<section class={`mt-8 border-t pt-8 ${borderClass}`}>
-				<h2 class="text-2xl font-semibold">文档导航</h2>
+				<h2 class="text-2xl font-semibold">第二步：选择套餐</h2>
 				<div class="mt-5 grid gap-4 md:grid-cols-2">
-					{#each docsNav.slice(1) as item (item.href)}
-						<a class={`rounded-lg border p-5 hover:border-brand/50 ${panelClass}`} href="{base}{item.href}">
-							<h3 class="text-lg font-semibold">{item.label}</h3>
-							<p class={`mt-2 text-sm leading-6 ${mutedClass}`}>{item.summary}</p>
-						</a>
-					{/each}
+					<div class={`rounded-lg border p-5 ${panelClass}`}>
+						<h3 class="text-lg font-semibold">PAYGO</h3>
+						<p class={`mt-2 text-sm leading-6 ${mutedClass}`}>按量充值、按实际 token 消耗扣费。新手建议先用 PAYGO，小额验证工具、模型和工作流都跑通后再提高预算。</p>
+					</div>
+					<div class={`rounded-lg border p-5 ${panelClass}`}>
+						<h3 class="text-lg font-semibold">月卡订阅</h3>
+						<p class={`mt-2 text-sm leading-6 ${mutedClass}`}>适合稳定高频使用。月卡额度、刷新周期和可用模型以控制台展示为准；如果当前账号还没有订阅入口，先使用 PAYGO。</p>
+					</div>
 				</div>
 			</section>
 
 			<section class={`mt-8 border-t pt-8 ${borderClass}`}>
-				<h2 class="text-2xl font-semibold">快速开始</h2>
-				<ol class={`mt-4 space-y-3 leading-7 ${mutedClass}`}>
-					<li>1. 注册账号并完成充值，余额大于 0 后再创建 API Key。</li>
-					<li>2. 在控制台创建 API Key，按项目或工具分开管理。</li>
-					<li>3. Codex CLI 使用 <span class="font-mono text-brand">{origin}/openai</span> 作为 base URL；OpenAI Responses 兼容调用可使用 <span class="font-mono text-brand">{origin}/v1</span>。</li>
-					<li>4. 先用最小请求验证密钥和余额，再迁移日常工具。</li>
-				</ol>
-				<pre class={`mt-5 whitespace-pre-wrap text-sm ${codeClass}`}>curl {origin}/v1/responses \
-  -H "Authorization: Bearer sk-xxx" \
-  -H "Content-Type: application/json" \
-  -d '&#123;"model":"gpt-5.3-codex","input":"hello"&#125;'</pre>
-				<p class={`mt-4 text-sm ${faintClass}`}>如果返回 401、余额不足或模型不存在，先进入故障排查页确认密钥、余额和模型名。</p>
+				<h2 class="text-2xl font-semibold">第三步：充值</h2>
+				<p class={`mt-3 leading-7 ${mutedClass}`}>
+					进入 <a class="text-brand" href="{base}/app/billing">充值页面</a> 选择金额并完成支付。支付成功后，余额会写入账户账本。
+					如果页面显示订单处理中，先刷新订单状态，不要重复创建多个同金额订单。
+				</p>
+			</section>
+
+			<section class={`mt-8 border-t pt-8 ${borderClass}`}>
+				<h2 class="text-2xl font-semibold">第四步：创建 API 密钥</h2>
+				<p class={`mt-3 leading-7 ${mutedClass}`}>
+					进入 <a class="text-brand" href="{base}/app/keys">API Key 页面</a> 创建密钥。建议按项目、工具或团队成员拆分 Key，泄露时可以单独禁用，不影响其他场景。
+				</p>
+			</section>
+
+			<section class={`mt-8 border-t pt-8 ${borderClass}`}>
+				<h2 class="text-2xl font-semibold">模型定价与分组</h2>
+					<p class={`mt-3 leading-7 ${mutedClass}`}>
+						模型价格按输入、输出和缓存 token 计费，不同模型属于不同能力和容量分组。当前 Codex 可用，Claude 家族即将接入；
+						<a class="text-brand" href="{base}/models">模型页面</a> 用于展示目标能力和参考价格，实际可调用模型、单价和上下文长度以控制台/API 返回为准。
+					</p>
+				<ul class={`mt-4 space-y-3 leading-7 ${mutedClass}`}>
+					<li>轻量任务优先选低成本模型。</li>
+					<li>复杂代码修改、长上下文分析再使用更强模型。</li>
+					<li>同一项目不要混用太多 Key，否则后续排查用量会变复杂。</li>
+				</ul>
+			</section>
+
+			<section class={`mt-8 border-t pt-8 ${borderClass}`}>
+				<h2 class="text-2xl font-semibold">下一步</h2>
+				<p class={`mt-3 leading-7 ${mutedClass}`}>
+					完成充值和 API Key 后，进入 <a class="text-brand" href="{base}/docs/install">安装配置</a>，把 Codex CLI 或其他 OpenAI 兼容工具指向 {BRAND_NAME} 网关。
+				</p>
+				<p class={`mt-3 text-sm ${faintClass}`}>余额、订单、用量和密钥状态都以登录后的控制台为准。</p>
 			</section>
 		</article>
 	</div>

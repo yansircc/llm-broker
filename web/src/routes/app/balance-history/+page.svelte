@@ -6,6 +6,22 @@
 	let data = $state<BillingLedgerResponse | null>(null);
 	let error = $state('');
 	let loading = $state(false);
+	let kindFilter = $state<'all' | 'credit' | 'debit'>('all');
+	const kindFilters: { value: 'all' | 'credit' | 'debit'; label: string }[] = [
+		{ value: 'all', label: '全部' },
+		{ value: 'credit', label: '充值' },
+		{ value: 'debit', label: '消费' }
+	];
+	const entries = $derived(data?.entries ?? []);
+	const credits = $derived(entries.filter((entry) => entry.amount_usd > 0).reduce((sum, entry) => sum + entry.amount_usd, 0));
+	const debits = $derived(entries.filter((entry) => entry.amount_usd < 0).reduce((sum, entry) => sum + Math.abs(entry.amount_usd), 0));
+	const filteredEntries = $derived(
+		entries.filter((entry) => {
+			if (kindFilter === 'credit') return entry.amount_usd > 0;
+			if (kindFilter === 'debit') return entry.amount_usd < 0;
+			return true;
+		})
+	);
 
 	$effect(() => {
 		loadLedger();
@@ -33,6 +49,10 @@
 			default: return kind;
 		}
 	}
+
+	function setKindFilter(value: 'all' | 'credit' | 'debit') {
+		kindFilter = value;
+	}
 </script>
 
 <div class="mb-8 flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
@@ -48,31 +68,50 @@
 	<p class="rounded-md border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-300">{error}</p>
 {:else if loading}
 	<p class="text-sm text-faint">正在加载...</p>
-{:else if !data?.entries?.length}
-	<div class="rounded-lg border border-dashed border-line bg-card/30 px-6 py-16 text-center text-sm text-faint">暂无额度记录</div>
 {:else}
-	<div class="overflow-x-auto rounded-lg border border-line bg-card/60">
-		<table class="w-full min-w-[760px] text-left text-sm">
-			<thead class="bg-white/[0.03] font-mono text-xs text-faint">
-				<tr>
-					<th class="px-5 py-3 font-medium">类型</th>
-					<th class="px-5 py-3 font-medium">金额</th>
-					<th class="px-5 py-3 font-medium">详情</th>
-					<th class="px-5 py-3 font-medium">来源</th>
-					<th class="px-5 py-3 font-medium">时间</th>
-				</tr>
-			</thead>
-			<tbody class="divide-y divide-line">
-				{#each data.entries as entry}
-					<tr class="hover:bg-white/[0.02]">
-						<td class="px-5 py-3">{label(entry.kind)}</td>
-						<td class={`px-5 py-3 font-mono ${entry.amount_usd >= 0 ? 'text-brand' : 'text-red-300'}`}>{fmtCost(entry.amount_usd)}</td>
-						<td class="px-5 py-3">{entry.description || '-'}</td>
-						<td class="px-5 py-3 font-mono text-xs text-faint">{entry.source_type}:{entry.source_id}</td>
-						<td class="px-5 py-3">{fmtDate(entry.created_at)}</td>
-					</tr>
-				{/each}
-			</tbody>
-		</table>
+	<div class="mb-6 grid gap-4 sm:grid-cols-3">
+		<div class="rounded-lg border border-line bg-card/70 p-5">
+			<div class="text-sm text-faint">累计充值</div>
+			<div class="mt-3 font-mono text-2xl font-bold text-brand">{fmtCost(credits)}</div>
+		</div>
+		<div class="rounded-lg border border-line bg-card/70 p-5">
+			<div class="text-sm text-faint">累计消费</div>
+			<div class="mt-3 font-mono text-2xl font-bold">{fmtCost(debits)}</div>
+		</div>
+		<div class="rounded-lg border border-line bg-card/70 p-5">
+			<div class="text-sm text-faint">净额度</div>
+			<div class="mt-3 font-mono text-2xl font-bold">{fmtCost(credits - debits)}</div>
+		</div>
 	</div>
+	<div class="mb-4 inline-flex rounded-md border border-line bg-black/20 p-1">
+		{#each kindFilters as item}
+			<button class={`rounded px-4 py-1.5 text-sm ${kindFilter === item.value ? 'bg-brand font-semibold text-black' : 'text-slate-300 hover:bg-white/[0.04]'}`} onclick={() => setKindFilter(item.value)}>{item.label}</button>
+		{/each}
+	</div>
+	{#if !filteredEntries.length}
+		<div class="rounded-lg border border-dashed border-line bg-card/30 px-6 py-16 text-center text-sm text-faint">暂无额度记录</div>
+	{:else}
+		<div class="overflow-x-auto rounded-lg border border-line bg-card/60">
+			<table class="w-full min-w-[680px] text-left text-sm">
+				<thead class="bg-white/[0.03] font-mono text-xs text-faint">
+					<tr>
+						<th class="px-5 py-3 font-medium">类型</th>
+						<th class="px-5 py-3 font-medium">详情</th>
+						<th class="px-5 py-3 font-medium">金额</th>
+						<th class="px-5 py-3 font-medium">时间</th>
+					</tr>
+				</thead>
+				<tbody class="divide-y divide-line">
+					{#each filteredEntries as entry}
+						<tr class="hover:bg-white/[0.02]">
+							<td class="px-5 py-3">{label(entry.kind)}</td>
+							<td class="px-5 py-3">{entry.description || '-'}</td>
+							<td class={`px-5 py-3 font-mono ${entry.amount_usd >= 0 ? 'text-brand' : 'text-red-300'}`}>{fmtCost(entry.amount_usd)}</td>
+							<td class="px-5 py-3">{fmtDate(entry.created_at)}</td>
+						</tr>
+					{/each}
+				</tbody>
+			</table>
+		</div>
+	{/if}
 {/if}

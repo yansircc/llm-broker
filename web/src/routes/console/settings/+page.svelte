@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { api } from '$lib/api';
+	import { BRAND_EMAIL_FROM_PLACEHOLDER } from '$lib/brand';
 
 	interface RuntimeSpec {
 		key: string;
@@ -598,7 +599,7 @@
 		</label>
 		<label class="field-card">
 			<span>发件人</span>
-			<input bind:value={draft.smtpFrom} placeholder="CDX <noreply@example.com>" autocomplete="off" />
+			<input bind:value={draft.smtpFrom} placeholder={BRAND_EMAIL_FROM_PLACEHOLDER} autocomplete="off" />
 		</label>
 		<label class="field-card">
 			<span>密码</span>
@@ -611,7 +612,7 @@
 	<div class="settings-grid">
 		<label class="field-card">
 			<span>发件人</span>
-			<input bind:value={draft.resendFrom} placeholder="CDX <noreply@example.com>" autocomplete="off" />
+			<input bind:value={draft.resendFrom} placeholder={BRAND_EMAIL_FROM_PLACEHOLDER} autocomplete="off" />
 		</label>
 		<label class="field-card">
 			<span>API Key</span>

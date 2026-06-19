@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { base } from '$app/paths';
 	import { page } from '$app/stores';
+	import { BRAND_NAME } from '$lib/brand';
 	import { customerApi } from '$lib/customer-api';
 	import type { BillingSummary, CustomerMe } from '$lib/customer-types';
 	import { fmtCost } from '$lib/format';
@@ -15,19 +16,36 @@
 			label: 'API',
 			items: [
 				{ href: '/app/keys', label: 'API 密钥' },
+				{ href: '/app/key-test', label: 'Key 测试' },
+				{ href: '/app/images', label: 'AI 生图', badge: 'NEW' },
 				{ href: '/app/usage', label: '使用记录' }
 			]
 		},
 		{
 			label: '账单',
 			items: [
-				{ href: '/app/billing', label: '充值' },
+				{ href: '/app/billing', label: '充值 / 订阅' },
 				{ href: '/app/orders', label: '我的订单' },
+				{ href: '/app/subscriptions', label: '我的订阅' },
 				{ href: '/app/balance-history', label: '额度记录' }
 			]
 		},
-		{ label: '邀请', items: [{ href: '/app/referrals', label: '邀请奖励' }] },
+		{ label: '', items: [{ href: '/app/redeem', label: '兑换码' }] },
+		{
+			label: '分销',
+			items: [
+				{ href: '/app/referrals', label: '分销中心' },
+				{ href: '/app/referrals/earnings', label: '佣金明细' }
+			]
+		},
 		{ label: '', items: [{ href: '/app/settings', label: '个人设置' }] }
+	];
+
+	const accountMenuItems = [
+		{ href: '/app/dashboard', label: '仪表盘' },
+		{ href: '/app/keys', label: 'API 密钥' },
+		{ href: '/app/billing', label: '充值' },
+		{ href: '/app/settings', label: '个人设置' }
 	];
 
 	let { children }: Props = $props();
@@ -35,6 +53,7 @@
 	let billing = $state<BillingSummary | null>(null);
 	let error = $state('');
 	let mobileOpen = $state(false);
+	let accountOpen = $state(false);
 
 	$effect(() => {
 		if (showCustomerNav()) {
@@ -89,21 +108,52 @@
 						☰
 					</button>
 					<a href="{base}/app/dashboard" class="flex items-center gap-3 font-semibold tracking-tight">
-						<span class="relative flex h-8 w-8 items-center justify-center rounded-md border border-brand/50 bg-black text-xs font-bold text-brand shadow-[0_0_28px_-12px_rgba(0,255,65,0.9)]">CD</span>
-						<span>CDX Console</span>
+						<span class="brand-mark" aria-hidden="true"></span>
+						<span class="text-xl">{BRAND_NAME}</span>
 					</a>
 				</div>
 
 				<div class="flex min-w-0 items-center gap-3">
+					<button class="hidden h-8 items-center rounded-md px-2 text-sm text-faint hover:bg-white/[0.04] hover:text-white sm:inline-flex" type="button">ZH</button>
 					<a href="{base}/app/billing" class="hidden rounded-full border border-line bg-card px-3 py-1.5 font-mono text-sm hover:border-brand/50 sm:inline-flex">
 						<span class="mr-1 text-brand">$</span>{billing ? fmtCost(billing.balance_usd).replace('$', '') : '0.00'}
 					</a>
 					<div class="hidden min-w-0 text-right text-xs text-faint sm:block">
-						<div class="truncate text-slate-200">{me?.user.email ?? (error || 'loading session...')}</div>
+						<div class="truncate text-slate-200">{me?.user.email ?? 'loading session...'}</div>
 						<div>{me?.user.status ?? '-'}</div>
 					</div>
-					<button class="h-9 rounded-md border border-line bg-card px-3 text-sm text-slate-200 hover:border-brand/50" onclick={logout}>退出</button>
-				</div>
+						<div class="relative">
+							<button
+								class="flex h-9 w-9 items-center justify-center rounded-full border border-line bg-card text-sm font-semibold text-slate-200 hover:border-brand/50"
+								onclick={() => (accountOpen = !accountOpen)}
+								aria-label="账户菜单"
+								aria-expanded={accountOpen}
+								type="button"
+							>
+								{me?.user.email?.slice(0, 1).toUpperCase() ?? 'T'}
+							</button>
+							{#if accountOpen}
+								<div class="absolute right-0 top-11 z-50 w-56 overflow-hidden rounded-lg border border-line bg-card shadow-2xl shadow-black/40">
+									<div class="border-b border-line px-4 py-3 text-xs text-faint">
+										<div class="truncate font-mono text-slate-200">{me?.user.email ?? 'loading session...'}</div>
+										<div class="mt-1">{me?.user.status ?? '-'}</div>
+									</div>
+									<div class="p-1">
+										{#each accountMenuItems as item}
+											<a
+												href="{base}{item.href}"
+												onclick={() => (accountOpen = false)}
+												class="block rounded-md px-3 py-2 text-sm text-slate-300 hover:bg-white/[0.04] hover:text-white"
+											>
+												{item.label}
+											</a>
+										{/each}
+										<button class="mt-1 w-full rounded-md px-3 py-2 text-left text-sm text-red-300 hover:bg-red-500/10" type="button" onclick={logout}>退出登录</button>
+									</div>
+								</div>
+							{/if}
+						</div>
+					</div>
 			</div>
 		</header>
 
@@ -119,9 +169,12 @@
 								{#each group.items as item}
 									<a
 										href="{base}{item.href}"
-										class={`block rounded-md px-3 py-2 text-sm transition-colors ${activeNav(item.href) ? 'bg-brand font-semibold text-black' : 'text-slate-300 hover:bg-white/[0.04] hover:text-white'}`}
+										class={`flex items-center justify-between rounded-md px-3 py-2 text-sm transition-colors ${activeNav(item.href) ? 'bg-brand font-semibold text-black' : 'text-slate-300 hover:bg-white/[0.04] hover:text-white'}`}
 									>
-										{item.label}
+										<span>{item.label}</span>
+										{#if item.badge}
+											<span class={`rounded px-1.5 py-0.5 font-mono text-[10px] ${activeNav(item.href) ? 'bg-black/10 text-black' : 'bg-brand/10 text-brand'}`}>{item.badge}</span>
+										{/if}
 									</a>
 								{/each}
 							</div>
@@ -133,8 +186,15 @@
 			{#if mobileOpen}
 				<div class="fixed inset-0 z-40 lg:hidden">
 					<button class="absolute inset-0 bg-black/60" aria-label="关闭菜单" onclick={() => (mobileOpen = false)}></button>
-					<aside class="absolute left-0 top-16 h-[calc(100vh-4rem)] w-72 overflow-y-auto border-r border-line bg-bg p-4">
-						<nav class="space-y-5">
+					<div class="absolute left-0 top-16 h-[calc(100vh-4rem)] w-72 overflow-y-auto border-r border-line bg-bg p-4" role="dialog" aria-modal="true" aria-labelledby="mobile-navigation-title">
+						<div class="mb-4 flex items-center justify-between gap-3">
+							<div>
+								<div class="font-mono text-[11px] uppercase tracking-wider text-brand">Navigation dialog</div>
+								<h2 id="mobile-navigation-title" class="m-0 mt-1 text-base font-semibold">导航</h2>
+							</div>
+							<button class="h-8 w-8 rounded-md border border-line bg-card p-0 text-sm text-faint hover:text-white" type="button" aria-label="关闭菜单" onclick={() => (mobileOpen = false)}>×</button>
+						</div>
+						<nav class="space-y-5" aria-label="Mobile customer navigation">
 							{#each navGroups as group}
 								<div>
 									{#if group.label}
@@ -144,15 +204,18 @@
 										<a
 											href="{base}{item.href}"
 											onclick={() => (mobileOpen = false)}
-											class={`mb-1 block rounded-md px-3 py-2 text-sm ${activeNav(item.href) ? 'bg-brand font-semibold text-black' : 'text-slate-300 hover:bg-white/[0.04]'}`}
+											class={`mb-1 flex items-center justify-between rounded-md px-3 py-2 text-sm ${activeNav(item.href) ? 'bg-brand font-semibold text-black' : 'text-slate-300 hover:bg-white/[0.04]'}`}
 										>
-											{item.label}
+											<span>{item.label}</span>
+											{#if item.badge}
+												<span class={`rounded px-1.5 py-0.5 font-mono text-[10px] ${activeNav(item.href) ? 'bg-black/10 text-black' : 'bg-brand/10 text-brand'}`}>{item.badge}</span>
+											{/if}
 										</a>
 									{/each}
 								</div>
 							{/each}
 						</nav>
-					</aside>
+					</div>
 				</div>
 			{/if}
 

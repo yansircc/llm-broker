@@ -1,10 +1,12 @@
 <script lang="ts">
+	import { BRAND_NAME } from '$lib/brand';
+
 	interface Props {
 		href?: string;
 		label?: string;
 	}
 
-	let { href, label = 'CDX' }: Props = $props();
+	let { href, label = BRAND_NAME }: Props = $props();
 </script>
 
 {#if href}
