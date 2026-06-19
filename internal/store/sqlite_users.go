@@ -131,6 +131,14 @@ func (s *SQLiteStore) UpdateUserLastLogin(ctx context.Context, id string) error 
 	return err
 }
 
+func (s *SQLiteStore) UpdateUserPasswordHash(ctx context.Context, id, passwordHash string) error {
+	result, err := s.db.ExecContext(ctx, "UPDATE users SET password_hash = ? WHERE id = ?", passwordHash, id)
+	if err != nil {
+		return err
+	}
+	return ensureRowsAffected(result)
+}
+
 func (s *SQLiteStore) MarkUserEmailVerified(ctx context.Context, id string, verifiedAt time.Time) error {
 	result, err := s.db.ExecContext(ctx, "UPDATE users SET email_verified_at = ? WHERE id = ?", verifiedAt.Unix(), id)
 	if err != nil {

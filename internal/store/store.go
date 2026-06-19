@@ -61,6 +61,7 @@ type Store interface {
 	UpdateUserStatus(ctx context.Context, id, status string) error
 	UpdateUserPolicy(ctx context.Context, id string, allowedSurface domain.Surface, boundAccountID string) error
 	UpdateUserLastLogin(ctx context.Context, id string) error
+	UpdateUserPasswordHash(ctx context.Context, id, passwordHash string) error
 	MarkUserEmailVerified(ctx context.Context, id string, verifiedAt time.Time) error
 
 	// API keys

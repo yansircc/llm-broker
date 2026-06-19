@@ -14,6 +14,7 @@ import (
 	"github.com/yansircc/llm-broker/internal/domain"
 	"github.com/yansircc/llm-broker/internal/email"
 	"github.com/yansircc/llm-broker/internal/payments/zpay"
+	"golang.org/x/crypto/bcrypt"
 )
 
 type captureEmailSender struct {
@@ -673,6 +674,80 @@ func TestCustomerLoginRateLimitBlocksRepeatedFailures(t *testing.T) {
 	srv.handleCustomerLogin(resp, req)
 	if resp.Code != http.StatusTooManyRequests {
 		t.Fatalf("rate limited status=%d body=%s", resp.Code, resp.Body.String())
+	}
+}
+
+func TestCustomerChangePasswordRequiresCurrentPassword(t *testing.T) {
+	srv := newTestServer(t)
+	now := time.Now().UTC()
+	hash, err := bcrypt.GenerateFromPassword([]byte("old-password"), bcrypt.DefaultCost)
+	if err != nil {
+		t.Fatal(err)
+	}
+	user := &domain.User{
+		ID:             "password-user",
+		Email:          "password@example.com",
+		Name:           "password",
+		PasswordHash:   string(hash),
+		Status:         "active",
+		AllowedSurface: domain.SurfaceNative,
+		ReferralCode:   "PASSWD",
+		CreatedAt:      now,
+	}
+	if err := srv.store.CreateUser(context.Background(), user); err != nil {
+		t.Fatal(err)
+	}
+	sessionResp := httptest.NewRecorder()
+	if _, err := srv.createCustomerSession(sessionResp, httptest.NewRequest(http.MethodPost, "/api/auth/login", nil), user); err != nil {
+		t.Fatal(err)
+	}
+	cookie := customerCookie(t, sessionResp)
+
+	wrongReq := httptest.NewRequest(http.MethodPost, "/api/me/password", strings.NewReader(`{"current_password":"wrong-password","new_password":"new-password"}`))
+	wrongReq.AddCookie(cookie)
+	wrongResp := httptest.NewRecorder()
+	srv.handleCustomerChangePassword(wrongResp, wrongReq)
+	if wrongResp.Code != http.StatusBadRequest {
+		t.Fatalf("wrong current password status=%d body=%s", wrongResp.Code, wrongResp.Body.String())
+	}
+	stillOld, err := srv.store.GetUser(context.Background(), user.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bcrypt.CompareHashAndPassword([]byte(stillOld.PasswordHash), []byte("old-password")) != nil {
+		t.Fatal("password hash changed after wrong current password")
+	}
+
+	changeReq := httptest.NewRequest(http.MethodPost, "/api/me/password", strings.NewReader(`{"current_password":"old-password","new_password":"new-password"}`))
+	changeReq.AddCookie(cookie)
+	changeResp := httptest.NewRecorder()
+	srv.handleCustomerChangePassword(changeResp, changeReq)
+	if changeResp.Code != http.StatusOK {
+		t.Fatalf("change password status=%d body=%s", changeResp.Code, changeResp.Body.String())
+	}
+	updated, err := srv.store.GetUser(context.Background(), user.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bcrypt.CompareHashAndPassword([]byte(updated.PasswordHash), []byte("old-password")) == nil {
+		t.Fatal("old password still verifies")
+	}
+	if bcrypt.CompareHashAndPassword([]byte(updated.PasswordHash), []byte("new-password")) != nil {
+		t.Fatal("new password does not verify")
+	}
+
+	oldLoginReq := httptest.NewRequest(http.MethodPost, "/api/auth/login", strings.NewReader(`{"email":"password@example.com","password":"old-password"}`))
+	oldLoginResp := httptest.NewRecorder()
+	srv.handleCustomerLogin(oldLoginResp, oldLoginReq)
+	if oldLoginResp.Code != http.StatusUnauthorized {
+		t.Fatalf("old password login status=%d body=%s", oldLoginResp.Code, oldLoginResp.Body.String())
+	}
+
+	newLoginReq := httptest.NewRequest(http.MethodPost, "/api/auth/login", strings.NewReader(`{"email":"password@example.com","password":"new-password"}`))
+	newLoginResp := httptest.NewRecorder()
+	srv.handleCustomerLogin(newLoginResp, newLoginReq)
+	if newLoginResp.Code != http.StatusOK {
+		t.Fatalf("new password login status=%d body=%s", newLoginResp.Code, newLoginResp.Body.String())
 	}
 }
 

@@ -219,6 +219,39 @@ func (s *Server) handleCustomerMe(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, s.authResponse(cc.User))
 }
 
+func (s *Server) handleCustomerChangePassword(w http.ResponseWriter, r *http.Request) {
+	cc, ok := s.requireCustomer(w, r)
+	if !ok {
+		return
+	}
+	var req struct {
+		CurrentPassword string `json:"current_password"`
+		NewPassword     string `json:"new_password"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeAdminError(w, http.StatusBadRequest, "invalid_request", "invalid JSON body")
+		return
+	}
+	if len(req.NewPassword) < 8 {
+		writeAdminError(w, http.StatusBadRequest, "invalid_request", "new password length >= 8 required")
+		return
+	}
+	if bcrypt.CompareHashAndPassword([]byte(cc.User.PasswordHash), []byte(req.CurrentPassword)) != nil {
+		writeAdminError(w, http.StatusBadRequest, "invalid_request", "current password is incorrect")
+		return
+	}
+	hash, err := bcrypt.GenerateFromPassword([]byte(req.NewPassword), bcrypt.DefaultCost)
+	if err != nil {
+		writeAdminError(w, http.StatusInternalServerError, "internal_error", "failed to hash password")
+		return
+	}
+	if err := s.store.UpdateUserPasswordHash(r.Context(), cc.User.ID, string(hash)); err != nil {
+		writeAdminError(w, http.StatusInternalServerError, "internal_error", "failed to update password")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+}
+
 func (s *Server) createCustomerSession(w http.ResponseWriter, r *http.Request, user *domain.User) (*domain.WebSession, error) {
 	raw, err := randomToken("sess")
 	if err != nil {

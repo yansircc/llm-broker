@@ -102,6 +102,7 @@ func (s *Server) registerCustomerRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/auth/login", s.handleCustomerLogin)
 	mux.HandleFunc("POST /api/auth/logout", s.handleCustomerLogout)
 	mux.HandleFunc("GET /api/me", s.handleCustomerMe)
+	mux.HandleFunc("POST /api/me/password", s.handleCustomerChangePassword)
 	mux.HandleFunc("GET /api/keys", s.handleCustomerListKeys)
 	mux.HandleFunc("POST /api/keys", s.handleCustomerCreateKey)
 	mux.HandleFunc("PATCH /api/keys/{id}", s.handleCustomerUpdateKey)

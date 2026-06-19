@@ -524,6 +524,17 @@ func (m *MockStore) UpdateUserLastLogin(_ context.Context, id string) error {
 	return nil
 }
 
+func (m *MockStore) UpdateUserPasswordHash(_ context.Context, id, passwordHash string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	u, ok := m.users[id]
+	if !ok {
+		return ErrNotFound
+	}
+	u.PasswordHash = passwordHash
+	return nil
+}
+
 func (m *MockStore) MarkUserEmailVerified(_ context.Context, id string, verifiedAt time.Time) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
