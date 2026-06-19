@@ -13,6 +13,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/yansircc/llm-broker/internal/domain"
+	"github.com/yansircc/llm-broker/internal/payments"
 	"github.com/yansircc/llm-broker/internal/payments/zpay"
 )
 
@@ -71,18 +72,19 @@ func (s *Server) handleCreatePayment(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		AmountUSD float64 `json:"amount_usd"`
 		Type      string  `json:"type"`
+		Provider  string  `json:"provider"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.AmountUSD <= 0 {
 		writeAdminError(w, http.StatusBadRequest, "invalid_request", "amount_usd required")
 		return
 	}
-	client := s.zpayClient
-	if client == nil {
-		writeAdminError(w, http.StatusServiceUnavailable, "payment_unavailable", "zpay is not configured")
-		return
-	}
 	if req.Type == "" {
 		req.Type = "alipay"
+	}
+	integration, provider, providerCfg, err := s.paymentProviderConfig(r.Context(), req.Provider, nil)
+	if err != nil {
+		writeAdminError(w, http.StatusServiceUnavailable, "payment_unavailable", err.Error())
+		return
 	}
 	now := time.Now().UTC()
 	creditMicros := int64(math.Round(req.AmountUSD * 1_000_000))
@@ -90,51 +92,58 @@ func (s *Server) handleCreatePayment(w http.ResponseWriter, r *http.Request) {
 	amountFen := (creditMicros*100 + rate - 1) / rate
 	outTradeNo := fmt.Sprintf("%s_%d", compactID(cc.User.ID), now.UnixMilli())
 	order := &domain.PaymentOrder{
-		ID:                 uuid.NewString(),
-		OutTradeNo:         outTradeNo,
-		UserID:             cc.User.ID,
-		Gateway:            "zpay",
-		Status:             "pending",
-		ProductName:        "LLM relay credit",
-		AmountCNYFen:       amountFen,
-		CreditMicros:       creditMicros,
-		ExchangeRateMicros: rate,
-		PaymentType:        req.Type,
-		CreatedAt:          now,
-		UpdatedAt:          now,
+		ID:                   uuid.NewString(),
+		OutTradeNo:           outTradeNo,
+		UserID:               cc.User.ID,
+		Gateway:              provider.Name(),
+		IntegrationID:        integration.ID,
+		Status:               "pending",
+		ProductName:          "LLM relay credit",
+		AmountCNYFen:         amountFen,
+		CreditMicros:         creditMicros,
+		ExchangeRateMicros:   rate,
+		PaymentType:          req.Type,
+		Method:               req.Type,
+		SettlementCurrency:   "CNY",
+		AmountMinor:          amountFen,
+		ProviderMetadataJSON: "{}",
+		CreatedAt:            now,
+		UpdatedAt:            now,
 	}
 	if err := s.store.SavePaymentOrder(r.Context(), order); err != nil {
 		writeAdminError(w, http.StatusInternalServerError, "internal_error", "failed to create order")
 		return
 	}
-	resp, err := client.CreateQRCodeOrder(r.Context(), zpay.CreateQRCodeOrderRequest{
-		Type:       req.Type,
-		Name:       order.ProductName,
-		Money:      fenToYuan(amountFen),
-		OutTradeNo: outTradeNo,
-		NotifyURL:  s.publicURL(r, "/api/payments/notify"),
-		ClientIP:   s.clientIP(r),
-		Device:     "pc",
-		Param:      cc.User.ID,
-		CID:        s.zpayCID(),
+	created, err := provider.CreateOrder(r.Context(), providerCfg, payments.CreateOrderRequest{
+		Method:      req.Type,
+		Name:        order.ProductName,
+		AmountMinor: amountFen,
+		OutTradeNo:  outTradeNo,
+		NotifyURL:   s.publicURL(r, "/api/payments/notify/"+provider.Name()),
+		ClientIP:    s.clientIP(r),
+		UserID:      cc.User.ID,
 	})
-	if err != nil || resp.Code != 1 {
+	if err != nil {
 		order.Status = "failed"
 		order.UpdatedAt = time.Now().UTC()
 		_ = s.store.SavePaymentOrder(r.Context(), order)
-		msg := "failed to create zpay order"
-		if resp.Msg != "" {
-			msg = resp.Msg
-		}
-		writeAdminError(w, http.StatusBadGateway, "payment_error", msg)
+		writeAdminError(w, http.StatusBadGateway, "payment_error", err.Error())
 		return
 	}
-	order.ZpayTradeNo = resp.TradeNo
-	order.QRCode = resp.QRCode
-	order.QRImage = resp.Image
+	order.ProviderOrderID = created.ProviderOrderID
+	order.ProviderPaymentID = created.ProviderPaymentID
+	order.Method = created.Method
+	order.PaymentType = created.Method
+	order.ZpayTradeNo = created.ProviderPaymentID
+	order.QRCode = created.QRCode
+	order.QRImage = created.QRImage
+	order.CheckoutURL = created.CheckoutURL
+	if created.MetadataJSON != "" {
+		order.ProviderMetadataJSON = created.MetadataJSON
+	}
 	order.UpdatedAt = time.Now().UTC()
 	_ = s.store.SavePaymentOrder(r.Context(), order)
-	writeJSON(w, http.StatusOK, paymentOrderView(order, resp.PayURL))
+	writeJSON(w, http.StatusOK, paymentOrderView(order, created.CheckoutURL))
 }
 
 func (s *Server) handlePaymentNotify(w http.ResponseWriter, r *http.Request) {
@@ -144,27 +153,42 @@ func (s *Server) handlePaymentNotify(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte("fail"))
 		return
 	}
-	valid := s.cfg != nil && s.cfg.ZPayKey != "" && zpay.Verify(params, s.cfg.ZPayKey)
-	payload, _ := json.Marshal(params)
+	order, _ := s.store.GetPaymentOrderByOutTradeNo(r.Context(), params["out_trade_no"])
+	integration, provider, providerCfg, err := s.paymentProviderConfig(r.Context(), r.PathValue("provider"), order)
+	if err != nil {
+		if s.handleLegacyZPayNotify(w, r, params, order) {
+			return
+		}
+		w.WriteHeader(http.StatusServiceUnavailable)
+		w.Write([]byte("fail"))
+		return
+	}
+	event, valid, err := provider.VerifyWebhook(r.Context(), providerCfg, r, order)
+	if err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		w.Write([]byte("fail"))
+		return
+	}
 	_ = s.store.SavePaymentEvent(r.Context(), &domain.PaymentEvent{
 		ID:             uuid.NewString(),
-		OrderID:        params["out_trade_no"],
-		Gateway:        "zpay",
+		OrderID:        event.OutTradeNo,
+		Gateway:        provider.Name(),
 		EventType:      "notify",
 		ValidSignature: valid,
-		PayloadJSON:    string(payload),
+		PayloadJSON:    event.PayloadJSON,
 		CreatedAt:      time.Now().UTC(),
 	})
+	s.recordIntegrationEvent(r.Context(), integration, "payment_notify", valid, signatureErrorCode(valid), map[string]any{"out_trade_no": event.OutTradeNo, "status": event.Status})
 	if !valid {
 		w.WriteHeader(http.StatusForbidden)
 		w.Write([]byte("fail"))
 		return
 	}
-	if params["trade_status"] != "TRADE_SUCCESS" {
+	if event.Status != "TRADE_SUCCESS" {
 		w.Write([]byte("success"))
 		return
 	}
-	if err := s.fulfillPaidOrder(r.Context(), params["out_trade_no"], params["trade_no"], params["type"], params["money"]); err != nil {
+	if err := s.fulfillPaidOrder(r.Context(), event.OutTradeNo, event.ProviderPaymentID, event.Method, event.AmountMinor, event.Currency); err != nil {
 		w.WriteHeader(http.StatusBadRequest)
 		w.Write([]byte("fail"))
 		return
@@ -306,9 +330,47 @@ func (s *Server) refreshPaymentOrder(ctx context.Context, order *domain.PaymentO
 	if order.UpdatedAt.After(now.Add(-paymentRefreshMinInterval)) {
 		return order, nil
 	}
-	if s.zpayClient == nil {
-		return nil, fmt.Errorf("zpay is not configured")
+	integration, provider, providerCfg, err := s.paymentProviderConfig(ctx, order.Gateway, order)
+	if err != nil {
+		if order.IntegrationID == "" && s.zpayClient != nil {
+			return s.refreshLegacyZPayOrder(ctx, order, now)
+		}
+		return nil, err
 	}
+	event, err := provider.QueryOrder(ctx, providerCfg, order)
+	if err != nil {
+		order.UpdatedAt = now
+		_ = s.store.SavePaymentOrder(ctx, order)
+		return nil, err
+	}
+	_ = s.store.SavePaymentEvent(ctx, &domain.PaymentEvent{
+		ID:             uuid.NewString(),
+		OrderID:        order.OutTradeNo,
+		Gateway:        order.Gateway,
+		EventType:      "query",
+		ValidSignature: false,
+		PayloadJSON:    event.PayloadJSON,
+		CreatedAt:      now,
+	})
+	s.recordIntegrationEvent(ctx, integration, "payment_query", true, "", map[string]any{"out_trade_no": event.OutTradeNo, "status": event.Status})
+	if event.Status == "TRADE_SUCCESS" {
+		if err := s.fulfillPaidOrder(ctx, order.OutTradeNo, event.ProviderPaymentID, event.Method, event.AmountMinor, event.Currency); err != nil {
+			return nil, err
+		}
+		updated, err := s.store.GetPaymentOrderByOutTradeNo(ctx, order.OutTradeNo)
+		if err != nil {
+			return nil, err
+		}
+		if updated != nil {
+			return updated, nil
+		}
+	}
+	order.UpdatedAt = now
+	_ = s.store.SavePaymentOrder(ctx, order)
+	return order, nil
+}
+
+func (s *Server) refreshLegacyZPayOrder(ctx context.Context, order *domain.PaymentOrder, now time.Time) (*domain.PaymentOrder, error) {
 	resp, err := s.zpayClient.QueryOrder(ctx, zpay.QueryOrderRequest{OutTradeNo: order.OutTradeNo})
 	if err != nil {
 		order.UpdatedAt = now
@@ -326,7 +388,11 @@ func (s *Server) refreshPaymentOrder(ctx context.Context, order *domain.PaymentO
 		CreatedAt:      now,
 	})
 	if resp.Code == 1 && resp.Status == 1 {
-		if err := s.fulfillPaidOrder(ctx, order.OutTradeNo, resp.TradeNo, resp.Type, resp.Money); err != nil {
+		amountFen, err := parseYuanToFen(resp.Money)
+		if err != nil {
+			return nil, err
+		}
+		if err := s.fulfillPaidOrder(ctx, order.OutTradeNo, resp.TradeNo, resp.Type, amountFen, "CNY"); err != nil {
 			return nil, err
 		}
 		updated, err := s.store.GetPaymentOrderByOutTradeNo(ctx, order.OutTradeNo)
@@ -342,16 +408,130 @@ func (s *Server) refreshPaymentOrder(ctx context.Context, order *domain.PaymentO
 	return order, nil
 }
 
-func (s *Server) fulfillPaidOrder(ctx context.Context, outTradeNo, zpayTradeNo, paymentType, money string) error {
+func (s *Server) paymentProviderConfig(ctx context.Context, requested string, order *domain.PaymentOrder) (*domain.Integration, payments.Provider, payments.Config, error) {
+	requested = strings.TrimSpace(strings.ToLower(requested))
+	if order != nil && strings.TrimSpace(order.IntegrationID) != "" {
+		integration, err := s.store.GetIntegration(ctx, order.IntegrationID)
+		if err != nil {
+			return nil, nil, payments.Config{}, err
+		}
+		if integration != nil {
+			return s.paymentConfigForIntegration(ctx, integration)
+		}
+	}
+	providerFilter := requested
+	if providerFilter == "" && order != nil {
+		providerFilter = order.Gateway
+	}
+	integrations, err := s.enabledIntegrations(ctx, "payment", providerFilter)
+	if err != nil {
+		return nil, nil, payments.Config{}, err
+	}
+	for _, integration := range integrations {
+		provider := payments.ProviderByName(integration.Provider)
+		if provider == nil {
+			continue
+		}
+		cfg, err := s.decryptedIntegrationConfig(ctx, integration)
+		if err != nil {
+			return nil, nil, payments.Config{}, err
+		}
+		return integration, provider, cfg, nil
+	}
+	if providerFilter == "" || providerFilter == "zpay" || providerFilter == "7pay" {
+		if s.cfg != nil && s.cfg.ZPayPID != "" && s.cfg.ZPayKey != "" {
+			integration := &domain.Integration{ID: "env_zpay", Kind: "payment", Provider: "zpay", DisplayName: "7pay / ZPay", Enabled: true}
+			cfg := payments.Config{
+				Public:  map[string]string{"pid": s.cfg.ZPayPID, "cid": s.cfg.ZPayCID},
+				Secrets: map[string]string{"key": s.cfg.ZPayKey},
+			}
+			return integration, payments.ZPayProvider{}, cfg, nil
+		}
+	}
+	if providerFilter == "" {
+		return nil, nil, payments.Config{}, fmt.Errorf("no payment provider is configured")
+	}
+	return nil, nil, payments.Config{}, fmt.Errorf("payment provider %q is not configured", providerFilter)
+}
+
+func (s *Server) handleLegacyZPayNotify(w http.ResponseWriter, r *http.Request, params map[string]string, order *domain.PaymentOrder) bool {
+	if s == nil || s.cfg == nil || strings.TrimSpace(s.cfg.ZPayKey) == "" {
+		return false
+	}
+	valid := zpay.Verify(params, s.cfg.ZPayKey)
+	payload, _ := json.Marshal(params)
+	_ = s.store.SavePaymentEvent(r.Context(), &domain.PaymentEvent{
+		ID:             uuid.NewString(),
+		OrderID:        params["out_trade_no"],
+		Gateway:        "zpay",
+		EventType:      "notify",
+		ValidSignature: valid,
+		PayloadJSON:    string(payload),
+		CreatedAt:      time.Now().UTC(),
+	})
+	if !valid {
+		w.WriteHeader(http.StatusForbidden)
+		w.Write([]byte("fail"))
+		return true
+	}
+	if params["trade_status"] != "TRADE_SUCCESS" {
+		w.Write([]byte("success"))
+		return true
+	}
+	amountFen, err := parseYuanToFen(params["money"])
+	if err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		w.Write([]byte("fail"))
+		return true
+	}
+	if order != nil && order.IntegrationID != "" {
+		return false
+	}
+	if err := s.fulfillPaidOrder(r.Context(), params["out_trade_no"], params["trade_no"], params["type"], amountFen, "CNY"); err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		w.Write([]byte("fail"))
+		return true
+	}
+	w.Write([]byte("success"))
+	return true
+}
+
+func (s *Server) paymentConfigForIntegration(ctx context.Context, integration *domain.Integration) (*domain.Integration, payments.Provider, payments.Config, error) {
+	provider := payments.ProviderByName(integration.Provider)
+	if provider == nil {
+		return nil, nil, payments.Config{}, fmt.Errorf("payment provider %q is not supported", integration.Provider)
+	}
+	cfg, err := s.decryptedIntegrationConfig(ctx, integration)
+	if err != nil {
+		return nil, nil, payments.Config{}, err
+	}
+	return integration, provider, cfg, nil
+}
+
+func signatureErrorCode(valid bool) string {
+	if valid {
+		return ""
+	}
+	return "invalid_signature"
+}
+
+func (s *Server) fulfillPaidOrder(ctx context.Context, outTradeNo, providerPaymentID, paymentType string, amountMinor int64, currency string) error {
 	order, err := s.store.GetPaymentOrderByOutTradeNo(ctx, outTradeNo)
 	if err != nil || order == nil {
 		return fmt.Errorf("order not found")
 	}
-	paidFen, err := parseYuanToFen(money)
-	if err != nil || paidFen != order.AmountCNYFen {
+	expectedCurrency := order.SettlementCurrency
+	if expectedCurrency == "" {
+		expectedCurrency = "CNY"
+	}
+	expectedAmount := order.AmountMinor
+	if expectedAmount == 0 {
+		expectedAmount = order.AmountCNYFen
+	}
+	if !strings.EqualFold(strings.TrimSpace(currency), expectedCurrency) || amountMinor != expectedAmount {
 		return fmt.Errorf("amount mismatch")
 	}
-	if _, err := s.billingService().FulfillPaymentOrder(ctx, order, zpayTradeNo, paymentType, time.Now().UTC()); err != nil {
+	if _, err := s.billingService().FulfillPaymentOrder(ctx, order, providerPaymentID, paymentType, time.Now().UTC()); err != nil {
 		return err
 	}
 	_, err = s.billingService().FulfillReferralInviterAfterPayment(ctx, order.UserID)
@@ -403,12 +583,22 @@ func (s *Server) lowBalanceAlertThresholdMicros(ctx context.Context) int64 {
 }
 
 func paymentOrderView(order *domain.PaymentOrder, checkoutURL string) map[string]any {
+	if checkoutURL == "" {
+		checkoutURL = order.CheckoutURL
+	}
+	amountCNY := float64(order.AmountCNYFen) / 100
+	if strings.EqualFold(order.SettlementCurrency, "CNY") && order.AmountMinor > 0 {
+		amountCNY = float64(order.AmountMinor) / 100
+	}
 	return map[string]any{
 		"id":           order.OutTradeNo,
 		"out_trade_no": order.OutTradeNo,
+		"provider":     order.Gateway,
+		"method":       firstNonEmpty(order.Method, order.PaymentType),
 		"status":       order.Status,
 		"amount_usd":   microsToUSD(order.CreditMicros),
-		"amount_cny":   float64(order.AmountCNYFen) / 100,
+		"amount_cny":   amountCNY,
+		"currency":     firstNonEmpty(order.SettlementCurrency, "CNY"),
 		"checkout_url": checkoutURL,
 		"qrcode":       order.QRCode,
 		"qr_image":     order.QRImage,
@@ -494,18 +684,6 @@ func usdToMicros(usd float64) int64 {
 	return int64(math.Round(usd * 1_000_000))
 }
 
-func fenToYuan(fen int64) string {
-	return fmt.Sprintf("%.2f", float64(fen)/100)
-}
-
-func parseYuanToFen(raw string) (int64, error) {
-	f, err := strconv.ParseFloat(raw, 64)
-	if err != nil {
-		return 0, err
-	}
-	return int64(math.Round(f * 100)), nil
-}
-
 func compactID(id string) string {
 	var b strings.Builder
 	for _, r := range id {
@@ -520,6 +698,23 @@ func compactID(id string) string {
 		return "u"
 	}
 	return b.String()
+}
+
+func parseYuanToFen(raw string) (int64, error) {
+	f, err := strconv.ParseFloat(raw, 64)
+	if err != nil {
+		return 0, err
+	}
+	return int64(math.Round(f * 100)), nil
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return value
+		}
+	}
+	return ""
 }
 
 func (s *Server) clientIP(r *http.Request) string {
@@ -560,11 +755,4 @@ func (s *Server) trustsProxyIP(host string) bool {
 		}
 	}
 	return false
-}
-
-func (s *Server) zpayCID() string {
-	if s.cfg == nil {
-		return ""
-	}
-	return s.cfg.ZPayCID
 }

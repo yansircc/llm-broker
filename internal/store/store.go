@@ -90,6 +90,15 @@ type Store interface {
 	// Billing, payments, and admission
 	UpsertBillingSetting(ctx context.Context, key, value string, updatedAt time.Time) error
 	GetBillingSetting(ctx context.Context, key string) (string, error)
+	UpsertRuntimeSetting(ctx context.Context, setting *domain.RuntimeSetting) error
+	GetRuntimeSetting(ctx context.Context, key string) (*domain.RuntimeSetting, error)
+	ListRuntimeSettings(ctx context.Context) ([]*domain.RuntimeSetting, error)
+	SaveIntegration(ctx context.Context, integration *domain.Integration) error
+	GetIntegration(ctx context.Context, id string) (*domain.Integration, error)
+	ListIntegrations(ctx context.Context, kind string) ([]*domain.Integration, error)
+	ListEnabledIntegrations(ctx context.Context, kind, provider string) ([]*domain.Integration, error)
+	SaveIntegrationEvent(ctx context.Context, event *domain.IntegrationEvent) error
+	SaveSettingsAudit(ctx context.Context, audit *domain.SettingsAudit) error
 	UpsertModelPrice(ctx context.Context, price *domain.ModelPrice) error
 	GetModelPrice(ctx context.Context, model string) (*domain.ModelPrice, error)
 	ListModelPrices(ctx context.Context) ([]*domain.ModelPrice, error)

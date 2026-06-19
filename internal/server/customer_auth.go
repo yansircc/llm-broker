@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
@@ -228,6 +229,11 @@ func (s *Server) createCustomerSession(w http.ResponseWriter, r *http.Request, u
 	if s.cfg != nil && s.cfg.SessionTTL > 0 {
 		ttl = s.cfg.SessionTTL
 	}
+	if s.settings != nil {
+		if configured, err := s.settings.GetDuration(r.Context(), "customer_session_ttl_ms", ttl); err == nil && configured > 0 {
+			ttl = configured
+		}
+	}
 	session := &domain.WebSession{
 		ID:         uuid.NewString(),
 		UserID:     user.ID,
@@ -274,6 +280,11 @@ func (s *Server) publicURL(r *http.Request, path string) string {
 	if origin := s.requestOrigin(r); origin != "" {
 		return origin + path
 	}
+	if s != nil && s.settings != nil {
+		if siteURL, err := s.settings.GetString(r.Context(), "site_url", ""); err == nil && strings.TrimSpace(siteURL) != "" {
+			return strings.TrimRight(siteURL, "/") + path
+		}
+	}
 	if s != nil && s.cfg != nil && s.cfg.SiteURL != "" {
 		return strings.TrimRight(s.cfg.SiteURL, "/") + path
 	}
@@ -297,7 +308,7 @@ func (s *Server) requestOrigin(r *http.Request) string {
 		scheme = forwardedProto
 	} else if r.TLS != nil {
 		scheme = "https"
-	} else if s != nil && s.cfg != nil && strings.HasPrefix(strings.ToLower(strings.TrimSpace(s.cfg.SiteURL)), "https://") {
+	} else if s != nil && s.configuredSiteURLIsHTTPS(r.Context()) {
 		scheme = "https"
 	}
 	return scheme + "://" + host
@@ -317,6 +328,15 @@ func (s *Server) secureCookie(r *http.Request) bool {
 	}
 	if r != nil && strings.EqualFold(strings.TrimSpace(r.Header.Get("X-Forwarded-Proto")), "https") {
 		return true
+	}
+	return s != nil && s.configuredSiteURLIsHTTPS(r.Context())
+}
+
+func (s *Server) configuredSiteURLIsHTTPS(ctx context.Context) bool {
+	if s != nil && s.settings != nil {
+		if siteURL, err := s.settings.GetString(ctx, "site_url", ""); err == nil && strings.HasPrefix(strings.ToLower(strings.TrimSpace(siteURL)), "https://") {
+			return true
+		}
 	}
 	return s != nil && s.cfg != nil && strings.HasPrefix(strings.ToLower(strings.TrimSpace(s.cfg.SiteURL)), "https://")
 }

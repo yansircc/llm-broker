@@ -3,8 +3,10 @@ package email
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"log/slog"
+	"net/http"
 	"net/smtp"
 	"strings"
 )
@@ -54,6 +56,46 @@ func (s SMTPSender) Send(ctx context.Context, msg Message) error {
 		auth = nil
 	}
 	return smtp.SendMail(s.Addr, auth, s.From, []string{msg.To}, body.Bytes())
+}
+
+type ResendSender struct {
+	APIKey     string
+	From       string
+	HTTPClient *http.Client
+}
+
+func (s ResendSender) Send(ctx context.Context, msg Message) error {
+	if s.APIKey == "" || s.From == "" {
+		return fmt.Errorf("resend sender is not configured")
+	}
+	client := s.HTTPClient
+	if client == nil {
+		client = http.DefaultClient
+	}
+	body, err := json.Marshal(map[string]any{
+		"from":    s.From,
+		"to":      []string{msg.To},
+		"subject": msg.Subject,
+		"text":    msg.Text,
+	})
+	if err != nil {
+		return err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, "https://api.resend.com/emails", bytes.NewReader(body))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Authorization", "Bearer "+s.APIKey)
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := client.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode > 299 {
+		return fmt.Errorf("resend send: %s", resp.Status)
+	}
+	return nil
 }
 
 func VerificationMessage(to, link string) Message {

@@ -107,6 +107,56 @@ CREATE TABLE IF NOT EXISTS billing_settings (
     updated_at INTEGER NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS runtime_settings (
+    key TEXT PRIMARY KEY,
+    value_json TEXT NOT NULL,
+    updated_at INTEGER NOT NULL,
+    updated_by TEXT NOT NULL DEFAULT ''
+);
+
+CREATE TABLE IF NOT EXISTS integrations (
+    id TEXT PRIMARY KEY,
+    kind TEXT NOT NULL,
+    provider TEXT NOT NULL,
+    display_name TEXT NOT NULL,
+    enabled INTEGER NOT NULL DEFAULT 0,
+    priority INTEGER NOT NULL DEFAULT 100,
+    config_json TEXT NOT NULL DEFAULT '{}',
+    secret_json_enc TEXT NOT NULL DEFAULT '',
+    secret_fingerprint TEXT NOT NULL DEFAULT '',
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL,
+    updated_by TEXT NOT NULL DEFAULT ''
+);
+
+CREATE INDEX IF NOT EXISTS idx_integrations_kind_provider ON integrations(kind, provider, enabled, priority);
+
+CREATE TABLE IF NOT EXISTS integration_events (
+    id TEXT PRIMARY KEY,
+    integration_id TEXT NOT NULL,
+    kind TEXT NOT NULL,
+    event_type TEXT NOT NULL,
+    success INTEGER NOT NULL,
+    error_code TEXT NOT NULL DEFAULT '',
+    redacted_payload_json TEXT NOT NULL DEFAULT '{}',
+    created_at INTEGER NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_integration_events_integration_created ON integration_events(integration_id, created_at);
+
+CREATE TABLE IF NOT EXISTS settings_audit (
+    id TEXT PRIMARY KEY,
+    actor_user_id TEXT NOT NULL DEFAULT '',
+    target_type TEXT NOT NULL,
+    target_id TEXT NOT NULL,
+    action TEXT NOT NULL,
+    before_json TEXT NOT NULL DEFAULT '{}',
+    after_json TEXT NOT NULL DEFAULT '{}',
+    created_at INTEGER NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_settings_audit_target_created ON settings_audit(target_type, target_id, created_at);
+
 CREATE TABLE IF NOT EXISTS admission_limits (
     scope TEXT NOT NULL,
     scope_id TEXT NOT NULL DEFAULT '',
@@ -157,6 +207,7 @@ CREATE TABLE IF NOT EXISTS payment_orders (
     out_trade_no TEXT NOT NULL UNIQUE,
     user_id TEXT NOT NULL,
     gateway TEXT NOT NULL DEFAULT 'zpay',
+    integration_id TEXT NOT NULL DEFAULT '',
     status TEXT NOT NULL,
     product_name TEXT NOT NULL,
     amount_cny_fen INTEGER NOT NULL,
@@ -166,6 +217,13 @@ CREATE TABLE IF NOT EXISTS payment_orders (
     zpay_trade_no TEXT NOT NULL DEFAULT '',
     qrcode TEXT NOT NULL DEFAULT '',
     qr_image TEXT NOT NULL DEFAULT '',
+    provider_order_id TEXT NOT NULL DEFAULT '',
+    provider_payment_id TEXT NOT NULL DEFAULT '',
+    method TEXT NOT NULL DEFAULT '',
+    settlement_currency TEXT NOT NULL DEFAULT 'CNY',
+    amount_minor INTEGER NOT NULL DEFAULT 0,
+    checkout_url TEXT NOT NULL DEFAULT '',
+    provider_metadata_json TEXT NOT NULL DEFAULT '{}',
     created_at INTEGER NOT NULL,
     paid_at INTEGER,
     updated_at INTEGER NOT NULL

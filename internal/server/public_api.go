@@ -5,11 +5,7 @@ import (
 )
 
 func (s *Server) handlePublicConfig(w http.ResponseWriter, r *http.Request) {
-	enabled := s != nil && s.cfg != nil && s.cfg.TurnstileEnabled
-	siteKey := ""
-	if enabled {
-		siteKey = s.cfg.TurnstileSiteKey
-	}
+	enabled, siteKey, _ := s.turnstileConfig(r.Context())
 	writeJSON(w, http.StatusOK, map[string]any{
 		"turnstile_enabled":  enabled,
 		"turnstile_site_key": siteKey,

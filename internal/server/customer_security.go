@@ -160,17 +160,18 @@ func (s *Server) enforceLoginRisk(ctx context.Context, audit *customerSecurityAu
 }
 
 func (s *Server) verifyTurnstile(ctx context.Context, token, remoteIP string) error {
-	if s == nil || s.cfg == nil || !s.cfg.TurnstileEnabled {
+	enabled, _, secret := s.turnstileConfig(ctx)
+	if !enabled {
 		return nil
 	}
-	if strings.TrimSpace(s.cfg.TurnstileSecretKey) == "" {
+	if strings.TrimSpace(secret) == "" {
 		return fmt.Errorf("turnstile secret is not configured")
 	}
 	if strings.TrimSpace(token) == "" {
 		return fmt.Errorf("turnstile token required")
 	}
 	form := url.Values{}
-	form.Set("secret", s.cfg.TurnstileSecretKey)
+	form.Set("secret", secret)
 	form.Set("response", token)
 	if remoteIP != "" {
 		form.Set("remoteip", remoteIP)

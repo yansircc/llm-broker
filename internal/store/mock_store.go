@@ -11,30 +11,34 @@ import (
 
 // MockStore implements Store for testing.
 type MockStore struct {
-	mu              sync.Mutex
-	accounts        map[string]*domain.Account
-	cells           map[string]*domain.EgressCell
-	buckets         map[string]*domain.QuotaBucket
-	sessionBindings map[string]*domain.SessionBinding
-	userRouteBinds  map[string]*domain.UserRouteBinding
-	stainless       map[string]*domain.StainlessBinding
-	oauthSessions   map[string]*domain.OAuthSessionState
-	refreshLocks    map[string]*domain.RefreshLock
-	users           map[string]*domain.User
-	apiKeys         map[string]*domain.APIKey
-	webSessions     map[string]*domain.WebSession
-	emailTokens     map[string]*domain.EmailVerification
-	securityEvents  []*domain.SecurityEvent
-	ledger          []*domain.BillingLedgerEntry
-	checkpoints     map[string]*domain.BillingBalanceCheckpoint
-	modelPrices     map[string]*domain.ModelPrice
-	billingSettings map[string]string
-	billable        map[string]*domain.BillableRequest
-	paymentOrders   map[string]*domain.PaymentOrder
-	paymentEvents   []*domain.PaymentEvent
-	referrals       map[string]*domain.Referral
-	admissionLimits map[string]*domain.AdmissionLimit
-	logs            []*domain.RequestLog
+	mu                sync.Mutex
+	accounts          map[string]*domain.Account
+	cells             map[string]*domain.EgressCell
+	buckets           map[string]*domain.QuotaBucket
+	sessionBindings   map[string]*domain.SessionBinding
+	userRouteBinds    map[string]*domain.UserRouteBinding
+	stainless         map[string]*domain.StainlessBinding
+	oauthSessions     map[string]*domain.OAuthSessionState
+	refreshLocks      map[string]*domain.RefreshLock
+	users             map[string]*domain.User
+	apiKeys           map[string]*domain.APIKey
+	webSessions       map[string]*domain.WebSession
+	emailTokens       map[string]*domain.EmailVerification
+	securityEvents    []*domain.SecurityEvent
+	ledger            []*domain.BillingLedgerEntry
+	checkpoints       map[string]*domain.BillingBalanceCheckpoint
+	modelPrices       map[string]*domain.ModelPrice
+	billingSettings   map[string]string
+	runtimeSettings   map[string]*domain.RuntimeSetting
+	integrations      map[string]*domain.Integration
+	integrationEvents []*domain.IntegrationEvent
+	settingsAudits    []*domain.SettingsAudit
+	billable          map[string]*domain.BillableRequest
+	paymentOrders     map[string]*domain.PaymentOrder
+	paymentEvents     []*domain.PaymentEvent
+	referrals         map[string]*domain.Referral
+	admissionLimits   map[string]*domain.AdmissionLimit
+	logs              []*domain.RequestLog
 
 	// Error injection
 	SaveAccountErr   error
@@ -63,6 +67,8 @@ func NewMockStore() *MockStore {
 		checkpoints:     make(map[string]*domain.BillingBalanceCheckpoint),
 		modelPrices:     make(map[string]*domain.ModelPrice),
 		billingSettings: make(map[string]string),
+		runtimeSettings: make(map[string]*domain.RuntimeSetting),
+		integrations:    make(map[string]*domain.Integration),
 		billable:        make(map[string]*domain.BillableRequest),
 		paymentOrders:   make(map[string]*domain.PaymentOrder),
 		referrals:       make(map[string]*domain.Referral),
@@ -789,6 +795,118 @@ func (m *MockStore) GetBillingSetting(_ context.Context, key string) (string, er
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	return m.billingSettings[key], nil
+}
+
+func (m *MockStore) UpsertRuntimeSetting(_ context.Context, setting *domain.RuntimeSetting) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	copy := *setting
+	m.runtimeSettings[setting.Key] = &copy
+	return nil
+}
+
+func (m *MockStore) GetRuntimeSetting(_ context.Context, key string) (*domain.RuntimeSetting, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	setting := m.runtimeSettings[key]
+	if setting == nil {
+		return nil, nil
+	}
+	copy := *setting
+	return &copy, nil
+}
+
+func (m *MockStore) ListRuntimeSettings(_ context.Context) ([]*domain.RuntimeSetting, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var out []*domain.RuntimeSetting
+	for _, setting := range m.runtimeSettings {
+		copy := *setting
+		out = append(out, &copy)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Key < out[j].Key })
+	return out, nil
+}
+
+func (m *MockStore) SaveIntegration(_ context.Context, integration *domain.Integration) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	copy := *integration
+	m.integrations[integration.ID] = &copy
+	return nil
+}
+
+func (m *MockStore) GetIntegration(_ context.Context, id string) (*domain.Integration, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	integration := m.integrations[id]
+	if integration == nil {
+		return nil, nil
+	}
+	copy := *integration
+	return &copy, nil
+}
+
+func (m *MockStore) ListIntegrations(_ context.Context, kind string) ([]*domain.Integration, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var out []*domain.Integration
+	for _, integration := range m.integrations {
+		if kind != "" && integration.Kind != kind {
+			continue
+		}
+		copy := *integration
+		out = append(out, &copy)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Kind != out[j].Kind {
+			return out[i].Kind < out[j].Kind
+		}
+		if out[i].Priority != out[j].Priority {
+			return out[i].Priority < out[j].Priority
+		}
+		return out[i].ID < out[j].ID
+	})
+	return out, nil
+}
+
+func (m *MockStore) ListEnabledIntegrations(_ context.Context, kind, provider string) ([]*domain.Integration, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var out []*domain.Integration
+	for _, integration := range m.integrations {
+		if integration.Kind != kind || !integration.Enabled {
+			continue
+		}
+		if provider != "" && integration.Provider != provider {
+			continue
+		}
+		copy := *integration
+		out = append(out, &copy)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Priority != out[j].Priority {
+			return out[i].Priority < out[j].Priority
+		}
+		return out[i].ID < out[j].ID
+	})
+	return out, nil
+}
+
+func (m *MockStore) SaveIntegrationEvent(_ context.Context, event *domain.IntegrationEvent) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	copy := *event
+	m.integrationEvents = append(m.integrationEvents, &copy)
+	return nil
+}
+
+func (m *MockStore) SaveSettingsAudit(_ context.Context, audit *domain.SettingsAudit) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	copy := *audit
+	m.settingsAudits = append(m.settingsAudits, &copy)
+	return nil
 }
 
 func (m *MockStore) UpsertModelPrice(_ context.Context, price *domain.ModelPrice) error {

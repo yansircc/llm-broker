@@ -9,31 +9,57 @@ import (
 )
 
 func (s *SQLiteStore) SavePaymentOrder(ctx context.Context, order *domain.PaymentOrder) error {
+	if order.SettlementCurrency == "" {
+		order.SettlementCurrency = "CNY"
+	}
+	if order.AmountMinor == 0 {
+		order.AmountMinor = order.AmountCNYFen
+	}
+	if order.Method == "" {
+		order.Method = order.PaymentType
+	}
+	if order.ProviderMetadataJSON == "" {
+		order.ProviderMetadataJSON = "{}"
+	}
 	_, err := s.db.ExecContext(ctx, `
 		INSERT INTO payment_orders (
-			id, out_trade_no, user_id, gateway, status, product_name,
+			id, out_trade_no, user_id, gateway, integration_id, status, product_name,
 			amount_cny_fen, credit_micros, exchange_rate_micros, payment_type,
-			zpay_trade_no, qrcode, qr_image, created_at, paid_at, updated_at
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			zpay_trade_no, qrcode, qr_image, provider_order_id, provider_payment_id,
+			method, settlement_currency, amount_minor, checkout_url, provider_metadata_json,
+			created_at, paid_at, updated_at
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(out_trade_no) DO UPDATE SET
 			status = excluded.status,
+			integration_id = excluded.integration_id,
 			zpay_trade_no = excluded.zpay_trade_no,
 			qrcode = excluded.qrcode,
 			qr_image = excluded.qr_image,
+			provider_order_id = excluded.provider_order_id,
+			provider_payment_id = excluded.provider_payment_id,
+			method = excluded.method,
+			settlement_currency = excluded.settlement_currency,
+			amount_minor = excluded.amount_minor,
+			checkout_url = excluded.checkout_url,
+			provider_metadata_json = excluded.provider_metadata_json,
 			paid_at = excluded.paid_at,
 			updated_at = excluded.updated_at
 	`,
-		order.ID, order.OutTradeNo, order.UserID, order.Gateway, order.Status, order.ProductName,
+		order.ID, order.OutTradeNo, order.UserID, order.Gateway, order.IntegrationID, order.Status, order.ProductName,
 		order.AmountCNYFen, order.CreditMicros, order.ExchangeRateMicros, order.PaymentType,
-		order.ZpayTradeNo, order.QRCode, order.QRImage, order.CreatedAt.Unix(), nullableUnix(order.PaidAt), order.UpdatedAt.Unix())
+		order.ZpayTradeNo, order.QRCode, order.QRImage, order.ProviderOrderID, order.ProviderPaymentID,
+		order.Method, order.SettlementCurrency, order.AmountMinor, order.CheckoutURL, order.ProviderMetadataJSON,
+		order.CreatedAt.Unix(), nullableUnix(order.PaidAt), order.UpdatedAt.Unix())
 	return err
 }
 
 func (s *SQLiteStore) GetPaymentOrderByOutTradeNo(ctx context.Context, outTradeNo string) (*domain.PaymentOrder, error) {
 	row := s.db.QueryRowContext(ctx, `
-		SELECT id, out_trade_no, user_id, gateway, status, product_name,
+		SELECT id, out_trade_no, user_id, gateway, integration_id, status, product_name,
 			amount_cny_fen, credit_micros, exchange_rate_micros, payment_type,
-			zpay_trade_no, qrcode, qr_image, created_at, paid_at, updated_at
+			zpay_trade_no, qrcode, qr_image, provider_order_id, provider_payment_id,
+			method, settlement_currency, amount_minor, checkout_url, provider_metadata_json,
+			created_at, paid_at, updated_at
 		FROM payment_orders WHERE out_trade_no = ?
 	`, outTradeNo)
 	return scanPaymentOrder(row)
@@ -44,9 +70,11 @@ func (s *SQLiteStore) ListPaymentOrdersByUser(ctx context.Context, userID string
 		limit = 20
 	}
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT id, out_trade_no, user_id, gateway, status, product_name,
+		SELECT id, out_trade_no, user_id, gateway, integration_id, status, product_name,
 			amount_cny_fen, credit_micros, exchange_rate_micros, payment_type,
-			zpay_trade_no, qrcode, qr_image, created_at, paid_at, updated_at
+			zpay_trade_no, qrcode, qr_image, provider_order_id, provider_payment_id,
+			method, settlement_currency, amount_minor, checkout_url, provider_metadata_json,
+			created_at, paid_at, updated_at
 		FROM payment_orders WHERE user_id = ?
 		ORDER BY created_at DESC LIMIT ?
 	`, userID, limit)
@@ -70,9 +98,11 @@ func (s *SQLiteStore) ListPaymentOrders(ctx context.Context, limit int) ([]*doma
 		limit = 200
 	}
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT id, out_trade_no, user_id, gateway, status, product_name,
+		SELECT id, out_trade_no, user_id, gateway, integration_id, status, product_name,
 			amount_cny_fen, credit_micros, exchange_rate_micros, payment_type,
-			zpay_trade_no, qrcode, qr_image, created_at, paid_at, updated_at
+			zpay_trade_no, qrcode, qr_image, provider_order_id, provider_payment_id,
+			method, settlement_currency, amount_minor, checkout_url, provider_metadata_json,
+			created_at, paid_at, updated_at
 		FROM payment_orders
 		ORDER BY created_at DESC LIMIT ?
 	`, limit)
@@ -119,9 +149,9 @@ func (s *SQLiteStore) SummarizePaymentOrders(ctx context.Context) (*domain.Payme
 func (s *SQLiteStore) MarkPaymentOrderPaid(ctx context.Context, outTradeNo, zpayTradeNo, paymentType string, paidAt time.Time) error {
 	result, err := s.db.ExecContext(ctx, `
 		UPDATE payment_orders
-		SET status = 'paid', zpay_trade_no = ?, payment_type = ?, paid_at = ?, updated_at = ?
+		SET status = 'paid', zpay_trade_no = ?, provider_payment_id = ?, payment_type = ?, method = ?, paid_at = ?, updated_at = ?
 		WHERE out_trade_no = ? AND status <> 'paid'
-	`, zpayTradeNo, paymentType, paidAt.Unix(), paidAt.Unix(), outTradeNo)
+	`, zpayTradeNo, zpayTradeNo, paymentType, paymentType, paidAt.Unix(), paidAt.Unix(), outTradeNo)
 	if err != nil {
 		return err
 	}
@@ -163,9 +193,9 @@ func (s *SQLiteStore) FulfillPaymentOrderWithCredit(ctx context.Context, outTrad
 
 	result, err := tx.ExecContext(ctx, `
 		UPDATE payment_orders
-		SET status = 'paid', zpay_trade_no = ?, payment_type = ?, paid_at = ?, updated_at = ?
+		SET status = 'paid', zpay_trade_no = ?, provider_payment_id = ?, payment_type = ?, method = ?, paid_at = ?, updated_at = ?
 		WHERE out_trade_no = ? AND status <> 'paid'
-	`, zpayTradeNo, paymentType, paidAt.Unix(), paidAt.Unix(), outTradeNo)
+	`, zpayTradeNo, zpayTradeNo, paymentType, paymentType, paidAt.Unix(), paidAt.Unix(), outTradeNo)
 	if err != nil {
 		return err
 	}
@@ -204,9 +234,11 @@ func scanPaymentOrder(scanner interface{ Scan(...any) error }) (*domain.PaymentO
 	var createdAt, updatedAt int64
 	var paidAt sql.NullInt64
 	err := scanner.Scan(
-		&order.ID, &order.OutTradeNo, &order.UserID, &order.Gateway, &order.Status, &order.ProductName,
+		&order.ID, &order.OutTradeNo, &order.UserID, &order.Gateway, &order.IntegrationID, &order.Status, &order.ProductName,
 		&order.AmountCNYFen, &order.CreditMicros, &order.ExchangeRateMicros, &order.PaymentType,
-		&order.ZpayTradeNo, &order.QRCode, &order.QRImage, &createdAt, &paidAt, &updatedAt,
+		&order.ZpayTradeNo, &order.QRCode, &order.QRImage, &order.ProviderOrderID, &order.ProviderPaymentID,
+		&order.Method, &order.SettlementCurrency, &order.AmountMinor, &order.CheckoutURL, &order.ProviderMetadataJSON,
+		&createdAt, &paidAt, &updatedAt,
 	)
 	if err == sql.ErrNoRows {
 		return nil, nil

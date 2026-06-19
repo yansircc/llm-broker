@@ -18,6 +18,7 @@ import (
 	"github.com/yansircc/llm-broker/internal/payments/zpay"
 	"github.com/yansircc/llm-broker/internal/pool"
 	"github.com/yansircc/llm-broker/internal/relay"
+	"github.com/yansircc/llm-broker/internal/settings"
 	"github.com/yansircc/llm-broker/internal/store"
 	"github.com/yansircc/llm-broker/internal/tokens"
 	"github.com/yansircc/llm-broker/internal/transport"
@@ -48,6 +49,7 @@ type Server struct {
 	billing        *billing.Service
 	emailSender    email.Sender
 	zpayClient     *zpay.Client
+	settings       *settings.Service
 }
 
 // WaitForLogFlush blocks until pending compat-lifecycle request-log inserts +
@@ -70,6 +72,7 @@ func New(
 	authMw *auth.Middleware,
 	bus *events.Bus,
 	version string,
+	runtimeSettings *settings.Service,
 	drivers DriverViews,
 ) *Server {
 	srv := &Server{
@@ -89,6 +92,7 @@ func New(
 		adminDrivers:   drivers.Admin,
 		billing:        billing.NewService(s),
 		emailSender:    emailSenderFromConfig(cfg),
+		settings:       runtimeSettings,
 	}
 	if cfg.ZPayPID != "" && cfg.ZPayKey != "" {
 		srv.zpayClient = zpay.NewClient(zpay.Config{PID: cfg.ZPayPID, Key: cfg.ZPayKey, HTTPClient: http.DefaultClient})

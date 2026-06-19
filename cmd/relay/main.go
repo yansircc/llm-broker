@@ -18,6 +18,7 @@ import (
 	"github.com/yansircc/llm-broker/internal/relay"
 	"github.com/yansircc/llm-broker/internal/requestlog"
 	"github.com/yansircc/llm-broker/internal/server"
+	"github.com/yansircc/llm-broker/internal/settings"
 	"github.com/yansircc/llm-broker/internal/store"
 	"github.com/yansircc/llm-broker/internal/tokens"
 	"github.com/yansircc/llm-broker/internal/transport"
@@ -71,6 +72,17 @@ func main() {
 		os.Exit(1)
 	}
 	slog.Info("encryption key derived")
+
+	settingsSvc := settings.NewService(s, c, cfg.EncryptionKey)
+	startupCtx := context.Background()
+	if err := settingsSvc.SeedFromConfig(startupCtx, cfg); err != nil {
+		slog.Error("settings seed failed", "error", err)
+		os.Exit(1)
+	}
+	if err := settingsSvc.ApplyToConfig(startupCtx, cfg); err != nil {
+		slog.Error("settings apply failed", "error", err)
+		os.Exit(1)
+	}
 
 	// Initialize event bus
 	bus := events.NewBus(200)
@@ -170,7 +182,7 @@ func main() {
 
 	// Start server
 	ctx := context.Background()
-	srv := server.New(cfg, s, p, tokMgr, r, transportPool, authMw, bus, version, server.DriverViews{
+	srv := server.New(cfg, s, p, tokMgr, r, transportPool, authMw, bus, version, settingsSvc, server.DriverViews{
 		Catalog: catalogDrivers,
 		OAuth:   oauthDrivers,
 		Admin:   adminDrivers,

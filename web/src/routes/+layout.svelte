@@ -21,7 +21,13 @@
 			]
 		},
 		{ label: '客户', items: [{ href: '/console/users', label: '用户与密钥' }] },
-		{ label: '计费', items: [{ href: '/console/billing', label: '充值计费' }] },
+		{
+			label: '计费',
+			items: [
+				{ href: '/console/billing', label: '充值计费' },
+				{ href: '/console/settings', label: '系统设置' }
+			]
+		},
 		{ label: '观测', items: [{ href: '/console/activity', label: '运行事件' }] }
 	];
 	const publicNavItems = [

@@ -174,10 +174,7 @@ func (c *Config) Validate() error {
 			return errMissing("TURNSTILE_SECRET_KEY")
 		}
 	}
-	if c.requiresPublicURL() {
-		if strings.TrimSpace(c.SiteURL) == "" {
-			return errMissing("SITE_URL")
-		}
+	if strings.TrimSpace(c.SiteURL) != "" {
 		if !validSiteURL(c.SiteURL) {
 			return &configError{field: "SITE_URL (must include http(s) scheme and host)"}
 		}
@@ -196,10 +193,6 @@ func (c *Config) Validate() error {
 		return &configError{field: "BACKGROUND_JOBS_MODE (must be all, leader, or off)"}
 	}
 	return nil
-}
-
-func (c *Config) requiresPublicURL() bool {
-	return c.SMTPAddr != "" || c.SMTPFrom != "" || c.ZPayPID != "" || c.ZPayKey != ""
 }
 
 func validSiteURL(raw string) bool {

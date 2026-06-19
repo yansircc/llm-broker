@@ -111,6 +111,50 @@ var desiredBillingSettingColumns = []string{
 	"updated_at",
 }
 
+var desiredRuntimeSettingColumns = []string{
+	"key",
+	"value_json",
+	"updated_at",
+	"updated_by",
+}
+
+var desiredIntegrationColumns = []string{
+	"id",
+	"kind",
+	"provider",
+	"display_name",
+	"enabled",
+	"priority",
+	"config_json",
+	"secret_json_enc",
+	"secret_fingerprint",
+	"created_at",
+	"updated_at",
+	"updated_by",
+}
+
+var desiredIntegrationEventColumns = []string{
+	"id",
+	"integration_id",
+	"kind",
+	"event_type",
+	"success",
+	"error_code",
+	"redacted_payload_json",
+	"created_at",
+}
+
+var desiredSettingsAuditColumns = []string{
+	"id",
+	"actor_user_id",
+	"target_type",
+	"target_id",
+	"action",
+	"before_json",
+	"after_json",
+	"created_at",
+}
+
 var desiredAdmissionLimitColumns = []string{
 	"scope",
 	"scope_id",
@@ -156,6 +200,7 @@ var desiredPaymentOrderColumns = []string{
 	"out_trade_no",
 	"user_id",
 	"gateway",
+	"integration_id",
 	"status",
 	"product_name",
 	"amount_cny_fen",
@@ -165,6 +210,13 @@ var desiredPaymentOrderColumns = []string{
 	"zpay_trade_no",
 	"qrcode",
 	"qr_image",
+	"provider_order_id",
+	"provider_payment_id",
+	"method",
+	"settlement_currency",
+	"amount_minor",
+	"checkout_url",
+	"provider_metadata_json",
 	"created_at",
 	"paid_at",
 	"updated_at",
@@ -305,6 +357,9 @@ func Migrate(dbPath string) error {
 	if err := s.migrateRequestLogTable(context.Background()); err != nil {
 		return err
 	}
+	if err := s.migratePaymentOrdersTable(context.Background()); err != nil {
+		return err
+	}
 	if err := s.ensureRequestLogIndexes(context.Background()); err != nil {
 		return err
 	}
@@ -330,6 +385,10 @@ func (s *SQLiteStore) validateCurrentSchema(ctx context.Context) error {
 		{table: "email_verifications", want: desiredEmailVerificationColumns},
 		{table: "security_events", want: desiredSecurityEventColumns},
 		{table: "billing_settings", want: desiredBillingSettingColumns},
+		{table: "runtime_settings", want: desiredRuntimeSettingColumns},
+		{table: "integrations", want: desiredIntegrationColumns},
+		{table: "integration_events", want: desiredIntegrationEventColumns},
+		{table: "settings_audit", want: desiredSettingsAuditColumns},
 		{table: "admission_limits", want: desiredAdmissionLimitColumns},
 		{table: "model_prices", want: desiredModelPriceColumns},
 		{table: "billing_ledger", want: desiredBillingLedgerColumns},
@@ -864,6 +923,123 @@ func (s *SQLiteStore) migrateRequestLogTable(ctx context.Context) error {
 	}
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("commit request_log migration: %w", err)
+	}
+	return nil
+}
+
+func (s *SQLiteStore) migratePaymentOrdersTable(ctx context.Context) error {
+	cols, err := s.tableColumns(ctx, "payment_orders")
+	if err != nil {
+		return fmt.Errorf("inspect payment_orders schema: %w", err)
+	}
+	if sameColumns(cols, desiredPaymentOrderColumns) {
+		return nil
+	}
+	if !hasColumns(cols, "id", "out_trade_no", "user_id", "gateway", "status", "product_name", "amount_cny_fen", "credit_micros", "exchange_rate_micros", "payment_type", "zpay_trade_no", "qrcode", "qr_image", "created_at", "paid_at", "updated_at") {
+		return fmt.Errorf("payment_orders migration: unsupported schema %v", cols)
+	}
+	copyExpr := func(name, fallback string) string {
+		if slices.Contains(cols, name) {
+			return name
+		}
+		return fallback
+	}
+
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin payment_orders migration: %w", err)
+	}
+	defer tx.Rollback()
+
+	if _, err := tx.ExecContext(ctx, `
+		CREATE TABLE payment_orders_new (
+			id TEXT PRIMARY KEY,
+			out_trade_no TEXT NOT NULL UNIQUE,
+			user_id TEXT NOT NULL,
+			gateway TEXT NOT NULL DEFAULT 'zpay',
+			integration_id TEXT NOT NULL DEFAULT '',
+			status TEXT NOT NULL,
+			product_name TEXT NOT NULL,
+			amount_cny_fen INTEGER NOT NULL,
+			credit_micros INTEGER NOT NULL,
+			exchange_rate_micros INTEGER NOT NULL,
+			payment_type TEXT NOT NULL DEFAULT 'alipay',
+			zpay_trade_no TEXT NOT NULL DEFAULT '',
+			qrcode TEXT NOT NULL DEFAULT '',
+			qr_image TEXT NOT NULL DEFAULT '',
+			provider_order_id TEXT NOT NULL DEFAULT '',
+			provider_payment_id TEXT NOT NULL DEFAULT '',
+			method TEXT NOT NULL DEFAULT '',
+			settlement_currency TEXT NOT NULL DEFAULT 'CNY',
+			amount_minor INTEGER NOT NULL DEFAULT 0,
+			checkout_url TEXT NOT NULL DEFAULT '',
+			provider_metadata_json TEXT NOT NULL DEFAULT '{}',
+			created_at INTEGER NOT NULL,
+			paid_at INTEGER,
+			updated_at INTEGER NOT NULL
+		)
+	`); err != nil {
+		return fmt.Errorf("create payment_orders_new: %w", err)
+	}
+
+	insertSQL := fmt.Sprintf(`
+		INSERT INTO payment_orders_new (
+			id, out_trade_no, user_id, gateway, integration_id, status, product_name,
+			amount_cny_fen, credit_micros, exchange_rate_micros, payment_type,
+			zpay_trade_no, qrcode, qr_image, provider_order_id, provider_payment_id,
+			method, settlement_currency, amount_minor, checkout_url, provider_metadata_json,
+			created_at, paid_at, updated_at
+		)
+		SELECT
+			id,
+			out_trade_no,
+			user_id,
+			gateway,
+			%s,
+			status,
+			product_name,
+			amount_cny_fen,
+			credit_micros,
+			exchange_rate_micros,
+			payment_type,
+			zpay_trade_no,
+			qrcode,
+			qr_image,
+			%s,
+			%s,
+			%s,
+			%s,
+			%s,
+			%s,
+			%s,
+			created_at,
+			paid_at,
+			updated_at
+		FROM payment_orders
+	`,
+		copyExpr("integration_id", "''"),
+		copyExpr("provider_order_id", "zpay_trade_no"),
+		copyExpr("provider_payment_id", "zpay_trade_no"),
+		copyExpr("method", "payment_type"),
+		copyExpr("settlement_currency", "'CNY'"),
+		copyExpr("amount_minor", "amount_cny_fen"),
+		copyExpr("checkout_url", "''"),
+		copyExpr("provider_metadata_json", "'{}'"),
+	)
+	if _, err := tx.ExecContext(ctx, insertSQL); err != nil {
+		return fmt.Errorf("copy payment_orders: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, `DROP TABLE payment_orders`); err != nil {
+		return fmt.Errorf("drop old payment_orders: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, `ALTER TABLE payment_orders_new RENAME TO payment_orders`); err != nil {
+		return fmt.Errorf("rename payment_orders_new: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, `CREATE INDEX idx_payment_orders_user_created ON payment_orders(user_id, created_at)`); err != nil {
+		return fmt.Errorf("create idx_payment_orders_user_created: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit payment_orders migration: %w", err)
 	}
 	return nil
 }
