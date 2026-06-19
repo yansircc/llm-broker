@@ -2,7 +2,9 @@ package server
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -35,9 +37,16 @@ func (s *Server) handleCustomerCreateKey(w http.ResponseWriter, r *http.Request)
 		Name string `json:"name"`
 	}
 	_ = json.NewDecoder(r.Body).Decode(&req)
-	if req.Name == "" {
-		req.Name = "default"
+	name := normalizeAPIKeyName(req.Name)
+	if name == "" {
+		name = "default"
 	}
+	keys, err := s.store.ListAPIKeysByUser(r.Context(), cc.User.ID)
+	if err != nil {
+		writeAdminError(w, http.StatusInternalServerError, "internal_error", "failed to list api keys")
+		return
+	}
+	name = uniqueAPIKeyName(name, keys)
 	token, err := randomToken("sk")
 	if err != nil {
 		writeAdminError(w, http.StatusInternalServerError, "internal_error", "failed to generate api key")
@@ -50,7 +59,7 @@ func (s *Server) handleCustomerCreateKey(w http.ResponseWriter, r *http.Request)
 	key := &domain.APIKey{
 		ID:             uuid.NewString(),
 		UserID:         cc.User.ID,
-		Name:           req.Name,
+		Name:           name,
 		TokenHash:      sha256Hex(token),
 		TokenPrefix:    prefix,
 		Status:         "active",
@@ -62,6 +71,26 @@ func (s *Server) handleCustomerCreateKey(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	writeJSON(w, http.StatusOK, apiKeyView(key, token))
+}
+
+func normalizeAPIKeyName(name string) string {
+	return strings.TrimSpace(name)
+}
+
+func uniqueAPIKeyName(base string, keys []*domain.APIKey) string {
+	used := make(map[string]struct{}, len(keys))
+	for _, key := range keys {
+		used[strings.ToLower(normalizeAPIKeyName(key.Name))] = struct{}{}
+	}
+	if _, ok := used[strings.ToLower(base)]; !ok {
+		return base
+	}
+	for suffix := 2; ; suffix++ {
+		candidate := fmt.Sprintf("%s-%d", base, suffix)
+		if _, ok := used[strings.ToLower(candidate)]; !ok {
+			return candidate
+		}
+	}
 }
 
 func (s *Server) handleCustomerDeleteKey(w http.ResponseWriter, r *http.Request) {

@@ -244,6 +244,60 @@ func TestCustomerSessionRejectsDisabledUser(t *testing.T) {
 	}
 }
 
+func TestCustomerCreateKeyAutoSuffixesDuplicateNames(t *testing.T) {
+	srv := newTestServer(t)
+	now := time.Now().UTC()
+	user := &domain.User{
+		ID:             "key-name-user",
+		Email:          "key-name@example.com",
+		Name:           "Key Name",
+		PasswordHash:   "hash",
+		Status:         "active",
+		AllowedSurface: domain.SurfaceNative,
+		ReferralCode:   "KEYNM1",
+		CreatedAt:      now,
+	}
+	if err := srv.store.CreateUser(context.Background(), user); err != nil {
+		t.Fatal(err)
+	}
+	sessionResp := httptest.NewRecorder()
+	if _, err := srv.createCustomerSession(sessionResp, httptest.NewRequest(http.MethodPost, "/api/auth/login", nil), user); err != nil {
+		t.Fatalf("createCustomerSession: %v", err)
+	}
+	cookie := customerCookie(t, sessionResp)
+
+	createKey := func(input string) string {
+		t.Helper()
+		req := httptest.NewRequest(http.MethodPost, "/api/keys", strings.NewReader(`{"name":"`+input+`"}`))
+		req.AddCookie(cookie)
+		resp := httptest.NewRecorder()
+		srv.handleCustomerCreateKey(resp, req)
+		if resp.Code != http.StatusOK {
+			t.Fatalf("create %q status=%d body=%s", input, resp.Code, resp.Body.String())
+		}
+		var payload struct {
+			Name string `json:"name"`
+		}
+		if err := json.Unmarshal(resp.Body.Bytes(), &payload); err != nil {
+			t.Fatalf("decode create %q: %v body=%s", input, err, resp.Body.String())
+		}
+		return payload.Name
+	}
+
+	if got := createKey(" Prod "); got != "Prod" {
+		t.Fatalf("first name = %q, want Prod", got)
+	}
+	if got := createKey("prod"); got != "prod-2" {
+		t.Fatalf("second prod name = %q, want prod-2", got)
+	}
+	if got := createKey("prod"); got != "prod-3" {
+		t.Fatalf("third prod name = %q, want prod-3", got)
+	}
+	if got := createKey("prod-2"); got != "prod-2-2" {
+		t.Fatalf("duplicate prod-2 name = %q, want prod-2-2", got)
+	}
+}
+
 func TestUnifiedLoginRedirectsAdminEmailToConsole(t *testing.T) {
 	srv := newTestServer(t)
 	srv.cfg.AdminEmails = map[string]struct{}{"admin@example.com": {}}
