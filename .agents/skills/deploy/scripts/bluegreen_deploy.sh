@@ -10,9 +10,9 @@ echo "==> repo: $REPO_ROOT"
 echo "==> target: $DEPLOY_TARGET_NAME ($SITE via $REMOTE)"
 
 SNAPSHOT_ID=""
-RESTORING=0
 SWITCHED=0
 STARTED_INACTIVE=0
+DRAIN_STARTED=0
 ACTIVE_SLOT_NAME=""
 ACTIVE_SERVICE_NAME=""
 INACTIVE_SLOT_NAME=""
@@ -22,11 +22,37 @@ INACTIVE_PORT_VALUE=""
 
 on_error() {
     local exit_code=$?
-    if [[ "$RESTORING" -eq 0 && "$SWITCHED" -eq 1 && -n "$SNAPSHOT_ID" ]]; then
-        RESTORING=1
+    trap - ERR
+    if [[ "$SWITCHED" -eq 1 && "$DRAIN_STARTED" -eq 1 && -n "$SNAPSHOT_ID" ]]; then
         echo ""
-        echo "==> deploy failed after traffic switch, auto-restoring snapshot $SNAPSHOT_ID..."
-        restore_snapshot "$SNAPSHOT_ID" || true
+        echo "==> deploy failed while draining old slot."
+        echo "    new active slot remains live: $INACTIVE_SLOT_NAME"
+        echo "    old slot remains running/draining: $ACTIVE_SLOT_NAME"
+        echo "    rollback if needed: bash $SCRIPT_DIR/restore.sh $SNAPSHOT_ID"
+        exit "$exit_code"
+    fi
+    if [[ "$SWITCHED" -eq 1 && -n "$SNAPSHOT_ID" ]]; then
+        echo ""
+        echo "==> deploy failed after traffic switch; moving traffic back to $ACTIVE_SLOT_NAME..."
+        if set_bluegreen_active_slot "$ACTIVE_SLOT_NAME" "$active_port" && remote_reload_caddy; then
+            echo "    traffic restored to previous slot: $ACTIVE_SLOT_NAME"
+            echo "==> draining failed new slot $INACTIVE_SLOT_NAME..."
+            if start_remote_slot_drain "$INACTIVE_PORT_VALUE"; then
+                if wait_for_remote_slot_drain "$INACTIVE_PORT_VALUE" "$BLUEGREEN_DRAIN_TIMEOUT"; then
+                    ssh "$REMOTE" "systemctl stop $INACTIVE_SERVICE_NAME >/dev/null 2>&1 || true" || true
+                    echo "    failed new slot stopped: $INACTIVE_SLOT_NAME"
+                else
+                    echo "    failed new slot remains running/draining: $INACTIVE_SLOT_NAME"
+                fi
+            else
+                echo "    warning: could not start drain on failed new slot; leaving it running"
+            fi
+        else
+            echo "    warning: traffic rollback failed; new slot remains active: $INACTIVE_SLOT_NAME"
+            echo "    previous slot remains running: $ACTIVE_SLOT_NAME"
+        fi
+        echo "    snapshot retained: $SNAPSHOT_ID"
+        echo "    restore if needed after requests drain: bash $SCRIPT_DIR/restore.sh $SNAPSHOT_ID"
         exit "$exit_code"
     fi
     if [[ "$STARTED_INACTIVE" -eq 1 && -n "$INACTIVE_SERVICE_NAME" ]]; then
@@ -97,10 +123,11 @@ rm -f "$TMP_REMOTE"
 systemctl restart "$INACTIVE_SERVICE_NAME"
 EOF
 STARTED_INACTIVE=1
-wait_for_remote_local_health "$INACTIVE_PORT_VALUE"
-echo "    inactive slot healthy"
+wait_for_remote_local_ready "$INACTIVE_PORT_VALUE"
+echo "    inactive slot ready"
 
 echo "==> switching caddy upstream to $INACTIVE_SLOT_NAME..."
+echo "    switch_started_at: $(date -u +%Y-%m-%dT%H:%M:%SZ)"
 set_bluegreen_active_slot "$INACTIVE_SLOT_NAME" "$INACTIVE_PORT_VALUE"
 remote_reload_caddy
 SWITCHED=1
@@ -108,19 +135,29 @@ SWITCHED=1
 echo "==> waiting for public /health..."
 wait_for_site_health
 echo "    healthy"
+echo "==> waiting for public /ready..."
+wait_for_site_ready
+echo "    ready"
 
 verify_db_invariants
 
 show_recent_restart_events "$ACTIVE_SERVICE_NAME" "$INACTIVE_SERVICE_NAME"
 
+run_required_smoke_suite "$SNAPSHOT_ID"
+
+echo "==> draining previous active slot..."
+echo "    drain_started_at: $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+start_remote_slot_drain "$active_port"
+DRAIN_STARTED=1
+wait_for_remote_slot_drain "$active_port" "$BLUEGREEN_DRAIN_TIMEOUT"
+
 echo "==> stopping previous active slot..."
+echo "    old_slot_stop_started_at: $(date -u +%Y-%m-%dT%H:%M:%SZ)"
 if ssh "$REMOTE" "systemctl stop $ACTIVE_SERVICE_NAME >/dev/null 2>&1 || true"; then
     echo "    previous active slot stopped"
 else
     echo "    warning: failed to stop previous active slot; continuing with new slot live"
 fi
-
-run_nonfatal_smoke_suite "$SNAPSHOT_ID"
 
 trap - ERR
 

@@ -2,7 +2,9 @@
 	import '$lib/global.css';
 	import { base } from '$app/paths';
 	import { page } from '$app/stores';
+	import { onMount } from 'svelte';
 	import Logo from '$lib/components/Logo.svelte';
+	import type { CustomerMe, CustomerUser } from '$lib/customer-types';
 
 	interface Props {
 		children: import('svelte').Snippet;
@@ -31,6 +33,8 @@
 	const publicPrefixes = ['/docs'];
 
 	let { children }: Props = $props();
+	let currentUser = $state<CustomerUser | null>(null);
+	let consoleHref = $state('/app/dashboard');
 
 	function activeNav(href: string) {
 		const path = $page.url.pathname;
@@ -60,6 +64,25 @@
 
 	function showPublicShell() {
 		return publicPaths.some(matchesRoute) || publicPrefixes.some(matchesPrefix);
+	}
+
+	onMount(() => {
+		void loadCurrentUser();
+	});
+
+	async function loadCurrentUser() {
+		try {
+			const res = await fetch('/api/me', {
+				credentials: 'same-origin',
+				headers: { Accept: 'application/json' }
+			});
+			if (!res.ok) return;
+			const payload = (await res.json()) as CustomerMe;
+			currentUser = payload.user;
+			consoleHref = payload.redirect_to ?? (payload.user?.role === 'admin' ? '/console/dashboard' : '/app/dashboard');
+		} catch {
+			currentUser = null;
+		}
 	}
 </script>
 
@@ -107,8 +130,12 @@
 					{/each}
 				</nav>
 				<div class="flex items-center gap-2">
-					<a class="rounded-md border border-line px-3 py-2 text-sm hover:border-brand/50" href="{base}/app/login">登录</a>
-					<a class="rounded-md bg-brand px-3 py-2 text-sm font-semibold text-black" href="{base}/app/register">开始使用</a>
+					{#if currentUser}
+						<a class="rounded-md bg-brand px-3 py-2 text-sm font-semibold text-black" href="{base}{consoleHref}">控制台</a>
+					{:else}
+						<a class="rounded-md border border-line px-3 py-2 text-sm hover:border-brand/50" href="{base}/app/login">登录</a>
+						<a class="rounded-md bg-brand px-3 py-2 text-sm font-semibold text-black" href="{base}/app/register">开始使用</a>
+					{/if}
 				</div>
 			</div>
 			<nav class="mx-auto flex max-w-6xl gap-4 overflow-x-auto px-5 pb-3 text-sm text-slate-300 sm:hidden" aria-label="Site navigation mobile">

@@ -44,7 +44,11 @@ func (s *Server) Run(ctx context.Context) error {
 			return active[i]["started"].(string) < active[j]["started"].(string)
 		})
 		slog.Info("shutdown start", "activeRequests", active, "connStates", s.snapshotConnStates())
-		shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 30*time.Second)
+		shutdownTimeout := 35 * time.Minute
+		if s.cfg != nil && s.cfg.GracefulShutdownTimeout > 0 {
+			shutdownTimeout = s.cfg.GracefulShutdownTimeout
+		}
+		shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), shutdownTimeout)
 		defer shutdownCancel()
 		if err := s.httpServer.Shutdown(shutdownCtx); err != nil {
 			slog.Error("shutdown timeout", "error", err, "activeRequests", s.snapshotActiveRequests(), "connStates", s.snapshotConnStates())
@@ -158,18 +162,42 @@ func (s *Server) runLeaderBackgroundJobs(ctx context.Context) {
 func (s *Server) requestLogger(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		r = requestid.Ensure(r, w)
-		reqID := s.requestSeq.Add(1)
-		s.activeRequests.Store(reqID, activeRequest{
-			ID:        reqID,
-			Method:    r.Method,
-			Path:      r.URL.Path,
-			Remote:    r.RemoteAddr,
-			StartedAt: time.Now(),
-		})
-		defer s.activeRequests.Delete(reqID)
+		if s.isDraining() && !isDrainAllowedPath(r.URL.Path) {
+			writeAdminError(w, http.StatusServiceUnavailable, "draining", "server is draining")
+			return
+		}
+		if shouldTrackActiveRequest(r.URL.Path) {
+			reqID := s.requestSeq.Add(1)
+			s.activeRequests.Store(reqID, activeRequest{
+				ID:        reqID,
+				Method:    r.Method,
+				Path:      r.URL.Path,
+				Remote:    r.RemoteAddr,
+				StartedAt: time.Now(),
+			})
+			defer s.activeRequests.Delete(reqID)
+		}
 		slog.Debug("request", "method", r.Method, "path", r.URL.Path, "remote", r.RemoteAddr)
 		next.ServeHTTP(w, r)
 	})
+}
+
+func isDrainAllowedPath(path string) bool {
+	switch path {
+	case "/health", "/ready", "/admin/drain", "/admin/drain-status":
+		return true
+	default:
+		return false
+	}
+}
+
+func shouldTrackActiveRequest(path string) bool {
+	switch path {
+	case "/health", "/ready", "/admin/drain", "/admin/drain-status", "/api/event_logging/batch":
+		return false
+	default:
+		return true
+	}
 }
 
 func (s *Server) runLogPurge(ctx context.Context) {

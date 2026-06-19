@@ -11,6 +11,7 @@ export interface CustomerUser {
 
 export interface CustomerMe {
 	user: CustomerUser;
+	redirect_to?: string;
 }
 
 export interface AuthResponse extends CustomerMe {

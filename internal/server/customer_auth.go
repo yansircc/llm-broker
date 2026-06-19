@@ -67,11 +67,14 @@ func (s *Server) handleCustomerRegister(w http.ResponseWriter, r *http.Request) 
 		PasswordHash:     string(hash),
 		Status:           "active",
 		AllowedSurface:   domain.SurfaceNative,
-		ReferralCode:     generateReferralCode(),
 		ReferredByUserID: referredBy,
 		CreatedAt:        now,
 	}
-	if err := s.store.CreateUser(r.Context(), user); err != nil {
+	if err := s.createUserWithReferralCode(r.Context(), user); err != nil {
+		if isReferralCodeAllocationError(err) {
+			writeAdminError(w, http.StatusInternalServerError, "internal_error", "failed to allocate referral code")
+			return
+		}
 		writeAdminError(w, http.StatusConflict, "conflict", "email already registered")
 		return
 	}
@@ -125,7 +128,7 @@ func (s *Server) handleCustomerMe(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"user": s.customerUserView(cc.User)})
+	writeJSON(w, http.StatusOK, s.authResponse(cc.User))
 }
 
 func (s *Server) createCustomerSession(w http.ResponseWriter, r *http.Request, user *domain.User) (*domain.WebSession, error) {

@@ -83,6 +83,7 @@ type Config struct {
 	// Runtime
 	BackgroundJobsMode       string
 	BackgroundLeaderLockPath string
+	GracefulShutdownTimeout  time.Duration
 }
 
 func Load() *Config {
@@ -145,6 +146,7 @@ func Load() *Config {
 
 		BackgroundJobsMode:       envOr("BACKGROUND_JOBS_MODE", "all"),
 		BackgroundLeaderLockPath: envOr("BACKGROUND_LEADER_LOCK_PATH", "/var/run/llm-broker/background.lock"),
+		GracefulShutdownTimeout:  envDuration("GRACEFUL_SHUTDOWN_TIMEOUT", 35*time.Minute),
 	}
 }
 

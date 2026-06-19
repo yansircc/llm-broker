@@ -41,6 +41,7 @@ type Server struct {
 	oauthDrivers   map[domain.Provider]driver.OAuthDriver
 	adminDrivers   map[domain.Provider]driver.AdminDriver
 	requestSeq     atomic.Uint64
+	draining       atomic.Bool
 	activeRequests sync.Map
 	connStates     sync.Map
 	logFlush       sync.WaitGroup
@@ -127,6 +128,17 @@ type activeRequest struct {
 	Path      string
 	Remote    string
 	StartedAt time.Time
+}
+
+func (s *Server) isDraining() bool {
+	return s != nil && s.draining.Load()
+}
+
+func (s *Server) startDrain() {
+	if s == nil {
+		return
+	}
+	s.draining.Store(true)
 }
 
 func (s *Server) recordConnState(conn net.Conn, state http.ConnState) {

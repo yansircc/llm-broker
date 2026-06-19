@@ -55,10 +55,9 @@ func (s *Server) handleCreateUser(w http.ResponseWriter, r *http.Request) {
 		Status:          "active",
 		AllowedSurface:  allowedSurface,
 		BoundAccountID:  req.BoundAccountID,
-		ReferralCode:    generateReferralCode(),
 		CreatedAt:       time.Now().UTC(),
 	}
-	if err := s.store.CreateUser(r.Context(), u); err != nil {
+	if err := s.createUserWithReferralCode(r.Context(), u); err != nil {
 		slog.Error("create user failed", "error", err)
 		writeAdminError(w, http.StatusInternalServerError, "internal_error", "failed to create user")
 		return
@@ -273,14 +272,6 @@ func generateUserToken(name string) (plaintext, hashStr, prefix string, err erro
 	hashStr = hex.EncodeToString(h[:])
 	prefix = fmt.Sprintf("tk_%s_%s...", name, hexStr[:4])
 	return plaintext, hashStr, prefix, nil
-}
-
-func generateReferralCode() string {
-	b := make([]byte, 6)
-	if _, err := rand.Read(b); err != nil {
-		return "ref_" + uuid.NewString()[:8]
-	}
-	return "ref_" + hex.EncodeToString(b)
 }
 
 func adminCreatedUserEmail(name string) string {

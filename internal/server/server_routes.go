@@ -3,7 +3,9 @@ package server
 import (
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"net/http"
+	"time"
 
 	"github.com/yansircc/llm-broker/internal/domain"
 	"github.com/yansircc/llm-broker/internal/driver"
@@ -80,6 +82,8 @@ func (s *Server) registerAdminRoutes(mux *http.ServeMux) {
 	mux.Handle("GET /admin/billing/orders", admin(s.handleAdminBillingOrders))
 	mux.Handle("GET /admin/activity/usage", admin(s.handleActivityUsage))
 	mux.Handle("GET /admin/dashboard", admin(s.handleDashboard))
+	mux.Handle("POST /admin/drain", admin(s.handleDrain))
+	mux.Handle("GET /admin/drain-status", admin(s.handleDrainStatus))
 	mux.Handle("GET /admin/health", admin(s.handleHealth))
 	mux.Handle("DELETE /admin/sessions/binding/{uuid}", admin(s.handleUnbindSession))
 }
@@ -106,6 +110,7 @@ func (s *Server) registerCustomerRoutes(mux *http.ServeMux) {
 func (s *Server) registerOperationalRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/event_logging/batch", s.handleTelemetryBatch)
 	mux.HandleFunc("GET /health", s.handleHealthCheck)
+	mux.HandleFunc("GET /ready", s.handleReadyCheck)
 }
 
 func (s *Server) handleTelemetryBatch(w http.ResponseWriter, r *http.Request) {
@@ -123,6 +128,55 @@ func (s *Server) handleHealthCheck(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	w.Write([]byte(`{"status":"ok"}`))
+}
+
+func (s *Server) handleReadyCheck(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	if s.isDraining() {
+		w.WriteHeader(http.StatusServiceUnavailable)
+		w.Write([]byte(`{"status":"draining"}`))
+		return
+	}
+	if err := s.store.Ping(r.Context()); err != nil {
+		w.WriteHeader(http.StatusServiceUnavailable)
+		fmt.Fprintf(w, `{"status":"error","store":"%s"}`, err.Error())
+		return
+	}
+	w.WriteHeader(http.StatusOK)
+	w.Write([]byte(`{"status":"ready"}`))
+}
+
+func (s *Server) handleDrain(w http.ResponseWriter, r *http.Request) {
+	s.startDrain()
+	slog.Info("server drain enabled", "activeRequests", len(s.snapshotActiveRequests()))
+	writeJSON(w, http.StatusOK, s.drainStatusView())
+}
+
+func (s *Server) handleDrainStatus(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, http.StatusOK, s.drainStatusView())
+}
+
+func (s *Server) drainStatusView() map[string]any {
+	active := s.snapshotActiveRequests()
+	oldestAgeSeconds := 0.0
+	now := time.Now()
+	for _, req := range active {
+		startedRaw, _ := req["started"].(string)
+		started, err := time.Parse(time.RFC3339Nano, startedRaw)
+		if err != nil {
+			continue
+		}
+		age := now.Sub(started).Seconds()
+		if age > oldestAgeSeconds {
+			oldestAgeSeconds = age
+		}
+	}
+	return map[string]any{
+		"draining":                   s.isDraining(),
+		"active_requests":            len(active),
+		"oldest_request_age_seconds": oldestAgeSeconds,
+		"requests":                   active,
+	}
 }
 
 type modelsResponse struct {

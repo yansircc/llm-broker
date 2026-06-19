@@ -21,6 +21,7 @@ func TestReservedUIPathKeepsAdminAPIsAndOldAdminUIOutOfSPAFallback(t *testing.T)
 		{path: "/add-account/codex", want: true},
 		{path: "/admin/dashboard", want: true},
 		{path: "/api/me", want: true},
+		{path: "/ready", want: true},
 	}
 	for _, tt := range tests {
 		if got := isReservedUIPath(tt.path); got != tt.want {

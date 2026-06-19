@@ -81,7 +81,7 @@ func isReservedUIPath(path string) bool {
 		return true
 	case path == "/add-account" || strings.HasPrefix(path, "/add-account/"):
 		return true
-	case path == "/health":
+	case path == "/health" || path == "/ready":
 		return true
 	default:
 		return false

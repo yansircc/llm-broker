@@ -40,9 +40,14 @@ echo "    legacy port: $legacy_port"
 echo "    blue port:   $blue_port"
 echo "    green port:  $green_port"
 
+build_release_artifact
+
 echo "==> snapshotting current remote state..."
 snapshot_id="$(create_snapshot bluegreen-bootstrap)"
 echo "    snapshot: $snapshot_id"
+
+upload_candidate_binary
+run_uploaded_binary_migrate
 
 provision_bluegreen_layout "$legacy_port" "$blue_port" "$green_port"
 load_bluegreen_layout
@@ -57,7 +62,7 @@ echo "    healthy"
 
 verify_db_invariants
 show_recent_restart_events "$BLUE_SERVICE" "$GREEN_SERVICE"
-run_nonfatal_smoke_suite "$snapshot_id"
+run_required_smoke_suite "$snapshot_id"
 
 echo "==> stopping legacy service..."
 ssh "$REMOTE" "systemctl stop $SERVICE >/dev/null 2>&1 || true"

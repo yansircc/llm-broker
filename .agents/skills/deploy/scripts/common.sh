@@ -100,6 +100,7 @@ BLUEGREEN_LAYOUT_FILE="${BLUEGREEN_LAYOUT_FILE:-${BLUEGREEN_STATE_DIR}/layout.en
 BLUEGREEN_ACTIVE_SLOT_FILE="${BLUEGREEN_ACTIVE_SLOT_FILE:-${BLUEGREEN_STATE_DIR}/active-slot}"
 BLUEGREEN_UPSTREAM_FILE="${BLUEGREEN_UPSTREAM_FILE:-/etc/caddy/${SERVICE}.upstream}"
 CADDYFILE_PATH="${CADDYFILE_PATH:-/etc/caddy/Caddyfile}"
+BLUEGREEN_DRAIN_TIMEOUT="${BLUEGREEN_DRAIN_TIMEOUT:-30m}"
 
 sanitize_label() {
     local label="${1:-manual}"
@@ -110,6 +111,28 @@ sanitize_label() {
         label="manual"
     fi
     printf '%s\n' "$label"
+}
+
+duration_to_seconds() {
+    local raw="$1"
+    if [[ "$raw" =~ ^[0-9]+$ ]]; then
+        printf '%s\n' "$raw"
+        return
+    fi
+    if [[ "$raw" =~ ^([0-9]+)(s|sec|secs|second|seconds)$ ]]; then
+        printf '%s\n' "${BASH_REMATCH[1]}"
+        return
+    fi
+    if [[ "$raw" =~ ^([0-9]+)(m|min|mins|minute|minutes)$ ]]; then
+        printf '%s\n' "$((BASH_REMATCH[1] * 60))"
+        return
+    fi
+    if [[ "$raw" =~ ^([0-9]+)(h|hr|hrs|hour|hours)$ ]]; then
+        printf '%s\n' "$((BASH_REMATCH[1] * 3600))"
+        return
+    fi
+    echo "invalid duration: $raw" >&2
+    return 1
 }
 
 remote_env_value() {
@@ -157,6 +180,23 @@ for ((i = 1; i <= ATTEMPTS; i++)); do
     sleep 1
 done
 echo "local /health on port ${PORT} did not return 200" >&2
+exit 1
+EOF
+}
+
+wait_for_remote_local_ready() {
+    local port="$1"
+    local attempts="${2:-30}"
+    ssh "$REMOTE" env PORT="$port" ATTEMPTS="$attempts" bash -s <<'EOF'
+set -euo pipefail
+for ((i = 1; i <= ATTEMPTS; i++)); do
+    code="$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 "http://127.0.0.1:${PORT}/ready" 2>/dev/null || echo "000")"
+    if [[ "$code" == "200" ]]; then
+        exit 0
+    fi
+    sleep 1
+done
+echo "local /ready on port ${PORT} did not return 200" >&2
 exit 1
 EOF
 }
@@ -236,6 +276,77 @@ wait_for_site_health() {
     done
     echo "    FAIL: /health did not return 200 (last=$code)"
     return 1
+}
+
+wait_for_site_ready() {
+    local attempts="${1:-30}"
+    local code="000"
+    for ((i = 1; i <= attempts; i++)); do
+        code="$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 "$SITE/ready" 2>/dev/null || echo "000")"
+        if [[ "$code" == "200" ]]; then
+            return 0
+        fi
+        sleep 1
+    done
+    echo "    FAIL: /ready did not return 200 (last=$code)"
+    return 1
+}
+
+start_remote_slot_drain() {
+    local port="$1"
+    local api_token
+    api_token="$(remote_env_value API_TOKEN)"
+    if [[ -z "$api_token" ]]; then
+        echo "API_TOKEN not found on remote; cannot start drain" >&2
+        return 1
+    fi
+    ssh "$REMOTE" env PORT="$port" API_TOKEN="$api_token" bash -s <<'EOF'
+set -euo pipefail
+curl -fsS -X POST \
+    -H "Authorization: Bearer ${API_TOKEN}" \
+    --max-time 10 \
+    "http://127.0.0.1:${PORT}/admin/drain" >/dev/null
+EOF
+}
+
+wait_for_remote_slot_drain() {
+    local port="$1"
+    local timeout_raw="${2:-$BLUEGREEN_DRAIN_TIMEOUT}"
+    local timeout_seconds
+    timeout_seconds="$(duration_to_seconds "$timeout_raw")"
+    local api_token
+    api_token="$(remote_env_value API_TOKEN)"
+    if [[ -z "$api_token" ]]; then
+        echo "API_TOKEN not found on remote; cannot poll drain status" >&2
+        return 1
+    fi
+    ssh "$REMOTE" env PORT="$port" API_TOKEN="$api_token" TIMEOUT_SECONDS="$timeout_seconds" bash -s <<'EOF'
+set -euo pipefail
+deadline=$((SECONDS + TIMEOUT_SECONDS))
+last_active=""
+while true; do
+    body="$(curl -fsS \
+        -H "Authorization: Bearer ${API_TOKEN}" \
+        --max-time 10 \
+        "http://127.0.0.1:${PORT}/admin/drain-status")"
+    active="$(python3 -c 'import json,sys; print(int(json.load(sys.stdin).get("active_requests", 0)))' <<<"$body")"
+    oldest="$(python3 -c 'import json,sys; print(json.load(sys.stdin).get("oldest_request_age_seconds", 0))' <<<"$body")"
+    if [[ "$active" == "0" ]]; then
+        echo "    old slot drained: active_requests=0"
+        exit 0
+    fi
+    if [[ "$active" != "$last_active" ]]; then
+        echo "    waiting for old slot drain: active_requests=$active oldest_request_age_seconds=$oldest"
+        last_active="$active"
+    fi
+    if (( SECONDS >= deadline )); then
+        echo "old slot drain timed out after ${TIMEOUT_SECONDS}s; leaving old slot running" >&2
+        echo "$body" >&2
+        exit 1
+    fi
+    sleep 2
+done
+EOF
 }
 
 query_db_invariants() {
@@ -386,7 +497,7 @@ smoke_endpoint() {
     return 1
 }
 
-run_nonfatal_smoke_suite() {
+run_smoke_suite() {
     local snapshot_id="${1:-}"
 
     echo ""
@@ -397,6 +508,7 @@ run_nonfatal_smoke_suite() {
 
     local smoke_fail=0
     smoke_endpoint "GET /health" "$SITE/health" || smoke_fail=1
+    smoke_endpoint "GET /ready" "$SITE/ready" || smoke_fail=1
     smoke_endpoint "GET /v1/models" "$SITE/v1/models" "" 401 || smoke_fail=1
 
     if [[ -n "$api_token" ]]; then
@@ -440,6 +552,16 @@ run_nonfatal_smoke_suite() {
         echo ""
         echo "    skipping browser smoke (run: cd web && npm i && npx playwright install chromium)"
     fi
+
+    return "$smoke_fail"
+}
+
+run_nonfatal_smoke_suite() {
+    run_smoke_suite "$@" || true
+}
+
+run_required_smoke_suite() {
+    run_smoke_suite "$@"
 }
 
 provision_bluegreen_layout() {
@@ -457,6 +579,7 @@ provision_bluegreen_layout() {
         BLUEGREEN_ACTIVE_SLOT_FILE="$BLUEGREEN_ACTIVE_SLOT_FILE" \
         BLUEGREEN_UPSTREAM_FILE="$BLUEGREEN_UPSTREAM_FILE" \
         CADDYFILE_PATH="$CADDYFILE_PATH" \
+        TMP_REMOTE="$TMP_REMOTE" \
         LEGACY_PORT="$legacy_port" \
         BLUE_PORT="$blue_port" \
         GREEN_PORT="$green_port" \
@@ -472,10 +595,15 @@ green_bin="/usr/local/bin/${SERVICE}-${green_slot}"
 blue_service_unit="/etc/systemd/system/${blue_service}.service"
 green_service_unit="/etc/systemd/system/${green_service}.service"
 leader_lock="/run/${SERVICE}/background.lock"
+source_bin="$REMOTE_BIN"
+if [[ -f "$TMP_REMOTE" ]]; then
+    source_bin="$TMP_REMOTE"
+fi
 
 mkdir -p "$BLUEGREEN_STATE_DIR" "$(dirname "$BLUEGREEN_UPSTREAM_FILE")"
-install -m 755 "$REMOTE_BIN" "$blue_bin"
-install -m 755 "$REMOTE_BIN" "$green_bin"
+install -m 755 "$source_bin" "$blue_bin"
+install -m 755 "$source_bin" "$green_bin"
+rm -f "$TMP_REMOTE"
 
 cat >"$BLUEGREEN_LAYOUT_FILE" <<LAYOUT
 BLUE_SLOT=$blue_slot
@@ -511,6 +639,7 @@ EnvironmentFile=$REMOTE_ENV
 ExecStart=/usr/bin/env PORT=${port} BACKGROUND_JOBS_MODE=leader BACKGROUND_LEADER_LOCK_PATH=${leader_lock} ${bin_path}
 Restart=always
 RestartSec=5
+TimeoutStopSec=40min
 RuntimeDirectory=${SERVICE}
 RuntimeDirectoryMode=0755
 StandardOutput=journal
@@ -588,14 +717,14 @@ systemctl enable "$blue_service" "$green_service" >/dev/null 2>&1 || true
 systemctl restart "$blue_service"
 
 for ((i = 1; i <= 30; i++)); do
-    code="$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 "http://127.0.0.1:${BLUE_PORT}/health" 2>/dev/null || echo "000")"
+    code="$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 "http://127.0.0.1:${BLUE_PORT}/ready" 2>/dev/null || echo "000")"
     if [[ "$code" == "200" ]]; then
         exit 0
     fi
     sleep 1
 done
 
-echo "blue slot did not become healthy on port ${BLUE_PORT}" >&2
+echo "blue slot did not become ready on port ${BLUE_PORT}" >&2
 exit 1
 EOF
 }
@@ -899,6 +1028,7 @@ EnvironmentFile=$REMOTE_ENV
 ExecStart=$REMOTE_BIN
 Restart=always
 RestartSec=5
+TimeoutStopSec=40min
 StandardOutput=journal
 StandardError=journal
 

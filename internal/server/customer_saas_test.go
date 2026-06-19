@@ -268,6 +268,26 @@ func TestUnifiedLoginRedirectsAdminEmailToConsole(t *testing.T) {
 	if payload.RedirectTo != "/console/dashboard" || payload.User.Role != "admin" {
 		t.Fatalf("redirect/role = %q/%q, want /console/dashboard/admin", payload.RedirectTo, payload.User.Role)
 	}
+
+	meReq := httptest.NewRequest(http.MethodGet, "/api/me", nil)
+	meReq.AddCookie(customerCookie(t, resp))
+	meResp := httptest.NewRecorder()
+	srv.handleCustomerMe(meResp, meReq)
+	if meResp.Code != http.StatusOK {
+		t.Fatalf("me status %d body %s", meResp.Code, meResp.Body.String())
+	}
+	payload = struct {
+		RedirectTo string `json:"redirect_to"`
+		User       struct {
+			Role string `json:"role"`
+		} `json:"user"`
+	}{}
+	if err := json.Unmarshal(meResp.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("decode me response: %v body=%s", err, meResp.Body.String())
+	}
+	if payload.RedirectTo != "/console/dashboard" || payload.User.Role != "admin" {
+		t.Fatalf("me redirect/role = %q/%q, want /console/dashboard/admin", payload.RedirectTo, payload.User.Role)
+	}
 }
 
 func TestAdminRoutesUseCustomerSessionRole(t *testing.T) {
