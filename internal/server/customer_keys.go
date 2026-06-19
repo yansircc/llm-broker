@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -23,7 +24,12 @@ func (s *Server) handleCustomerListKeys(w http.ResponseWriter, r *http.Request) 
 	}
 	out := make([]map[string]any, 0, len(keys))
 	for _, key := range keys {
-		out = append(out, apiKeyView(key, ""))
+		view, err := s.apiKeyViewWithUsage(r.Context(), key, "")
+		if err != nil {
+			writeAdminError(w, http.StatusInternalServerError, "internal_error", "failed to load api key usage")
+			return
+		}
+		out = append(out, view)
 	}
 	writeJSON(w, http.StatusOK, out)
 }
@@ -34,9 +40,18 @@ func (s *Server) handleCustomerCreateKey(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	var req struct {
-		Name string `json:"name"`
+		Name             string  `json:"name"`
+		DailyBudgetUSD   float64 `json:"daily_budget_usd"`
+		MonthlyBudgetUSD float64 `json:"monthly_budget_usd"`
 	}
-	_ = json.NewDecoder(r.Body).Decode(&req)
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeAdminError(w, http.StatusBadRequest, "invalid_request", "invalid JSON body")
+		return
+	}
+	if req.DailyBudgetUSD < 0 || req.MonthlyBudgetUSD < 0 {
+		writeAdminError(w, http.StatusBadRequest, "invalid_request", "budget must be >= 0")
+		return
+	}
 	name := normalizeAPIKeyName(req.Name)
 	if name == "" {
 		name = "default"
@@ -57,29 +72,43 @@ func (s *Server) handleCustomerCreateKey(w http.ResponseWriter, r *http.Request)
 		prefix = prefix[:16] + "..."
 	}
 	key := &domain.APIKey{
-		ID:             uuid.NewString(),
-		UserID:         cc.User.ID,
-		Name:           name,
-		TokenHash:      sha256Hex(token),
-		TokenPrefix:    prefix,
-		Status:         "active",
-		AllowedSurface: domain.SurfaceAll,
-		CreatedAt:      time.Now().UTC(),
+		ID:                  uuid.NewString(),
+		UserID:              cc.User.ID,
+		Name:                name,
+		TokenHash:           sha256Hex(token),
+		TokenPrefix:         prefix,
+		Status:              "active",
+		AllowedSurface:      domain.SurfaceAll,
+		DailyBudgetMicros:   usdToMicros(req.DailyBudgetUSD),
+		MonthlyBudgetMicros: usdToMicros(req.MonthlyBudgetUSD),
+		CreatedAt:           time.Now().UTC(),
 	}
 	if err := s.store.CreateAPIKey(r.Context(), key); err != nil {
 		writeAdminError(w, http.StatusInternalServerError, "internal_error", "failed to create api key")
 		return
 	}
-	writeJSON(w, http.StatusOK, apiKeyView(key, token))
+	view, err := s.apiKeyViewWithUsage(r.Context(), key, token)
+	if err != nil {
+		writeAdminError(w, http.StatusInternalServerError, "internal_error", "failed to load api key usage")
+		return
+	}
+	writeJSON(w, http.StatusOK, view)
 }
 
 func normalizeAPIKeyName(name string) string {
 	return strings.TrimSpace(name)
 }
 
-func uniqueAPIKeyName(base string, keys []*domain.APIKey) string {
+func uniqueAPIKeyName(base string, keys []*domain.APIKey, excludeIDs ...string) string {
+	exclude := make(map[string]struct{}, len(excludeIDs))
+	for _, id := range excludeIDs {
+		exclude[id] = struct{}{}
+	}
 	used := make(map[string]struct{}, len(keys))
 	for _, key := range keys {
+		if _, ok := exclude[key.ID]; ok {
+			continue
+		}
 		used[strings.ToLower(normalizeAPIKeyName(key.Name))] = struct{}{}
 	}
 	if _, ok := used[strings.ToLower(base)]; !ok {
@@ -91,6 +120,78 @@ func uniqueAPIKeyName(base string, keys []*domain.APIKey) string {
 			return candidate
 		}
 	}
+}
+
+func (s *Server) handleCustomerUpdateKey(w http.ResponseWriter, r *http.Request) {
+	cc, ok := s.requireCustomer(w, r)
+	if !ok {
+		return
+	}
+	keyID := r.PathValue("id")
+	keys, err := s.store.ListAPIKeysByUser(r.Context(), cc.User.ID)
+	if err != nil {
+		writeAdminError(w, http.StatusInternalServerError, "internal_error", "failed to lookup api key")
+		return
+	}
+	var key *domain.APIKey
+	for _, item := range keys {
+		if item.ID == keyID {
+			copy := *item
+			key = &copy
+			break
+		}
+	}
+	if key == nil {
+		writeAdminError(w, http.StatusNotFound, "not_found", "api key not found")
+		return
+	}
+	var req struct {
+		Name             string   `json:"name"`
+		Status           string   `json:"status"`
+		DailyBudgetUSD   *float64 `json:"daily_budget_usd"`
+		MonthlyBudgetUSD *float64 `json:"monthly_budget_usd"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeAdminError(w, http.StatusBadRequest, "invalid_request", "invalid JSON body")
+		return
+	}
+	name := normalizeAPIKeyName(req.Name)
+	if name == "" {
+		name = key.Name
+	}
+	status := strings.TrimSpace(strings.ToLower(req.Status))
+	if status == "" {
+		status = key.Status
+	}
+	if status != "active" && status != "disabled" {
+		writeAdminError(w, http.StatusBadRequest, "invalid_request", "status must be active or disabled")
+		return
+	}
+	if (req.DailyBudgetUSD != nil && *req.DailyBudgetUSD < 0) || (req.MonthlyBudgetUSD != nil && *req.MonthlyBudgetUSD < 0) {
+		writeAdminError(w, http.StatusBadRequest, "invalid_request", "budget must be >= 0")
+		return
+	}
+	key.Name = uniqueAPIKeyName(name, keys, key.ID)
+	key.Status = status
+	if req.DailyBudgetUSD != nil {
+		key.DailyBudgetMicros = usdToMicros(*req.DailyBudgetUSD)
+	}
+	if req.MonthlyBudgetUSD != nil {
+		key.MonthlyBudgetMicros = usdToMicros(*req.MonthlyBudgetUSD)
+	}
+	if key.AllowedSurface == "" {
+		key.AllowedSurface = domain.SurfaceAll
+	}
+	if err := s.store.UpdateAPIKey(r.Context(), key); err != nil {
+		writeAdminError(w, http.StatusInternalServerError, "internal_error", "failed to update api key")
+		return
+	}
+	view, err := s.apiKeyViewWithUsage(r.Context(), key, "")
+	if err != nil {
+		writeAdminError(w, http.StatusInternalServerError, "internal_error", "failed to load api key usage")
+		return
+	}
+	writeJSON(w, http.StatusOK, view)
 }
 
 func (s *Server) handleCustomerDeleteKey(w http.ResponseWriter, r *http.Request) {
@@ -124,16 +225,46 @@ func (s *Server) handleCustomerDeleteKey(w http.ResponseWriter, r *http.Request)
 
 func apiKeyView(key *domain.APIKey, token string) map[string]any {
 	out := map[string]any{
-		"id":           key.ID,
-		"name":         key.Name,
-		"prefix":       key.TokenPrefix,
-		"token_prefix": key.TokenPrefix,
-		"status":       key.Status,
-		"created_at":   key.CreatedAt,
-		"last_used_at": key.LastUsedAt,
+		"id":                 key.ID,
+		"name":               key.Name,
+		"prefix":             key.TokenPrefix,
+		"token_prefix":       key.TokenPrefix,
+		"status":             key.Status,
+		"daily_budget_usd":   microsToUSD(key.DailyBudgetMicros),
+		"monthly_budget_usd": microsToUSD(key.MonthlyBudgetMicros),
+		"created_at":         key.CreatedAt,
+		"last_used_at":       key.LastUsedAt,
 	}
 	if token != "" {
 		out["token"] = token
 	}
 	return out
+}
+
+func (s *Server) apiKeyViewWithUsage(ctx context.Context, key *domain.APIKey, token string) (map[string]any, error) {
+	view := apiKeyView(key, token)
+	now := time.Now().UTC()
+	dayStart := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC)
+	monthStart := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, time.UTC)
+	dailyUsage, err := s.store.SumAPIKeyUsageMicros(ctx, key.ID, dayStart, now)
+	if err != nil {
+		return nil, err
+	}
+	monthlyUsage, err := s.store.SumAPIKeyUsageMicros(ctx, key.ID, monthStart, now)
+	if err != nil {
+		return nil, err
+	}
+	view["daily_usage_usd"] = microsToUSD(dailyUsage)
+	view["monthly_usage_usd"] = microsToUSD(monthlyUsage)
+	view["daily_remaining_usd"] = budgetRemainingUSD(key.DailyBudgetMicros, dailyUsage)
+	view["monthly_remaining_usd"] = budgetRemainingUSD(key.MonthlyBudgetMicros, monthlyUsage)
+	return view, nil
+}
+
+func budgetRemainingUSD(budgetMicros, usedMicros int64) *float64 {
+	if budgetMicros <= 0 {
+		return nil
+	}
+	remaining := microsToUSD(budgetMicros - usedMicros)
+	return &remaining
 }

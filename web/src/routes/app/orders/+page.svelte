@@ -6,6 +6,7 @@
 	let orders = $state<PaymentOrder[]>([]);
 	let error = $state('');
 	let loading = $state(false);
+	let refreshing = $state('');
 
 	$effect(() => {
 		loadOrders();
@@ -20,6 +21,19 @@
 			error = e.message || 'failed to load orders';
 		} finally {
 			loading = false;
+		}
+	}
+
+	async function refreshOrder(order: PaymentOrder) {
+		refreshing = order.id;
+		error = '';
+		try {
+			const updated = await customerApi<PaymentOrder>(`/payments/orders/${order.id}/refresh`, { method: 'POST' });
+			orders = orders.map((item) => (item.id === updated.id ? updated : item));
+		} catch (e: any) {
+			error = e.message || 'failed to refresh order';
+		} finally {
+			refreshing = '';
 		}
 	}
 </script>
@@ -50,6 +64,7 @@
 					<th class="px-5 py-3 font-medium">状态</th>
 					<th class="px-5 py-3 font-medium">创建时间</th>
 					<th class="px-5 py-3 font-medium">支付时间</th>
+					<th class="px-5 py-3 font-medium">操作</th>
 				</tr>
 			</thead>
 			<tbody class="divide-y divide-line">
@@ -63,6 +78,11 @@
 						</td>
 						<td class="px-5 py-3">{fmtDate(order.created_at)}</td>
 						<td class="px-5 py-3">{order.paid_at ? fmtDate(order.paid_at) : '-'}</td>
+						<td class="px-5 py-3">
+							<button class="rounded-md border border-line bg-card px-3 py-1.5 text-xs hover:border-brand/50 disabled:opacity-50" onclick={() => refreshOrder(order)} disabled={refreshing === order.id || order.status === 'paid'}>
+								{refreshing === order.id ? '查询中' : '查询'}
+							</button>
+						</td>
 					</tr>
 				{/each}
 			</tbody>

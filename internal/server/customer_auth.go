@@ -25,19 +25,47 @@ type customerContext struct {
 
 func (s *Server) handleCustomerRegister(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		Email        string `json:"email"`
-		Password     string `json:"password"`
-		Name         string `json:"name"`
-		ReferralCode string `json:"referral_code"`
+		Email          string `json:"email"`
+		Password       string `json:"password"`
+		Name           string `json:"name"`
+		ReferralCode   string `json:"referral_code"`
+		TurnstileToken string `json:"turnstile_token"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		audit := s.newCustomerSecurityAudit(r, "signup", "")
+		if !s.recordCustomerSecurityFailure(w, audit, "invalid_json") {
+			return
+		}
 		writeAdminError(w, http.StatusBadRequest, "invalid_request", "invalid JSON body")
 		return
 	}
 	req.Email = strings.TrimSpace(strings.ToLower(req.Email))
 	req.Name = strings.TrimSpace(req.Name)
+	audit := s.newCustomerSecurityAudit(r, "signup", req.Email)
+	defer func() {
+		if !audit.done {
+			audit.Fail("abandoned")
+		}
+	}()
 	if req.Email == "" || !strings.Contains(req.Email, "@") || len(req.Password) < 8 {
+		if !s.recordCustomerSecurityFailure(w, audit, "invalid_request") {
+			return
+		}
 		writeAdminError(w, http.StatusBadRequest, "invalid_request", "valid email and password length >= 8 required")
+		return
+	}
+	if reason, err := s.enforceSignupRisk(r.Context(), audit); err != nil {
+		if !s.recordCustomerSecurityFailure(w, audit, reason) {
+			return
+		}
+		writeAdminError(w, http.StatusTooManyRequests, "rate_limit", "too many attempts, please retry later")
+		return
+	}
+	if err := s.verifyTurnstile(r.Context(), req.TurnstileToken, s.clientIP(r)); err != nil {
+		if !s.recordCustomerSecurityFailure(w, audit, "turnstile_failed") {
+			return
+		}
+		writeAdminError(w, http.StatusForbidden, "verification_failed", "human verification failed")
 		return
 	}
 	if req.Name == "" {
@@ -45,6 +73,9 @@ func (s *Server) handleCustomerRegister(w http.ResponseWriter, r *http.Request) 
 	}
 	hash, err := bcrypt.GenerateFromPassword([]byte(req.Password), bcrypt.DefaultCost)
 	if err != nil {
+		if !s.recordCustomerSecurityFailure(w, audit, "hash_failed") {
+			return
+		}
 		writeAdminError(w, http.StatusInternalServerError, "internal_error", "failed to hash password")
 		return
 	}
@@ -52,6 +83,9 @@ func (s *Server) handleCustomerRegister(w http.ResponseWriter, r *http.Request) 
 	if req.ReferralCode != "" {
 		inviter, err := s.store.GetUserByReferralCode(r.Context(), req.ReferralCode)
 		if err != nil {
+			if !s.recordCustomerSecurityFailure(w, audit, "referral_lookup_failed") {
+				return
+			}
 			writeAdminError(w, http.StatusInternalServerError, "internal_error", "failed to check referral")
 			return
 		}
@@ -72,18 +106,33 @@ func (s *Server) handleCustomerRegister(w http.ResponseWriter, r *http.Request) 
 	}
 	if err := s.createUserWithReferralCode(r.Context(), user); err != nil {
 		if isReferralCodeAllocationError(err) {
+			if !s.recordCustomerSecurityFailure(w, audit, "referral_code_allocation_failed") {
+				return
+			}
 			writeAdminError(w, http.StatusInternalServerError, "internal_error", "failed to allocate referral code")
+			return
+		}
+		if !s.recordCustomerSecurityFailure(w, audit, "email_conflict") {
 			return
 		}
 		writeAdminError(w, http.StatusConflict, "conflict", "email already registered")
 		return
 	}
 	if _, err := s.createCustomerSession(w, r, user); err != nil {
+		if !s.recordCustomerSecurityFailure(w, audit, "session_create_failed") {
+			return
+		}
 		writeAdminError(w, http.StatusInternalServerError, "internal_error", "failed to create session")
 		return
 	}
 	if err := s.billingService().FulfillReferralSignup(r.Context(), user); err != nil {
+		if !s.recordCustomerSecurityFailure(w, audit, "referral_fulfill_failed") {
+			return
+		}
 		writeAdminError(w, http.StatusInternalServerError, "internal_error", "failed to fulfill referral")
+		return
+	}
+	if !s.recordCustomerSecuritySuccess(w, audit, "ok") {
 		return
 	}
 	writeJSON(w, http.StatusOK, s.authResponse(user))
@@ -91,27 +140,65 @@ func (s *Server) handleCustomerRegister(w http.ResponseWriter, r *http.Request) 
 
 func (s *Server) handleCustomerLogin(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		Email    string `json:"email"`
-		Password string `json:"password"`
+		Email          string `json:"email"`
+		Password       string `json:"password"`
+		TurnstileToken string `json:"turnstile_token"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		audit := s.newCustomerSecurityAudit(r, "login", "")
+		if !s.recordCustomerSecurityFailure(w, audit, "invalid_json") {
+			return
+		}
 		writeAdminError(w, http.StatusBadRequest, "invalid_request", "invalid JSON body")
 		return
 	}
-	user, err := s.store.GetUserByEmail(r.Context(), strings.TrimSpace(strings.ToLower(req.Email)))
+	req.Email = strings.TrimSpace(strings.ToLower(req.Email))
+	audit := s.newCustomerSecurityAudit(r, "login", req.Email)
+	defer func() {
+		if !audit.done {
+			audit.Fail("abandoned")
+		}
+	}()
+	if reason, err := s.enforceLoginRisk(r.Context(), audit); err != nil {
+		if !s.recordCustomerSecurityFailure(w, audit, reason) {
+			return
+		}
+		writeAdminError(w, http.StatusTooManyRequests, "rate_limit", "too many attempts, please retry later")
+		return
+	}
+	if err := s.verifyTurnstile(r.Context(), req.TurnstileToken, s.clientIP(r)); err != nil {
+		if !s.recordCustomerSecurityFailure(w, audit, "turnstile_failed") {
+			return
+		}
+		writeAdminError(w, http.StatusForbidden, "verification_failed", "human verification failed")
+		return
+	}
+	user, err := s.store.GetUserByEmail(r.Context(), req.Email)
 	if err != nil || user == nil || bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(req.Password)) != nil {
+		if !s.recordCustomerSecurityFailure(w, audit, "invalid_credentials") {
+			return
+		}
 		writeAdminError(w, http.StatusUnauthorized, "authentication_error", "invalid email or password")
 		return
 	}
 	if user.Status != "active" {
+		if !s.recordCustomerSecurityFailure(w, audit, "user_disabled") {
+			return
+		}
 		writeAdminError(w, http.StatusForbidden, "forbidden", "user disabled")
 		return
 	}
 	if _, err := s.createCustomerSession(w, r, user); err != nil {
+		if !s.recordCustomerSecurityFailure(w, audit, "session_create_failed") {
+			return
+		}
 		writeAdminError(w, http.StatusInternalServerError, "internal_error", "failed to create session")
 		return
 	}
 	_ = s.store.UpdateUserLastLogin(r.Context(), user.ID)
+	if !s.recordCustomerSecuritySuccess(w, audit, "ok") {
+		return
+	}
 	writeJSON(w, http.StatusOK, s.authResponse(user))
 }
 

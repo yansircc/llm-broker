@@ -24,6 +24,7 @@ type MockStore struct {
 	apiKeys         map[string]*domain.APIKey
 	webSessions     map[string]*domain.WebSession
 	emailTokens     map[string]*domain.EmailVerification
+	securityEvents  []*domain.SecurityEvent
 	ledger          []*domain.BillingLedgerEntry
 	checkpoints     map[string]*domain.BillingBalanceCheckpoint
 	modelPrices     map[string]*domain.ModelPrice
@@ -58,6 +59,7 @@ func NewMockStore() *MockStore {
 		apiKeys:         make(map[string]*domain.APIKey),
 		webSessions:     make(map[string]*domain.WebSession),
 		emailTokens:     make(map[string]*domain.EmailVerification),
+		securityEvents:  make([]*domain.SecurityEvent, 0),
 		checkpoints:     make(map[string]*domain.BillingBalanceCheckpoint),
 		modelPrices:     make(map[string]*domain.ModelPrice),
 		billingSettings: make(map[string]string),
@@ -535,6 +537,17 @@ func (m *MockStore) CreateAPIKey(_ context.Context, key *domain.APIKey) error {
 	return nil
 }
 
+func (m *MockStore) GetAPIKey(_ context.Context, id string) (*domain.APIKey, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	key := m.apiKeys[id]
+	if key == nil {
+		return nil, nil
+	}
+	copy := *key
+	return &copy, nil
+}
+
 func (m *MockStore) GetAPIKeyByTokenHash(_ context.Context, tokenHash string) (*domain.APIKey, *domain.User, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -574,6 +587,21 @@ func (m *MockStore) DeleteAPIKey(_ context.Context, id string) error {
 		return ErrNotFound
 	}
 	delete(m.apiKeys, id)
+	return nil
+}
+
+func (m *MockStore) UpdateAPIKey(_ context.Context, key *domain.APIKey) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	existing := m.apiKeys[key.ID]
+	if existing == nil || existing.UserID != key.UserID {
+		return ErrNotFound
+	}
+	existing.Name = key.Name
+	existing.Status = key.Status
+	existing.AllowedSurface = key.AllowedSurface
+	existing.DailyBudgetMicros = key.DailyBudgetMicros
+	existing.MonthlyBudgetMicros = key.MonthlyBudgetMicros
 	return nil
 }
 
@@ -712,6 +740,42 @@ func (m *MockStore) LastEmailVerification(_ context.Context, userID, purpose str
 		}
 	}
 	return latest, nil
+}
+
+func (m *MockStore) SaveSecurityEvent(_ context.Context, event *domain.SecurityEvent) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if event == nil {
+		return nil
+	}
+	copy := *event
+	m.securityEvents = append(m.securityEvents, &copy)
+	return nil
+}
+
+func (m *MockStore) CountSecurityEvents(_ context.Context, q domain.SecurityEventQuery) (int, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	count := 0
+	for _, event := range m.securityEvents {
+		if q.Kind != "" && event.Kind != q.Kind {
+			continue
+		}
+		if q.IPHash != "" && event.IPHash != q.IPHash {
+			continue
+		}
+		if q.EmailHash != "" && event.EmailHash != q.EmailHash {
+			continue
+		}
+		if q.Success != nil && event.Success != *q.Success {
+			continue
+		}
+		if !q.Since.IsZero() && event.CreatedAt.Before(q.Since) {
+			continue
+		}
+		count++
+	}
+	return count, nil
 }
 
 func (m *MockStore) UpsertBillingSetting(_ context.Context, key, value string, _ time.Time) error {
@@ -948,6 +1012,32 @@ func (m *MockStore) ListUnsettledUsageObservedRequests(_ context.Context, limit 
 	return out, nil
 }
 
+func (m *MockStore) SumAPIKeyUsageMicros(_ context.Context, apiKeyID string, since, until time.Time) (int64, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	requests := make(map[string]time.Time)
+	for _, br := range m.billable {
+		if br.APIKeyID == apiKeyID {
+			requests[br.RequestID] = br.CreatedAt
+		}
+	}
+	var sum int64
+	for _, entry := range m.ledger {
+		if entry.Kind != "usage_debit" || entry.AmountMicros >= 0 {
+			continue
+		}
+		requestAt, ok := requests[entry.SourceID]
+		if !ok {
+			continue
+		}
+		if requestAt.Before(since) || !requestAt.Before(until) {
+			continue
+		}
+		sum -= entry.AmountMicros
+	}
+	return sum, nil
+}
+
 func (m *MockStore) SavePaymentOrder(_ context.Context, order *domain.PaymentOrder) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -982,6 +1072,43 @@ func (m *MockStore) ListPaymentOrdersByUser(_ context.Context, userID string, li
 		}
 	}
 	return orders, nil
+}
+
+func (m *MockStore) ListPaymentOrders(_ context.Context, limit int) ([]*domain.PaymentOrder, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var orders []*domain.PaymentOrder
+	for _, order := range m.paymentOrders {
+		copy := *order
+		orders = append(orders, &copy)
+	}
+	sort.Slice(orders, func(i, j int) bool { return orders[i].CreatedAt.After(orders[j].CreatedAt) })
+	if limit <= 0 || limit > 500 {
+		limit = 200
+	}
+	if len(orders) > limit {
+		orders = orders[:limit]
+	}
+	return orders, nil
+}
+
+func (m *MockStore) SummarizePaymentOrders(_ context.Context) (*domain.PaymentOrderSummary, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var summary domain.PaymentOrderSummary
+	for _, order := range m.paymentOrders {
+		summary.TotalOrders++
+		switch order.Status {
+		case "pending":
+			summary.PendingOrders++
+			summary.PendingCreditMicros += order.CreditMicros
+		case "paid":
+			summary.PaidOrders++
+			summary.PaidAmountCNYFen += order.AmountCNYFen
+			summary.PaidCreditMicros += order.CreditMicros
+		}
+	}
+	return &summary, nil
 }
 
 func (m *MockStore) MarkPaymentOrderPaid(_ context.Context, outTradeNo, zpayTradeNo, paymentType string, paidAt time.Time) error {

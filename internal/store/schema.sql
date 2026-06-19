@@ -55,6 +55,8 @@ CREATE TABLE IF NOT EXISTS api_keys (
     token_prefix TEXT NOT NULL,
     status TEXT NOT NULL DEFAULT 'active',
     allowed_surface TEXT NOT NULL DEFAULT 'native',
+    daily_budget_micros INTEGER NOT NULL DEFAULT 0,
+    monthly_budget_micros INTEGER NOT NULL DEFAULT 0,
     created_at INTEGER NOT NULL,
     last_used_at INTEGER
 );
@@ -85,6 +87,19 @@ CREATE TABLE IF NOT EXISTS email_verifications (
 );
 
 CREATE INDEX IF NOT EXISTS idx_email_verifications_user ON email_verifications(user_id, purpose, created_at);
+
+CREATE TABLE IF NOT EXISTS security_events (
+    id TEXT PRIMARY KEY,
+    kind TEXT NOT NULL,
+    ip_hash TEXT NOT NULL,
+    email_hash TEXT NOT NULL DEFAULT '',
+    success INTEGER NOT NULL,
+    reason TEXT NOT NULL DEFAULT '',
+    created_at INTEGER NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_security_events_kind_ip_created ON security_events(kind, ip_hash, created_at);
+CREATE INDEX IF NOT EXISTS idx_security_events_kind_email_created ON security_events(kind, email_hash, created_at);
 
 CREATE TABLE IF NOT EXISTS billing_settings (
     key TEXT PRIMARY KEY,

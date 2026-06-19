@@ -16,19 +16,32 @@ func (s *SQLiteStore) CreateAPIKey(ctx context.Context, key *domain.APIKey) erro
 	_, err := s.db.ExecContext(ctx, `
 		INSERT INTO api_keys (
 			id, user_id, name, token_hash, token_prefix, status,
-			allowed_surface, created_at, last_used_at
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+			allowed_surface, daily_budget_micros, monthly_budget_micros,
+			created_at, last_used_at
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`,
 		key.ID, key.UserID, key.Name, key.TokenHash, key.TokenPrefix, key.Status,
-		string(allowedSurface), key.CreatedAt.Unix(), nullableUnix(key.LastUsedAt))
+		string(allowedSurface), key.DailyBudgetMicros, key.MonthlyBudgetMicros,
+		key.CreatedAt.Unix(), nullableUnix(key.LastUsedAt))
 	return err
+}
+
+func (s *SQLiteStore) GetAPIKey(ctx context.Context, id string) (*domain.APIKey, error) {
+	row := s.db.QueryRowContext(ctx, `
+		SELECT id, user_id, name, token_hash, token_prefix, status,
+			allowed_surface, daily_budget_micros, monthly_budget_micros,
+			created_at, last_used_at
+		FROM api_keys WHERE id = ?
+	`, id)
+	return scanAPIKey(row)
 }
 
 func (s *SQLiteStore) GetAPIKeyByTokenHash(ctx context.Context, tokenHash string) (*domain.APIKey, *domain.User, error) {
 	row := s.db.QueryRowContext(ctx, `
 		SELECT
 			k.id, k.user_id, k.name, k.token_hash, k.token_prefix, k.status,
-			k.allowed_surface, k.created_at, k.last_used_at,
+			k.allowed_surface, k.daily_budget_micros, k.monthly_budget_micros,
+			k.created_at, k.last_used_at,
 			u.id, u.email, u.name, u.password_hash, u.email_verified_at, u.status,
 			u.allowed_surface, u.bound_account_id, u.referral_code, u.referred_by_user_id,
 			u.created_at, u.last_login_at
@@ -42,7 +55,8 @@ func (s *SQLiteStore) GetAPIKeyByTokenHash(ctx context.Context, tokenHash string
 func (s *SQLiteStore) ListAPIKeysByUser(ctx context.Context, userID string) ([]*domain.APIKey, error) {
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT id, user_id, name, token_hash, token_prefix, status,
-			allowed_surface, created_at, last_used_at
+			allowed_surface, daily_budget_micros, monthly_budget_micros,
+			created_at, last_used_at
 		FROM api_keys WHERE user_id = ? ORDER BY created_at
 	`, userID)
 	if err != nil {
@@ -68,6 +82,24 @@ func (s *SQLiteStore) DeleteAPIKey(ctx context.Context, id string) error {
 	return ensureRowsAffected(result)
 }
 
+func (s *SQLiteStore) UpdateAPIKey(ctx context.Context, key *domain.APIKey) error {
+	if key == nil {
+		return nil
+	}
+	result, err := s.db.ExecContext(ctx, `
+		UPDATE api_keys
+		SET name = ?, status = ?, allowed_surface = ?,
+			daily_budget_micros = ?, monthly_budget_micros = ?
+		WHERE id = ? AND user_id = ?
+	`,
+		key.Name, key.Status, string(key.AllowedSurface), key.DailyBudgetMicros, key.MonthlyBudgetMicros,
+		key.ID, key.UserID)
+	if err != nil {
+		return err
+	}
+	return ensureRowsAffected(result)
+}
+
 func (s *SQLiteStore) UpdateAPIKeyStatus(ctx context.Context, id, status string) error {
 	result, err := s.db.ExecContext(ctx, "UPDATE api_keys SET status = ? WHERE id = ?", status, id)
 	if err != nil {
@@ -84,12 +116,13 @@ func (s *SQLiteStore) UpdateAPIKeyLastUsed(ctx context.Context, id string) error
 func scanAPIKey(scanner interface{ Scan(...any) error }) (*domain.APIKey, error) {
 	var (
 		id, userID, name, tokenHash, tokenPrefix, status, allowedSurface string
+		dailyBudget, monthlyBudget                                       int64
 		createdAt                                                        int64
 		lastUsedAt                                                       sql.NullInt64
 	)
 	err := scanner.Scan(
 		&id, &userID, &name, &tokenHash, &tokenPrefix, &status,
-		&allowedSurface, &createdAt, &lastUsedAt,
+		&allowedSurface, &dailyBudget, &monthlyBudget, &createdAt, &lastUsedAt,
 	)
 	if err == sql.ErrNoRows {
 		return nil, nil
@@ -98,15 +131,17 @@ func scanAPIKey(scanner interface{ Scan(...any) error }) (*domain.APIKey, error)
 		return nil, err
 	}
 	key := &domain.APIKey{
-		ID:             id,
-		UserID:         userID,
-		Name:           name,
-		TokenHash:      tokenHash,
-		TokenPrefix:    tokenPrefix,
-		Status:         status,
-		AllowedSurface: domain.NormalizeSurface(allowedSurface),
-		CreatedAt:      time.Unix(createdAt, 0).UTC(),
-		LastUsedAt:     scanNullableTime(lastUsedAt),
+		ID:                  id,
+		UserID:              userID,
+		Name:                name,
+		TokenHash:           tokenHash,
+		TokenPrefix:         tokenPrefix,
+		Status:              status,
+		AllowedSurface:      domain.NormalizeSurface(allowedSurface),
+		DailyBudgetMicros:   dailyBudget,
+		MonthlyBudgetMicros: monthlyBudget,
+		CreatedAt:           time.Unix(createdAt, 0).UTC(),
+		LastUsedAt:          scanNullableTime(lastUsedAt),
 	}
 	if key.AllowedSurface == "" {
 		key.AllowedSurface = domain.SurfaceNative
@@ -118,6 +153,7 @@ func scanAPIKeyAndUser(scanner interface{ Scan(...any) error }) (*domain.APIKey,
 	var (
 		keyID, keyUserID, keyName, tokenHash, tokenPrefix, keyStatus, keySurface string
 		keyCreatedAt                                                             int64
+		keyDailyBudget, keyMonthlyBudget                                         int64
 		keyLastUsedAt                                                            sql.NullInt64
 
 		userID, email, userName, passwordHash, userStatus, userSurface, boundAccountID string
@@ -127,7 +163,7 @@ func scanAPIKeyAndUser(scanner interface{ Scan(...any) error }) (*domain.APIKey,
 	)
 	err := scanner.Scan(
 		&keyID, &keyUserID, &keyName, &tokenHash, &tokenPrefix, &keyStatus,
-		&keySurface, &keyCreatedAt, &keyLastUsedAt,
+		&keySurface, &keyDailyBudget, &keyMonthlyBudget, &keyCreatedAt, &keyLastUsedAt,
 		&userID, &email, &userName, &passwordHash, &emailVerifiedAt, &userStatus,
 		&userSurface, &boundAccountID, &referralCode, &referredByUserID,
 		&userCreatedAt, &lastLoginAt,
@@ -139,15 +175,17 @@ func scanAPIKeyAndUser(scanner interface{ Scan(...any) error }) (*domain.APIKey,
 		return nil, nil, err
 	}
 	key := &domain.APIKey{
-		ID:             keyID,
-		UserID:         keyUserID,
-		Name:           keyName,
-		TokenHash:      tokenHash,
-		TokenPrefix:    tokenPrefix,
-		Status:         keyStatus,
-		AllowedSurface: domain.NormalizeSurface(keySurface),
-		CreatedAt:      time.Unix(keyCreatedAt, 0).UTC(),
-		LastUsedAt:     scanNullableTime(keyLastUsedAt),
+		ID:                  keyID,
+		UserID:              keyUserID,
+		Name:                keyName,
+		TokenHash:           tokenHash,
+		TokenPrefix:         tokenPrefix,
+		Status:              keyStatus,
+		AllowedSurface:      domain.NormalizeSurface(keySurface),
+		DailyBudgetMicros:   keyDailyBudget,
+		MonthlyBudgetMicros: keyMonthlyBudget,
+		CreatedAt:           time.Unix(keyCreatedAt, 0).UTC(),
+		LastUsedAt:          scanNullableTime(keyLastUsedAt),
 	}
 	if key.AllowedSurface == "" {
 		key.AllowedSurface = domain.SurfaceNative

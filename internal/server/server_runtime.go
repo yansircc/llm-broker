@@ -193,7 +193,7 @@ func isDrainAllowedPath(path string) bool {
 
 func shouldTrackActiveRequest(path string) bool {
 	switch path {
-	case "/health", "/ready", "/admin/drain", "/admin/drain-status", "/api/event_logging/batch":
+	case "/health", "/ready", "/admin/drain", "/admin/drain-status", "/admin/capacity", "/api/event_logging/batch":
 		return false
 	default:
 		return true

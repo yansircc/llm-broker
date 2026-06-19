@@ -19,16 +19,22 @@
 			<p class="mt-2 text-sm text-muted">登录客户控制台，在 API 密钥页创建 key。token 只展示一次。</p>
 		</section>
 		<section class="rounded-lg border border-line bg-card/60 p-5">
-			<h2 class="text-xl font-semibold">2. 配置 OpenAI Responses</h2>
+			<h2 class="text-xl font-semibold">2. 配置 Codex CLI</h2>
+			<pre class="mt-4 overflow-x-auto rounded-md border border-line bg-black p-4 font-mono text-sm text-brand">model_provider = "cdx"
+
+[model_providers.cdx]
+name = "CDX"
+base_url = "{origin}/openai"
+env_key = "CDX_API_KEY"
+wire_api = "responses"</pre>
+			<p class="mt-3 text-sm text-muted">本地环境变量设置为客户控制台创建的 API Key。</p>
+		</section>
+		<section class="rounded-lg border border-line bg-card/60 p-5">
+			<h2 class="text-xl font-semibold">3. 直接调用 Responses</h2>
 			<pre class="mt-4 overflow-x-auto rounded-md border border-line bg-black p-4 font-mono text-sm text-brand">curl {origin}/v1/responses \
   -H "Authorization: Bearer cdx_live_xxx" \
   -H "Content-Type: application/json" \
   -d '&#123;"model":"gpt-5","input":"hello"&#125;'</pre>
-		</section>
-		<section class="rounded-lg border border-line bg-card/60 p-5">
-			<h2 class="text-xl font-semibold">3. OpenAI compatible</h2>
-			<p class="mt-2 text-sm text-muted">兼容客户端使用 base URL：</p>
-			<div class="mt-3 rounded-md border border-line bg-black/30 p-3 font-mono text-sm text-brand">{origin}/v1</div>
 		</section>
 		<section class="rounded-lg border border-line bg-card/60 p-5">
 			<h2 class="text-xl font-semibold">4. 扣费规则</h2>

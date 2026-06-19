@@ -10,6 +10,7 @@
 		user_email: string;
 		status: string;
 		amount_usd: number;
+		amount_cny?: number;
 		provider?: string;
 		created_at: string;
 		paid_at?: string | null;
@@ -18,6 +19,7 @@
 	let orders = $state<AdminBillingOrder[]>([]);
 	let error = $state('');
 	let loading = $state(false);
+	let refreshing = $state('');
 	let lastRefresh = $state('');
 
 	$effect(() => {
@@ -34,6 +36,19 @@
 			error = e.message || '加载订单失败';
 		} finally {
 			loading = false;
+		}
+	}
+
+	async function refreshOrder(order: AdminBillingOrder) {
+		refreshing = order.id;
+		error = '';
+		try {
+			const updated = await api<AdminBillingOrder>(`/billing/orders/${order.id}/refresh`, { method: 'POST' });
+			orders = orders.map((item) => (item.id === updated.id ? updated : item));
+		} catch (e: any) {
+			error = e.message || '查询订单失败';
+		} finally {
+			refreshing = '';
 		}
 	}
 </script>
@@ -60,7 +75,7 @@
 	<div class="table-wrap">
 		<table>
 			<thead>
-				<tr><th>订单</th><th>用户</th><th>状态</th><th class="num">金额</th><th>支付渠道</th><th>创建时间</th><th>支付时间</th></tr>
+				<tr><th>订单</th><th>用户</th><th>状态</th><th class="num">额度</th><th class="num">收款</th><th>渠道</th><th>创建时间</th><th>支付时间</th><th>操作</th></tr>
 			</thead>
 			<tbody>
 				{#each orders as order (order.id)}
@@ -69,9 +84,15 @@
 						<td>{order.user_email || order.user_id}</td>
 						<td><StatusBadge status={order.status} /></td>
 						<td class="num">{fmtCost(order.amount_usd)}</td>
+						<td class="num">¥{order.amount_cny?.toFixed(2) ?? '-'}</td>
 						<td>{providerLabel(order.provider)}</td>
 						<td>{fmtDate(order.created_at)}</td>
 						<td>{order.paid_at ? fmtDate(order.paid_at) : '-'}</td>
+						<td>
+							<button class="secondary-btn fit" onclick={() => refreshOrder(order)} disabled={refreshing === order.id || order.status === 'paid'}>
+								{refreshing === order.id ? '查询中' : '查询'}
+							</button>
+						</td>
 					</tr>
 				{/each}
 			</tbody>

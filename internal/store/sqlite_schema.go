@@ -69,6 +69,8 @@ var desiredAPIKeyColumns = []string{
 	"token_prefix",
 	"status",
 	"allowed_surface",
+	"daily_budget_micros",
+	"monthly_budget_micros",
 	"created_at",
 	"last_used_at",
 }
@@ -91,6 +93,16 @@ var desiredEmailVerificationColumns = []string{
 	"created_at",
 	"expires_at",
 	"consumed_at",
+}
+
+var desiredSecurityEventColumns = []string{
+	"id",
+	"kind",
+	"ip_hash",
+	"email_hash",
+	"success",
+	"reason",
+	"created_at",
 }
 
 var desiredBillingSettingColumns = []string{
@@ -287,6 +299,9 @@ func Migrate(dbPath string) error {
 	if err := s.migrateUsersTable(context.Background()); err != nil {
 		return err
 	}
+	if err := s.migrateAPIKeysTable(context.Background()); err != nil {
+		return err
+	}
 	if err := s.migrateRequestLogTable(context.Background()); err != nil {
 		return err
 	}
@@ -313,6 +328,7 @@ func (s *SQLiteStore) validateCurrentSchema(ctx context.Context) error {
 		{table: "api_keys", want: desiredAPIKeyColumns},
 		{table: "web_sessions", want: desiredWebSessionColumns},
 		{table: "email_verifications", want: desiredEmailVerificationColumns},
+		{table: "security_events", want: desiredSecurityEventColumns},
 		{table: "billing_settings", want: desiredBillingSettingColumns},
 		{table: "admission_limits", want: desiredAdmissionLimitColumns},
 		{table: "model_prices", want: desiredModelPriceColumns},
@@ -569,6 +585,8 @@ func (s *SQLiteStore) migrateUsersTable(ctx context.Context) error {
 			token_prefix TEXT NOT NULL,
 			status TEXT NOT NULL DEFAULT 'active',
 			allowed_surface TEXT NOT NULL DEFAULT 'native',
+			daily_budget_micros INTEGER NOT NULL DEFAULT 0,
+			monthly_budget_micros INTEGER NOT NULL DEFAULT 0,
 			created_at INTEGER NOT NULL,
 			last_used_at INTEGER
 		)
@@ -601,7 +619,8 @@ func (s *SQLiteStore) migrateUsersTable(ctx context.Context) error {
 	}
 	keySQL := fmt.Sprintf(`
 		INSERT INTO api_keys_new (
-			id, user_id, name, token_hash, token_prefix, status, allowed_surface, created_at, last_used_at
+			id, user_id, name, token_hash, token_prefix, status, allowed_surface,
+			daily_budget_micros, monthly_budget_micros, created_at, last_used_at
 		)
 		SELECT
 			'key_' || replace(id, '-', ''),
@@ -611,6 +630,8 @@ func (s *SQLiteStore) migrateUsersTable(ctx context.Context) error {
 			token_prefix,
 			status,
 			%s,
+			0,
+			0,
 			created_at,
 			%s
 		FROM users
@@ -635,6 +656,90 @@ func (s *SQLiteStore) migrateUsersTable(ctx context.Context) error {
 	}
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("commit users migration: %w", err)
+	}
+	return nil
+}
+
+func (s *SQLiteStore) migrateAPIKeysTable(ctx context.Context) error {
+	cols, err := s.tableColumns(ctx, "api_keys")
+	if err != nil {
+		return fmt.Errorf("inspect api_keys schema: %w", err)
+	}
+	if sameColumns(cols, desiredAPIKeyColumns) {
+		return nil
+	}
+	if !hasColumns(cols, "id", "user_id", "name", "token_hash", "token_prefix", "status", "allowed_surface", "created_at") {
+		return fmt.Errorf("api_keys migration: unsupported schema %v", cols)
+	}
+
+	copyExpr := func(name, fallback string) string {
+		if slices.Contains(cols, name) {
+			return name
+		}
+		return fallback
+	}
+
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin api_keys migration: %w", err)
+	}
+	defer tx.Rollback()
+
+	if _, err := tx.ExecContext(ctx, `
+		CREATE TABLE api_keys_new (
+			id TEXT PRIMARY KEY,
+			user_id TEXT NOT NULL,
+			name TEXT NOT NULL,
+			token_hash TEXT NOT NULL UNIQUE,
+			token_prefix TEXT NOT NULL,
+			status TEXT NOT NULL DEFAULT 'active',
+			allowed_surface TEXT NOT NULL DEFAULT 'native',
+			daily_budget_micros INTEGER NOT NULL DEFAULT 0,
+			monthly_budget_micros INTEGER NOT NULL DEFAULT 0,
+			created_at INTEGER NOT NULL,
+			last_used_at INTEGER
+		)
+	`); err != nil {
+		return fmt.Errorf("create api_keys_new: %w", err)
+	}
+
+	insertSQL := fmt.Sprintf(`
+		INSERT INTO api_keys_new (
+			id, user_id, name, token_hash, token_prefix, status, allowed_surface,
+			daily_budget_micros, monthly_budget_micros, created_at, last_used_at
+		)
+		SELECT
+			id,
+			user_id,
+			name,
+			token_hash,
+			token_prefix,
+			status,
+			COALESCE(NULLIF(allowed_surface, ''), 'native'),
+			%s,
+			%s,
+			created_at,
+			%s
+		FROM api_keys
+	`,
+		copyExpr("daily_budget_micros", "0"),
+		copyExpr("monthly_budget_micros", "0"),
+		copyExpr("last_used_at", "NULL"),
+	)
+	if _, err := tx.ExecContext(ctx, insertSQL); err != nil {
+		return fmt.Errorf("copy api_keys: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, `DROP TABLE api_keys`); err != nil {
+		return fmt.Errorf("drop old api_keys: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, `ALTER TABLE api_keys_new RENAME TO api_keys`); err != nil {
+		return fmt.Errorf("rename api_keys_new: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, `CREATE INDEX idx_api_keys_user ON api_keys(user_id, created_at)`); err != nil {
+		return fmt.Errorf("create idx_api_keys_user: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit api_keys migration: %w", err)
 	}
 	return nil
 }
@@ -780,9 +885,10 @@ func (s *SQLiteStore) ensureRequestLogIndexes(ctx context.Context) error {
 func (s *SQLiteStore) seedCommercialDefaults(ctx context.Context) error {
 	now := time.Now().Unix()
 	settings := map[string]string{
-		"cny_to_usd_rate_micros":         "1000000",
-		"referral_new_user_bonus_micros": "0",
-		"referral_inviter_bonus_micros":  "0",
+		"cny_to_usd_rate_micros":             "1000000",
+		"referral_new_user_bonus_micros":     "0",
+		"referral_inviter_bonus_micros":      "0",
+		"low_balance_alert_threshold_micros": "5000000",
 	}
 	for key, value := range settings {
 		if _, err := s.db.ExecContext(ctx, `

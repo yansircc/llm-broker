@@ -16,6 +16,7 @@
 			label: '账号池',
 			items: [
 				{ href: '/console/accounts', label: '上游账号' },
+				{ href: '/console/capacity', label: '容量观测' },
 				{ href: '/console/migrations', label: '迁移工具' }
 			]
 		},

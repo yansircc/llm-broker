@@ -3,14 +3,24 @@
 	import { page } from '$app/stores';
 	import { customerApi } from '$lib/customer-api';
 	import type { AuthResponse } from '$lib/customer-types';
+	import { onMount, tick } from 'svelte';
 
 	let email = $state('');
 	let password = $state('');
 	let name = $state('');
 	let referralCode = $state('');
 	let referralInitialized = $state(false);
+	let turnstileEnabled = $state(false);
+	let turnstileSiteKey = $state('');
+	let turnstileToken = $state('');
+	let turnstileEl = $state<HTMLDivElement | null>(null);
+	let turnstileWidgetId = $state<string | number | null>(null);
 	let error = $state('');
 	let loading = $state(false);
+
+	onMount(async () => {
+		await loadPublicConfig();
+	});
 
 	$effect(() => {
 		if (referralInitialized) return;
@@ -21,13 +31,18 @@
 	async function register(e: Event) {
 		e.preventDefault();
 		if (!email.trim() || !password) return;
+		if (turnstileEnabled && !turnstileToken) {
+			error = '请先完成人机验证';
+			return;
+		}
 		loading = true;
 		error = '';
 		try {
 			const body: Record<string, string | undefined> = {
 				email: email.trim(),
 				password,
-				name: name.trim() || undefined
+				name: name.trim() || undefined,
+				turnstile_token: turnstileToken || undefined
 			};
 			if (referralCode.trim()) body.referral_code = referralCode.trim();
 			const res = await customerApi<AuthResponse>('/auth/register', {
@@ -37,8 +52,59 @@
 			window.location.href = `${base}${res.redirect_to ?? '/app/dashboard'}`;
 		} catch (err: any) {
 			error = err.message || 'registration failed';
+			resetTurnstile();
 		} finally {
 			loading = false;
+		}
+	}
+
+	async function loadPublicConfig() {
+		const res = await fetch('/api/public/config', { headers: { Accept: 'application/json' } }).catch(() => null);
+		if (!res?.ok) return;
+		const cfg = await res.json();
+		turnstileEnabled = !!cfg.turnstile_enabled;
+		turnstileSiteKey = cfg.turnstile_site_key || '';
+		if (turnstileEnabled && turnstileSiteKey) {
+			await loadTurnstileScript();
+			await tick();
+			renderTurnstile();
+		}
+	}
+
+	function loadTurnstileScript() {
+		return new Promise<void>((resolve, reject) => {
+			if ((window as any).turnstile) return resolve();
+			const existing = document.getElementById('cf-turnstile-script') as HTMLScriptElement | null;
+			if (existing) {
+				existing.addEventListener('load', () => resolve(), { once: true });
+				existing.addEventListener('error', () => reject(new Error('turnstile script failed')), { once: true });
+				return;
+			}
+			const script = document.createElement('script');
+			script.id = 'cf-turnstile-script';
+			script.src = 'https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit';
+			script.async = true;
+			script.defer = true;
+			script.onload = () => resolve();
+			script.onerror = () => reject(new Error('turnstile script failed'));
+			document.head.appendChild(script);
+		});
+	}
+
+	function renderTurnstile() {
+		if (!turnstileEl || !(window as any).turnstile || !turnstileSiteKey) return;
+		turnstileWidgetId = (window as any).turnstile.render(turnstileEl, {
+			sitekey: turnstileSiteKey,
+			theme: 'dark',
+			callback: (token: string) => (turnstileToken = token),
+			'expired-callback': () => (turnstileToken = '')
+		});
+	}
+
+	function resetTurnstile() {
+		turnstileToken = '';
+		if (turnstileWidgetId !== null && (window as any).turnstile) {
+			(window as any).turnstile.reset(turnstileWidgetId);
 		}
 	}
 </script>
@@ -82,6 +148,9 @@
 					<label class="mb-1.5 block text-sm text-muted" for="referral">邀请码</label>
 					<input id="referral" class="h-11 w-full rounded-md border border-line bg-black/30 px-3 text-sm outline-none focus:border-brand" type="text" autocomplete="off" bind:value={referralCode}>
 				</div>
+				{#if turnstileEnabled}
+					<div bind:this={turnstileEl}></div>
+				{/if}
 				{#if error}
 					<p class="rounded-md border border-red-500/30 bg-red-500/10 px-3 py-2 text-sm text-red-300">{error}</p>
 				{/if}

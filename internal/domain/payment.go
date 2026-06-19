@@ -30,3 +30,12 @@ type PaymentEvent struct {
 	PayloadJSON    string    `json:"payload_json"`
 	CreatedAt      time.Time `json:"created_at"`
 }
+
+type PaymentOrderSummary struct {
+	TotalOrders         int   `json:"total_orders"`
+	PendingOrders       int   `json:"pending_orders"`
+	PaidOrders          int   `json:"paid_orders"`
+	PaidAmountCNYFen    int64 `json:"paid_amount_cny_fen"`
+	PaidCreditMicros    int64 `json:"paid_credit_micros"`
+	PendingCreditMicros int64 `json:"pending_credit_micros"`
+}

@@ -28,6 +28,32 @@
 	}
 
 	const current = $derived(usage?.periods?.find((p) => p.label === (range === '30d' ? '30 days' : range === 'today' ? 'today' : '7 days')));
+
+	function exportCSV() {
+		if (!usage?.logs?.length) return;
+		const headers = ['request_id', 'api_key', 'model', 'input_tokens', 'output_tokens', 'cache_read_tokens', 'cache_create_tokens', 'cost_usd', 'duration_ms', 'status', 'created_at'];
+		const rows = usage.logs.map((log) => [
+			log.request_id || String(log.id),
+			log.api_key_name || log.api_key_id || '',
+			log.model || '',
+			String(log.input_tokens),
+			String(log.output_tokens),
+			String(log.cache_read_tokens),
+			String(log.cache_create_tokens),
+			String(log.cost_usd),
+			String(log.duration_ms),
+			log.status,
+			log.created_at
+		]);
+		const csv = [headers, ...rows].map((row) => row.map((cell) => `"${cell.replaceAll('"', '""')}"`).join(',')).join('\n');
+		const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
+		const url = URL.createObjectURL(blob);
+		const a = document.createElement('a');
+		a.href = url;
+		a.download = `cdx-usage-${range}.csv`;
+		a.click();
+		URL.revokeObjectURL(url);
+	}
 </script>
 
 <div class="mb-8 flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
@@ -36,7 +62,10 @@
 		<h1 class="mt-2 text-3xl font-bold tracking-tight sm:text-4xl">使用记录</h1>
 		<p class="mt-2 text-sm text-muted">查看每次 API 调用的 token、费用和状态。</p>
 	</div>
-	<button class="h-10 rounded-md border border-line bg-card px-4 text-sm hover:border-brand/50" onclick={loadUsage}>刷新</button>
+	<div class="flex gap-2">
+		<button class="h-10 rounded-md border border-line bg-card px-4 text-sm hover:border-brand/50" onclick={exportCSV} disabled={!usage?.logs?.length}>导出 CSV</button>
+		<button class="h-10 rounded-md border border-line bg-card px-4 text-sm hover:border-brand/50" onclick={loadUsage}>刷新</button>
+	</div>
 </div>
 
 <div class="mb-6 grid gap-4 sm:grid-cols-3">
@@ -83,6 +112,7 @@
 			<thead class="bg-white/[0.03] font-mono text-xs text-faint">
 				<tr>
 					<th class="px-5 py-3 font-medium">请求</th>
+					<th class="px-5 py-3 font-medium">Key</th>
 					<th class="px-5 py-3 font-medium">模型</th>
 					<th class="px-5 py-3 font-medium">Token</th>
 					<th class="px-5 py-3 font-medium">费用</th>
@@ -95,8 +125,12 @@
 				{#each usage.logs as log}
 					<tr class="hover:bg-white/[0.02]">
 						<td class="px-5 py-3 font-mono text-xs">{log.request_id || log.id}</td>
+						<td class="px-5 py-3">{log.api_key_name || log.api_key_id || '-'}</td>
 						<td class="px-5 py-3">{log.model || '-'}</td>
-						<td class="px-5 py-3 font-mono">{fmtNum(log.input_tokens + log.output_tokens)} <span class="text-faint">({fmtNum(log.input_tokens)} / {fmtNum(log.output_tokens)})</span></td>
+						<td class="px-5 py-3 font-mono">
+							{fmtNum(log.input_tokens + log.output_tokens)}
+							<span class="text-faint">({fmtNum(log.input_tokens)} / {fmtNum(log.output_tokens)} / cache {fmtNum(log.cache_read_tokens + log.cache_create_tokens)})</span>
+						</td>
 						<td class="px-5 py-3 font-mono text-brand">{fmtCost(log.cost_usd)}</td>
 						<td class="px-5 py-3 font-mono">{log.duration_ms} ms</td>
 						<td class="px-5 py-3"><span class="rounded-full border border-line px-2 py-1 text-xs">{log.status}</span></td>

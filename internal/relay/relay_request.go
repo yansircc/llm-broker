@@ -79,12 +79,16 @@ func (r *Relay) admitBillableRequest(w http.ResponseWriter, req *http.Request, d
 		return nil, nil, true
 	}
 	if r.admission != nil {
-		_, release, err := r.admission.Admit(req.Context(), admission.Request{
+		decision, release, err := r.admission.Admit(req.Context(), admission.Request{
 			UserID:   keyInfo.ID,
 			APIKeyID: keyInfo.APIKeyID,
 		})
 		if err != nil {
-			drv.WriteError(w, http.StatusPaymentRequired, "billing admission rejected")
+			reason := decision.Reason
+			if reason == "" {
+				reason = "billing_admission_rejected"
+			}
+			drv.WriteError(w, http.StatusPaymentRequired, reason)
 			return nil, nil, false
 		}
 		if r.billing == nil {

@@ -65,9 +65,11 @@ type Store interface {
 
 	// API keys
 	CreateAPIKey(ctx context.Context, key *domain.APIKey) error
+	GetAPIKey(ctx context.Context, id string) (*domain.APIKey, error)
 	GetAPIKeyByTokenHash(ctx context.Context, tokenHash string) (*domain.APIKey, *domain.User, error)
 	ListAPIKeysByUser(ctx context.Context, userID string) ([]*domain.APIKey, error)
 	DeleteAPIKey(ctx context.Context, id string) error
+	UpdateAPIKey(ctx context.Context, key *domain.APIKey) error
 	UpdateAPIKeyStatus(ctx context.Context, id, status string) error
 	UpdateAPIKeyLastUsed(ctx context.Context, id string) error
 
@@ -82,6 +84,8 @@ type Store interface {
 	DeletePendingEmailVerifications(ctx context.Context, userID, purpose string) error
 	CountEmailVerificationsSince(ctx context.Context, userID, purpose string, since time.Time) (int, error)
 	LastEmailVerification(ctx context.Context, userID, purpose string) (*domain.EmailVerification, error)
+	SaveSecurityEvent(ctx context.Context, event *domain.SecurityEvent) error
+	CountSecurityEvents(ctx context.Context, q domain.SecurityEventQuery) (int, error)
 
 	// Billing, payments, and admission
 	UpsertBillingSetting(ctx context.Context, key, value string, updatedAt time.Time) error
@@ -102,9 +106,12 @@ type Store interface {
 	MarkBillableRequestSettled(ctx context.Context, requestID, ledgerID string, settledAt time.Time) error
 	MarkBillableRequestStatus(ctx context.Context, requestID, status, errMsg string) error
 	ListUnsettledUsageObservedRequests(ctx context.Context, limit int) ([]*domain.BillableRequest, error)
+	SumAPIKeyUsageMicros(ctx context.Context, apiKeyID string, since, until time.Time) (int64, error)
 	SavePaymentOrder(ctx context.Context, order *domain.PaymentOrder) error
 	GetPaymentOrderByOutTradeNo(ctx context.Context, outTradeNo string) (*domain.PaymentOrder, error)
 	ListPaymentOrdersByUser(ctx context.Context, userID string, limit int) ([]*domain.PaymentOrder, error)
+	ListPaymentOrders(ctx context.Context, limit int) ([]*domain.PaymentOrder, error)
+	SummarizePaymentOrders(ctx context.Context) (*domain.PaymentOrderSummary, error)
 	MarkPaymentOrderPaid(ctx context.Context, outTradeNo, zpayTradeNo, paymentType string, paidAt time.Time) error
 	FulfillPaymentOrderWithCredit(ctx context.Context, outTradeNo, zpayTradeNo, paymentType string, paidAt time.Time, credit *domain.BillingLedgerEntry) error
 	SavePaymentEvent(ctx context.Context, event *domain.PaymentEvent) error

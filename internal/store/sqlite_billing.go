@@ -261,6 +261,27 @@ func (s *SQLiteStore) ListUnsettledUsageObservedRequests(ctx context.Context, li
 	return requests, rows.Err()
 }
 
+func (s *SQLiteStore) SumAPIKeyUsageMicros(ctx context.Context, apiKeyID string, since, until time.Time) (int64, error) {
+	if apiKeyID == "" {
+		return 0, nil
+	}
+	var sum sql.NullInt64
+	err := s.db.QueryRowContext(ctx, `
+		SELECT COALESCE(SUM(-bl.amount_micros), 0)
+		FROM billable_requests br
+		JOIN billing_ledger bl
+			ON bl.idempotency_key = 'usage:' || br.request_id
+			AND bl.kind = 'usage_debit'
+		WHERE br.api_key_id = ?
+			AND br.created_at >= ?
+			AND br.created_at < ?
+	`, apiKeyID, since.UTC().Unix(), until.UTC().Unix()).Scan(&sum)
+	if err != nil {
+		return 0, err
+	}
+	return sum.Int64, nil
+}
+
 func (s *SQLiteStore) CreateReferralWithCredits(ctx context.Context, referral *domain.Referral, inviteeCredit, inviterCredit *domain.BillingLedgerEntry) error {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {

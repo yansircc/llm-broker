@@ -68,6 +68,9 @@ func (s *Service) Admit(ctx context.Context, req Request) (Decision, ReleaseFunc
 		slog.Info("admission rejected", "user_id", req.UserID, "api_key_id", req.APIKeyID, "reason", "insufficient_balance", "balance_micros", balance, "min_balance_micros", minBalance)
 		return Decision{BalanceMicros: balance, Reason: "insufficient_balance"}, nil, fmt.Errorf("insufficient balance")
 	}
+	if reason, err := s.checkAPIKeyBudget(ctx, req.APIKeyID); err != nil {
+		return Decision{BalanceMicros: balance, Reason: reason}, nil, err
+	}
 
 	now := s.now()
 	s.mu.Lock()
@@ -103,6 +106,43 @@ func (s *Service) Admit(ctx context.Context, req Request) (Decision, ReleaseFunc
 		}
 	}
 	return Decision{BalanceMicros: balance}, release, nil
+}
+
+func (s *Service) checkAPIKeyBudget(ctx context.Context, apiKeyID string) (string, error) {
+	key, err := s.store.GetAPIKey(ctx, apiKeyID)
+	if err != nil {
+		return "api_key_unavailable", err
+	}
+	if key == nil {
+		return "", nil
+	}
+	if key.DailyBudgetMicros <= 0 && key.MonthlyBudgetMicros <= 0 {
+		return "", nil
+	}
+	now := s.now().UTC()
+	if key.DailyBudgetMicros > 0 {
+		dayStart := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC)
+		used, err := s.store.SumAPIKeyUsageMicros(ctx, apiKeyID, dayStart, now)
+		if err != nil {
+			return "api_key_daily_budget_unavailable", err
+		}
+		if used >= key.DailyBudgetMicros {
+			slog.Info("admission rejected", "api_key_id", apiKeyID, "reason", "api_key_daily_budget_exceeded", "used_micros", used, "budget_micros", key.DailyBudgetMicros)
+			return "api_key_daily_budget_exceeded", fmt.Errorf("api key daily budget exceeded")
+		}
+	}
+	if key.MonthlyBudgetMicros > 0 {
+		monthStart := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, time.UTC)
+		used, err := s.store.SumAPIKeyUsageMicros(ctx, apiKeyID, monthStart, now)
+		if err != nil {
+			return "api_key_monthly_budget_unavailable", err
+		}
+		if used >= key.MonthlyBudgetMicros {
+			slog.Info("admission rejected", "api_key_id", apiKeyID, "reason", "api_key_monthly_budget_exceeded", "used_micros", used, "budget_micros", key.MonthlyBudgetMicros)
+			return "api_key_monthly_budget_exceeded", fmt.Errorf("api key monthly budget exceeded")
+		}
+	}
+	return "", nil
 }
 
 type limits struct {

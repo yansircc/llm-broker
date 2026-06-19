@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"math"
@@ -14,6 +15,8 @@ import (
 	"github.com/yansircc/llm-broker/internal/domain"
 	"github.com/yansircc/llm-broker/internal/payments/zpay"
 )
+
+const paymentRefreshMinInterval = 5 * time.Second
 
 func (s *Server) handleCustomerBillingSummary(w http.ResponseWriter, r *http.Request) {
 	cc, ok := s.requireCustomer(w, r)
@@ -30,12 +33,15 @@ func (s *Server) handleCustomerBillingSummary(w http.ResponseWriter, r *http.Req
 		writeAdminError(w, http.StatusInternalServerError, "internal_error", "failed to load billing summary")
 		return
 	}
+	lowBalanceThreshold := s.lowBalanceAlertThresholdMicros(r.Context())
 	writeJSON(w, http.StatusOK, map[string]any{
-		"plan":        "prepaid",
-		"status":      cc.User.Status,
-		"balance_usd": microsToUSD(balance),
-		"credits_usd": microsToUSD(summary.CreditMicros),
-		"usage_usd":   microsToUSD(summary.UsageMicros),
+		"plan":                      "prepaid",
+		"status":                    cc.User.Status,
+		"balance_usd":               microsToUSD(balance),
+		"credits_usd":               microsToUSD(summary.CreditMicros),
+		"usage_usd":                 microsToUSD(summary.UsageMicros),
+		"low_balance":               lowBalanceThreshold > 0 && balance <= lowBalanceThreshold,
+		"low_balance_threshold_usd": microsToUSD(lowBalanceThreshold),
 	})
 }
 
@@ -107,7 +113,7 @@ func (s *Server) handleCreatePayment(w http.ResponseWriter, r *http.Request) {
 		Money:      fenToYuan(amountFen),
 		OutTradeNo: outTradeNo,
 		NotifyURL:  s.publicURL(r, "/api/payments/notify"),
-		ClientIP:   clientIP(r),
+		ClientIP:   s.clientIP(r),
 		Device:     "pc",
 		Param:      cc.User.ID,
 		CID:        s.zpayCID(),
@@ -158,7 +164,7 @@ func (s *Server) handlePaymentNotify(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte("success"))
 		return
 	}
-	if err := s.fulfillPaidOrder(r, params["out_trade_no"], params["trade_no"], params["type"], params["money"]); err != nil {
+	if err := s.fulfillPaidOrder(r.Context(), params["out_trade_no"], params["trade_no"], params["type"], params["money"]); err != nil {
 		w.WriteHeader(http.StatusBadRequest)
 		w.Write([]byte("fail"))
 		return
@@ -178,6 +184,25 @@ func (s *Server) handleCustomerPaymentOrder(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	writeJSON(w, http.StatusOK, paymentOrderView(order, ""))
+}
+
+func (s *Server) handleCustomerRefreshPaymentOrder(w http.ResponseWriter, r *http.Request) {
+	cc, ok := s.requireCustomer(w, r)
+	if !ok {
+		return
+	}
+	orderID := r.PathValue("id")
+	order, err := s.store.GetPaymentOrderByOutTradeNo(r.Context(), orderID)
+	if err != nil || order == nil || order.UserID != cc.User.ID {
+		writeAdminError(w, http.StatusNotFound, "not_found", "order not found")
+		return
+	}
+	refreshed, err := s.refreshPaymentOrder(r.Context(), order)
+	if err != nil {
+		writeAdminError(w, http.StatusBadGateway, "payment_query_failed", err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, paymentOrderView(refreshed, ""))
 }
 
 func (s *Server) handleCustomerPaymentOrders(w http.ResponseWriter, r *http.Request) {
@@ -247,9 +272,20 @@ func (s *Server) handleCustomerUsage(w http.ResponseWriter, r *http.Request) {
 		writeAdminError(w, http.StatusInternalServerError, "internal_error", "failed to load model usage")
 		return
 	}
+	keys, err := s.store.ListAPIKeysByUser(r.Context(), cc.User.ID)
+	if err != nil {
+		writeAdminError(w, http.StatusInternalServerError, "internal_error", "failed to load api keys")
+		return
+	}
+	keyNames := make(map[string]string, len(keys))
+	for _, key := range keys {
+		keyNames[key.ID] = key.Name
+	}
 	out := make([]map[string]any, 0, len(logs))
 	for _, log := range logs {
-		out = append(out, requestLogView(log))
+		view := requestLogView(log)
+		view["api_key_name"] = keyNames[log.APIKeyID]
+		out = append(out, view)
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"logs":        out,
@@ -259,8 +295,55 @@ func (s *Server) handleCustomerUsage(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-func (s *Server) fulfillPaidOrder(r *http.Request, outTradeNo, zpayTradeNo, paymentType, money string) error {
-	order, err := s.store.GetPaymentOrderByOutTradeNo(r.Context(), outTradeNo)
+func (s *Server) refreshPaymentOrder(ctx context.Context, order *domain.PaymentOrder) (*domain.PaymentOrder, error) {
+	if order == nil {
+		return nil, fmt.Errorf("order not found")
+	}
+	if order.Status == "paid" {
+		return order, nil
+	}
+	now := time.Now().UTC()
+	if order.UpdatedAt.After(now.Add(-paymentRefreshMinInterval)) {
+		return order, nil
+	}
+	if s.zpayClient == nil {
+		return nil, fmt.Errorf("zpay is not configured")
+	}
+	resp, err := s.zpayClient.QueryOrder(ctx, zpay.QueryOrderRequest{OutTradeNo: order.OutTradeNo})
+	if err != nil {
+		order.UpdatedAt = now
+		_ = s.store.SavePaymentOrder(ctx, order)
+		return nil, err
+	}
+	payload, _ := json.Marshal(resp)
+	_ = s.store.SavePaymentEvent(ctx, &domain.PaymentEvent{
+		ID:             uuid.NewString(),
+		OrderID:        order.OutTradeNo,
+		Gateway:        order.Gateway,
+		EventType:      "query",
+		ValidSignature: false,
+		PayloadJSON:    string(payload),
+		CreatedAt:      now,
+	})
+	if resp.Code == 1 && resp.Status == 1 {
+		if err := s.fulfillPaidOrder(ctx, order.OutTradeNo, resp.TradeNo, resp.Type, resp.Money); err != nil {
+			return nil, err
+		}
+		updated, err := s.store.GetPaymentOrderByOutTradeNo(ctx, order.OutTradeNo)
+		if err != nil {
+			return nil, err
+		}
+		if updated != nil {
+			return updated, nil
+		}
+	}
+	order.UpdatedAt = now
+	_ = s.store.SavePaymentOrder(ctx, order)
+	return order, nil
+}
+
+func (s *Server) fulfillPaidOrder(ctx context.Context, outTradeNo, zpayTradeNo, paymentType, money string) error {
+	order, err := s.store.GetPaymentOrderByOutTradeNo(ctx, outTradeNo)
 	if err != nil || order == nil {
 		return fmt.Errorf("order not found")
 	}
@@ -268,10 +351,10 @@ func (s *Server) fulfillPaidOrder(r *http.Request, outTradeNo, zpayTradeNo, paym
 	if err != nil || paidFen != order.AmountCNYFen {
 		return fmt.Errorf("amount mismatch")
 	}
-	if _, err := s.billingService().FulfillPaymentOrder(r.Context(), order, zpayTradeNo, paymentType, time.Now().UTC()); err != nil {
+	if _, err := s.billingService().FulfillPaymentOrder(ctx, order, zpayTradeNo, paymentType, time.Now().UTC()); err != nil {
 		return err
 	}
-	_, err = s.billingService().FulfillReferralInviterAfterPayment(r.Context(), order.UserID)
+	_, err = s.billingService().FulfillReferralInviterAfterPayment(ctx, order.UserID)
 	return err
 }
 
@@ -305,6 +388,18 @@ func (s *Server) cnyToUSDRateMicros(r *http.Request) int64 {
 		return 1_000_000
 	}
 	return rate
+}
+
+func (s *Server) lowBalanceAlertThresholdMicros(ctx context.Context) int64 {
+	raw, err := s.store.GetBillingSetting(ctx, "low_balance_alert_threshold_micros")
+	if err != nil || raw == "" {
+		return 5_000_000
+	}
+	threshold, err := strconv.ParseInt(raw, 10, 64)
+	if err != nil || threshold < 0 {
+		return 5_000_000
+	}
+	return threshold
 }
 
 func paymentOrderView(order *domain.PaymentOrder, checkoutURL string) map[string]any {
@@ -395,6 +490,10 @@ func microsToUSD(micros int64) float64 {
 	return float64(micros) / 1_000_000
 }
 
+func usdToMicros(usd float64) int64 {
+	return int64(math.Round(usd * 1_000_000))
+}
+
 func fenToYuan(fen int64) string {
 	return fmt.Sprintf("%.2f", float64(fen)/100)
 }
@@ -423,19 +522,44 @@ func compactID(id string) string {
 	return b.String()
 }
 
-func clientIP(r *http.Request) string {
-	for _, h := range []string{"x-forwarded-for", "x-real-ip"} {
-		v := r.Header.Get(h)
-		if v == "" {
-			continue
-		}
-		return strings.TrimSpace(strings.Split(v, ",")[0])
-	}
+func (s *Server) clientIP(r *http.Request) string {
 	host, _, err := net.SplitHostPort(r.RemoteAddr)
-	if err == nil && host != "" {
+	if err != nil {
+		host = strings.TrimSpace(r.RemoteAddr)
+	}
+	if s.trustsProxyIP(host) {
+		for _, h := range []string{"X-Forwarded-For", "X-Real-IP"} {
+			v := r.Header.Get(h)
+			if v == "" {
+				continue
+			}
+			forwarded := strings.TrimSpace(strings.Split(v, ",")[0])
+			if forwarded != "" {
+				return forwarded
+			}
+		}
+	}
+	if host != "" {
 		return host
 	}
 	return "127.0.0.1"
+}
+
+func (s *Server) trustsProxyIP(host string) bool {
+	if s == nil || s.cfg == nil || strings.TrimSpace(host) == "" {
+		return false
+	}
+	ip := net.ParseIP(strings.TrimSpace(host))
+	if ip == nil {
+		return false
+	}
+	for _, raw := range s.cfg.TrustedProxyCIDRs {
+		_, network, err := net.ParseCIDR(strings.TrimSpace(raw))
+		if err == nil && network.Contains(ip) {
+			return true
+		}
+	}
+	return false
 }
 
 func (s *Server) zpayCID() string {

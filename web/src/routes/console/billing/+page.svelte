@@ -8,8 +8,11 @@
 		users: number;
 		active_users: number;
 		open_orders: number;
+		paid_orders?: number;
 		revenue_usd: number;
+		revenue_cny?: number;
 		credits_usd: number;
+		pending_credits_usd?: number;
 	}
 
 	let summary = $state<AdminBillingSummary | null>(null);
@@ -55,9 +58,9 @@
 {:else if summary}
 	<div class="metric-grid">
 		<MetricCard label="用户" value={summary.users} sub={`${summary.active_users} 个正常`} />
-		<MetricCard label="待支付订单" value={summary.open_orders} sub="等待付款" />
-		<MetricCard label="收入" value={fmtCost(summary.revenue_usd)} sub="已支付订单总额" />
-		<MetricCard label="余额" value={fmtCost(summary.credits_usd)} sub="账本已发放余额" />
+		<MetricCard label="待支付订单" value={summary.open_orders} sub={`${fmtCost(summary.pending_credits_usd ?? 0)} 待入账`} />
+		<MetricCard label="已支付订单" value={summary.paid_orders ?? 0} sub={`¥${(summary.revenue_cny ?? 0).toFixed(2)} 实收`} />
+		<MetricCard label="已发放额度" value={fmtCost(summary.credits_usd)} sub="支付订单入账额度" />
 	</div>
 {:else}
 	<p class="muted">暂无计费汇总</p>

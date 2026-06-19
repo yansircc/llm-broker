@@ -65,6 +65,57 @@ func (s *SQLiteStore) ListPaymentOrdersByUser(ctx context.Context, userID string
 	return orders, rows.Err()
 }
 
+func (s *SQLiteStore) ListPaymentOrders(ctx context.Context, limit int) ([]*domain.PaymentOrder, error) {
+	if limit <= 0 || limit > 500 {
+		limit = 200
+	}
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT id, out_trade_no, user_id, gateway, status, product_name,
+			amount_cny_fen, credit_micros, exchange_rate_micros, payment_type,
+			zpay_trade_no, qrcode, qr_image, created_at, paid_at, updated_at
+		FROM payment_orders
+		ORDER BY created_at DESC LIMIT ?
+	`, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var orders []*domain.PaymentOrder
+	for rows.Next() {
+		order, err := scanPaymentOrder(rows)
+		if err != nil {
+			return nil, err
+		}
+		orders = append(orders, order)
+	}
+	return orders, rows.Err()
+}
+
+func (s *SQLiteStore) SummarizePaymentOrders(ctx context.Context) (*domain.PaymentOrderSummary, error) {
+	var summary domain.PaymentOrderSummary
+	err := s.db.QueryRowContext(ctx, `
+		SELECT
+			COUNT(*),
+			COALESCE(SUM(CASE WHEN status = 'pending' THEN 1 ELSE 0 END), 0),
+			COALESCE(SUM(CASE WHEN status = 'paid' THEN 1 ELSE 0 END), 0),
+			COALESCE(SUM(CASE WHEN status = 'paid' THEN amount_cny_fen ELSE 0 END), 0),
+			COALESCE(SUM(CASE WHEN status = 'paid' THEN credit_micros ELSE 0 END), 0),
+			COALESCE(SUM(CASE WHEN status = 'pending' THEN credit_micros ELSE 0 END), 0)
+		FROM payment_orders
+	`).Scan(
+		&summary.TotalOrders,
+		&summary.PendingOrders,
+		&summary.PaidOrders,
+		&summary.PaidAmountCNYFen,
+		&summary.PaidCreditMicros,
+		&summary.PendingCreditMicros,
+	)
+	if err != nil {
+		return nil, err
+	}
+	return &summary, nil
+}
+
 func (s *SQLiteStore) MarkPaymentOrderPaid(ctx context.Context, outTradeNo, zpayTradeNo, paymentType string, paidAt time.Time) error {
 	result, err := s.db.ExecContext(ctx, `
 		UPDATE payment_orders

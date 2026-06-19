@@ -54,3 +54,16 @@ func TestValidateAcceptsCanonicalHTTPSiteURL(t *testing.T) {
 		t.Fatalf("Validate(): %v", err)
 	}
 }
+
+func TestValidateRejectsInvalidTrustedProxyCIDR(t *testing.T) {
+	cfg := Config{
+		EncryptionKey:      "enc",
+		StaticToken:        "tok",
+		BackgroundJobsMode: "all",
+		TrustedProxyCIDRs:  []string{"not-a-cidr"},
+	}
+	err := cfg.Validate()
+	if err == nil || !strings.Contains(err.Error(), "TRUSTED_PROXY_CIDRS") {
+		t.Fatalf("Validate() = %v, want TRUSTED_PROXY_CIDRS error", err)
+	}
+}

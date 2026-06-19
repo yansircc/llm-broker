@@ -9,7 +9,7 @@
 	});
 
 	const features = [
-		['OpenAI-first', '公开产品面向 OpenAI Responses 和 OpenAI-compatible API，适合 Codex 与常见 OpenAI 客户端。'],
+		['OpenAI-first', '公开产品面向 OpenAI Responses，适合 Codex CLI 和 coding agent 场景。'],
 		['预付费账本', '人民币充值，USD 额度展示，按模型 token 用量扣费。'],
 		['客户 API Key', '每个用户自己创建 relay key，请求按账号余额和权限准入。'],
 		['可追溯记录', '订单、额度流水、请求 usage 都可在控制台查看。']
@@ -23,7 +23,7 @@
 		<div>
 			<div class="inline-flex rounded-full border border-brand/40 bg-brand/[0.06] px-3 py-1 font-mono text-xs text-brand">OpenAI/Codex relay</div>
 			<h1 class="mt-6 max-w-3xl text-5xl font-bold leading-tight tracking-tight sm:text-6xl">CDX API 中转服务</h1>
-			<p class="mt-5 max-w-2xl text-lg text-muted">为外部用户提供 OpenAI Responses 和兼容 API 转发：账号、API Key、充值、token 计费、订单和邀请奖励都在一个控制台里。</p>
+			<p class="mt-5 max-w-2xl text-lg text-muted">为外部用户提供 OpenAI Responses 转发：账号、API Key、充值、token 计费、订单和邀请奖励都在一个控制台里。</p>
 			<div class="mt-8 flex flex-wrap gap-3">
 				<a class="rounded-md bg-brand px-5 py-3 text-sm font-semibold text-black" href="{base}/app/register">立即注册</a>
 				<a class="rounded-md border border-line bg-card px-5 py-3 text-sm hover:border-brand/50" href="{base}/docs">查看接入文档</a>

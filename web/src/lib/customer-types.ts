@@ -23,6 +23,12 @@ export interface CustomerApiKey {
 	name: string;
 	prefix?: string;
 	status: string;
+	daily_budget_usd: number;
+	monthly_budget_usd: number;
+	daily_usage_usd?: number;
+	monthly_usage_usd?: number;
+	daily_remaining_usd?: number | null;
+	monthly_remaining_usd?: number | null;
 	created_at: string;
 	last_used_at?: string | null;
 }
@@ -37,6 +43,8 @@ export interface BillingSummary {
 	balance_usd: number;
 	credits_usd: number;
 	usage_usd: number;
+	low_balance?: boolean;
+	low_balance_threshold_usd?: number;
 	period_start?: string;
 	period_end?: string;
 }
@@ -82,6 +90,7 @@ export interface CustomerUsageLog {
 	id: number;
 	request_id: string;
 	api_key_id?: string;
+	api_key_name?: string;
 	model: string;
 	surface: string;
 	status: string;

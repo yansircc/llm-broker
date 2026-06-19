@@ -67,6 +67,11 @@
 {:else if loading}
 	<p class="text-sm text-faint">正在加载...</p>
 {:else}
+	{#if billing?.low_balance}
+		<p class="mb-5 rounded-md border border-amber-400/30 bg-amber-400/10 px-4 py-3 text-sm text-amber-200">
+			余额已低于 ${billing.low_balance_threshold_usd?.toFixed(2) ?? '5.00'}，建议及时充值，避免请求被拒绝。
+		</p>
+	{/if}
 	<div class="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
 		<div class="rounded-lg border border-line bg-card/70 p-5">
 			<div class="text-sm text-faint">余额</div>

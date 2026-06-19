@@ -169,6 +169,38 @@ export interface DashboardData {
 	recent_failures: RecentRequestLog[];
 }
 
+export interface CapacitySummary {
+	accounts: number;
+	active_accounts: number;
+	available_native: number;
+	available_compat: number;
+	cooling_accounts: number;
+	requests_1h: number;
+	failures_1h: number;
+	active_requests: number;
+}
+
+export interface CapacityAccount {
+	id: string;
+	email: string;
+	provider: string;
+	status: string;
+	weight: number;
+	available_native: boolean;
+	available_compat: boolean;
+	cooldown_until?: string | null;
+	requests_1h: number;
+	failures_1h: number;
+	windows: UtilWindow[];
+}
+
+export interface CapacityData {
+	summary: CapacitySummary;
+	accounts: CapacityAccount[];
+	active_requests: Array<{ id: number; method: string; path: string; age: string; started: string }>;
+	connections: Record<string, number>;
+}
+
 export interface ActivityAccountRef {
 	id: string;
 	email: string;

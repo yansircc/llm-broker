@@ -595,6 +595,155 @@ func TestCustomerDataEndpointsExposeLedgerOrdersUsageAndReferralStats(t *testing
 	}
 }
 
+func TestCustomerKeyBudgetCreateAndUpdate(t *testing.T) {
+	srv := newTestServer(t)
+	now := time.Now().UTC()
+	user := &domain.User{
+		ID:             "budget-user",
+		Email:          "budget@example.com",
+		Name:           "budget",
+		Status:         "active",
+		AllowedSurface: domain.SurfaceNative,
+		ReferralCode:   "BUDGET",
+		CreatedAt:      now,
+	}
+	if err := srv.store.CreateUser(context.Background(), user); err != nil {
+		t.Fatal(err)
+	}
+	sessionResp := httptest.NewRecorder()
+	if _, err := srv.createCustomerSession(sessionResp, httptest.NewRequest(http.MethodPost, "/api/auth/login", nil), user); err != nil {
+		t.Fatal(err)
+	}
+	cookie := customerCookie(t, sessionResp)
+
+	malformedReq := httptest.NewRequest(http.MethodPost, "/api/keys", strings.NewReader(`{"name":"bad","daily_budget_usd":"oops"}`))
+	malformedReq.AddCookie(cookie)
+	malformedResp := httptest.NewRecorder()
+	srv.handleCustomerCreateKey(malformedResp, malformedReq)
+	if malformedResp.Code != http.StatusBadRequest {
+		t.Fatalf("malformed create key status=%d body=%s", malformedResp.Code, malformedResp.Body.String())
+	}
+
+	createReq := httptest.NewRequest(http.MethodPost, "/api/keys", strings.NewReader(`{"name":"prod","daily_budget_usd":1.5,"monthly_budget_usd":20}`))
+	createReq.AddCookie(cookie)
+	createResp := httptest.NewRecorder()
+	srv.handleCustomerCreateKey(createResp, createReq)
+	if createResp.Code != http.StatusOK {
+		t.Fatalf("create key status=%d body=%s", createResp.Code, createResp.Body.String())
+	}
+	var created struct {
+		ID               string  `json:"id"`
+		DailyBudgetUSD   float64 `json:"daily_budget_usd"`
+		MonthlyBudgetUSD float64 `json:"monthly_budget_usd"`
+	}
+	if err := json.Unmarshal(createResp.Body.Bytes(), &created); err != nil {
+		t.Fatal(err)
+	}
+	if created.DailyBudgetUSD != 1.5 || created.MonthlyBudgetUSD != 20 {
+		t.Fatalf("created budgets = %+v", created)
+	}
+
+	updateReq := httptest.NewRequest(http.MethodPatch, "/api/keys/"+created.ID, strings.NewReader(`{"name":"prod","status":"disabled","daily_budget_usd":2,"monthly_budget_usd":30}`))
+	updateReq.SetPathValue("id", created.ID)
+	updateReq.AddCookie(cookie)
+	updateResp := httptest.NewRecorder()
+	srv.handleCustomerUpdateKey(updateResp, updateReq)
+	if updateResp.Code != http.StatusOK {
+		t.Fatalf("update key status=%d body=%s", updateResp.Code, updateResp.Body.String())
+	}
+	if !strings.Contains(updateResp.Body.String(), `"status":"disabled"`) || !strings.Contains(updateResp.Body.String(), `"daily_budget_usd":2`) {
+		t.Fatalf("update body=%s", updateResp.Body.String())
+	}
+}
+
+func TestCustomerLoginRateLimitBlocksRepeatedFailures(t *testing.T) {
+	srv := newTestServer(t)
+	for i := 0; i < 10; i++ {
+		req := httptest.NewRequest(http.MethodPost, "/api/auth/login", strings.NewReader(`{"email":"missing@example.com","password":"bad"}`))
+		req.RemoteAddr = "203.0.113.10:1234"
+		resp := httptest.NewRecorder()
+		srv.handleCustomerLogin(resp, req)
+		if resp.Code != http.StatusUnauthorized {
+			t.Fatalf("failure #%d status=%d body=%s", i+1, resp.Code, resp.Body.String())
+		}
+	}
+	req := httptest.NewRequest(http.MethodPost, "/api/auth/login", strings.NewReader(`{"email":"missing@example.com","password":"bad"}`))
+	req.RemoteAddr = "203.0.113.10:1234"
+	resp := httptest.NewRecorder()
+	srv.handleCustomerLogin(resp, req)
+	if resp.Code != http.StatusTooManyRequests {
+		t.Fatalf("rate limited status=%d body=%s", resp.Code, resp.Body.String())
+	}
+}
+
+func TestClientIPOnlyTrustsForwardedHeadersFromTrustedProxy(t *testing.T) {
+	srv := newTestServer(t)
+	req := httptest.NewRequest(http.MethodPost, "/api/auth/login", nil)
+	req.RemoteAddr = "198.51.100.10:1234"
+	req.Header.Set("X-Forwarded-For", "203.0.113.20")
+	if got := srv.clientIP(req); got != "198.51.100.10" {
+		t.Fatalf("clientIP without trusted proxy = %q", got)
+	}
+
+	srv.cfg.TrustedProxyCIDRs = []string{"198.51.100.0/24"}
+	if got := srv.clientIP(req); got != "203.0.113.20" {
+		t.Fatalf("clientIP with trusted proxy = %q", got)
+	}
+}
+
+func TestCustomerRefreshPaymentOrderFulfillsPaidZPayOrder(t *testing.T) {
+	srv := newTestServer(t)
+	now := time.Now().UTC()
+	zpayAPI := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"code":1,"status":1,"type":"alipay","money":"9.90","trade_no":"zpay-query-1"}`))
+	}))
+	defer zpayAPI.Close()
+	srv.zpayClient = zpay.NewClient(zpay.Config{PID: "pid", Key: "key", APIURL: zpayAPI.URL, HTTPClient: zpayAPI.Client()})
+	user := &domain.User{
+		ID:             "refresh-payer",
+		Email:          "refresh@example.com",
+		Name:           "refresh",
+		Status:         "active",
+		AllowedSurface: domain.SurfaceNative,
+		ReferralCode:   "REFPAY",
+		CreatedAt:      now,
+	}
+	if err := srv.store.CreateUser(context.Background(), user); err != nil {
+		t.Fatal(err)
+	}
+	order := &domain.PaymentOrder{
+		ID:                 "refresh-order",
+		OutTradeNo:         "refresh-out",
+		UserID:             user.ID,
+		Gateway:            "zpay",
+		Status:             "pending",
+		ProductName:        "credit",
+		AmountCNYFen:       990,
+		CreditMicros:       9_900_000,
+		ExchangeRateMicros: 1_000_000,
+		PaymentType:        "alipay",
+		CreatedAt:          now,
+		UpdatedAt:          now.Add(-time.Minute),
+	}
+	if err := srv.store.SavePaymentOrder(context.Background(), order); err != nil {
+		t.Fatal(err)
+	}
+	sessionResp := httptest.NewRecorder()
+	if _, err := srv.createCustomerSession(sessionResp, httptest.NewRequest(http.MethodPost, "/api/auth/login", nil), user); err != nil {
+		t.Fatal(err)
+	}
+	req := httptest.NewRequest(http.MethodPost, "/api/payments/orders/refresh-out/refresh", nil)
+	req.SetPathValue("id", "refresh-out")
+	req.AddCookie(customerCookie(t, sessionResp))
+	resp := httptest.NewRecorder()
+	srv.handleCustomerRefreshPaymentOrder(resp, req)
+	if resp.Code != http.StatusOK || !strings.Contains(resp.Body.String(), `"status":"paid"`) {
+		t.Fatalf("refresh status=%d body=%s", resp.Code, resp.Body.String())
+	}
+	assertBalanceMicros(t, srv, user.ID, 9_900_000)
+}
+
 func customerCookie(t *testing.T, w *httptest.ResponseRecorder) *http.Cookie {
 	t.Helper()
 	for _, cookie := range w.Result().Cookies() {

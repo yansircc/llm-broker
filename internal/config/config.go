@@ -1,6 +1,7 @@
 package config
 
 import (
+	"net"
 	"net/url"
 	"os"
 	"strconv"
@@ -19,11 +20,15 @@ type Config struct {
 	DBPath string
 
 	// Security
-	EncryptionKey string
-	StaticToken   string
-	AdminEmails   map[string]struct{}
-	SiteURL       string
-	SessionTTL    time.Duration
+	EncryptionKey      string
+	StaticToken        string
+	AdminEmails        map[string]struct{}
+	SiteURL            string
+	SessionTTL         time.Duration
+	TurnstileEnabled   bool
+	TurnstileSiteKey   string
+	TurnstileSecretKey string
+	TrustedProxyCIDRs  []string
 
 	// Email
 	SMTPAddr     string
@@ -93,11 +98,15 @@ func Load() *Config {
 
 		DBPath: envOr("DB_PATH", "./llm-broker.db"),
 
-		EncryptionKey: os.Getenv("ENCRYPTION_KEY"),
-		StaticToken:   os.Getenv("API_TOKEN"),
-		AdminEmails:   envSet("ADMIN_EMAILS"),
-		SiteURL:       os.Getenv("SITE_URL"),
-		SessionTTL:    envDuration("CUSTOMER_SESSION_TTL", 30*24*time.Hour),
+		EncryptionKey:      os.Getenv("ENCRYPTION_KEY"),
+		StaticToken:        os.Getenv("API_TOKEN"),
+		AdminEmails:        envSet("ADMIN_EMAILS"),
+		SiteURL:            os.Getenv("SITE_URL"),
+		SessionTTL:         envDuration("CUSTOMER_SESSION_TTL", 30*24*time.Hour),
+		TurnstileEnabled:   envBool("TURNSTILE_ENABLED", false),
+		TurnstileSiteKey:   os.Getenv("TURNSTILE_SITE_KEY"),
+		TurnstileSecretKey: os.Getenv("TURNSTILE_SECRET_KEY"),
+		TrustedProxyCIDRs:  envList("TRUSTED_PROXY_CIDRS", []string{"127.0.0.1/32", "::1/128"}),
 
 		SMTPAddr:     os.Getenv("SMTP_ADDR"),
 		SMTPUsername: os.Getenv("SMTP_USERNAME"),
@@ -157,12 +166,28 @@ func (c *Config) Validate() error {
 	if c.StaticToken == "" {
 		return errMissing("API_TOKEN")
 	}
+	if c.TurnstileEnabled {
+		if strings.TrimSpace(c.TurnstileSiteKey) == "" {
+			return errMissing("TURNSTILE_SITE_KEY")
+		}
+		if strings.TrimSpace(c.TurnstileSecretKey) == "" {
+			return errMissing("TURNSTILE_SECRET_KEY")
+		}
+	}
 	if c.requiresPublicURL() {
 		if strings.TrimSpace(c.SiteURL) == "" {
 			return errMissing("SITE_URL")
 		}
 		if !validSiteURL(c.SiteURL) {
 			return &configError{field: "SITE_URL (must include http(s) scheme and host)"}
+		}
+	}
+	for _, cidr := range c.TrustedProxyCIDRs {
+		if strings.TrimSpace(cidr) == "" {
+			continue
+		}
+		if _, _, err := net.ParseCIDR(strings.TrimSpace(cidr)); err != nil {
+			return &configError{field: "TRUSTED_PROXY_CIDRS (must be comma-separated CIDR blocks)"}
 		}
 	}
 	switch c.BackgroundJobsMode {
@@ -240,6 +265,22 @@ func envSet(key string) map[string]struct{} {
 			continue
 		}
 		result[value] = struct{}{}
+	}
+	return result
+}
+
+func envList(key string, fallback []string) []string {
+	raw := os.Getenv(key)
+	if strings.TrimSpace(raw) == "" {
+		return append([]string(nil), fallback...)
+	}
+	var result []string
+	for _, part := range strings.Split(raw, ",") {
+		value := strings.TrimSpace(part)
+		if value == "" {
+			continue
+		}
+		result = append(result, value)
 	}
 	return result
 }
