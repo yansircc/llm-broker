@@ -78,29 +78,29 @@
 {:else if me}
 	<section class="max-w-2xl rounded-lg border border-line bg-card/60 p-5">
 		<h2 class="m-0 text-base font-semibold">账户信息</h2>
-		<div class="mt-5 grid gap-4">
-			<div>
-				<div class="mb-1 text-xs text-faint">邮箱</div>
-				<div class="rounded-md border border-line bg-black/25 px-3 py-2">{me.user.email}</div>
+		<div class="mt-3">
+			<div class="flex items-center justify-between border-b border-line py-3 last:border-0">
+				<span class="text-faint">邮箱</span>
+				<span>{me.user.email}</span>
 			</div>
-			<div>
-				<div class="mb-1 text-xs text-faint">名称</div>
-				<div class="rounded-md border border-line bg-black/25 px-3 py-2">{me.user.name || '-'}</div>
+			<div class="flex items-center justify-between border-b border-line py-3 last:border-0">
+				<span class="text-faint">名称</span>
+				<span>{me.user.name || '-'}</span>
 			</div>
-			<div>
-				<div class="mb-1 text-xs text-faint">状态</div>
-				<div class="rounded-md border border-line bg-black/25 px-3 py-2">{me.user.status}</div>
+			<div class="flex items-center justify-between border-b border-line py-3 last:border-0">
+				<span class="text-faint">状态</span>
+				<span>{me.user.status}</span>
 			</div>
-			<div>
-				<div class="mb-1 text-xs text-faint">创建时间</div>
-				<div class="rounded-md border border-line bg-black/25 px-3 py-2">{me.user.created_at ? fmtDate(me.user.created_at) : '-'}</div>
+			<div class="flex items-center justify-between border-b border-line py-3 last:border-0">
+				<span class="text-faint">创建时间</span>
+				<span>{me.user.created_at ? fmtDate(me.user.created_at) : '-'}</span>
 			</div>
 		</div>
 	</section>
 
 	<section class="mt-5 max-w-2xl rounded-lg border border-line bg-card/60 p-5">
 		<h2 class="m-0 text-base font-semibold">修改用户名</h2>
-		<p class="mt-2 text-sm text-faint">用户自行修改用户名的视觉入口已保留；本分支尚未提供更新用户名 API。</p>
+		<p class="mt-2 text-sm text-faint">如需修改用户名，请联系客服协助处理。</p>
 		<div class="mt-5 flex flex-col gap-3 sm:flex-row">
 			<input class="h-11 rounded-md border border-line bg-black/30 px-3 text-sm outline-none placeholder:text-faint focus:border-brand" placeholder="新用户名" value={me.user.name || ''} disabled>
 			<button class="h-11 rounded-md border border-line bg-black/20 px-5 text-sm text-faint" type="button" disabled>更新</button>
@@ -109,6 +109,7 @@
 
 	<section class="mt-5 max-w-2xl rounded-lg border border-line bg-card/60 p-5">
 		<h2 class="m-0 text-base font-semibold">修改密码</h2>
+		<p class="mt-2 text-sm text-faint">密码至少 8 个字符。</p>
 		<form class="mt-5 grid gap-4" onsubmit={changePassword}>
 			<div>
 				<label class="mb-1.5 block text-sm text-muted" for="current-password">当前密码</label>

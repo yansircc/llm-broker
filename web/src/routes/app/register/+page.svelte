@@ -4,11 +4,12 @@
 	import { BRAND_NAME } from '$lib/brand';
 	import { customerApi } from '$lib/customer-api';
 	import type { AuthResponse } from '$lib/customer-types';
+	import Icon from '$lib/components/Icon.svelte';
 	import { onMount, tick } from 'svelte';
 
 	let email = $state('');
 	let password = $state('');
-	let name = $state('');
+	let showPassword = $state(false);
 	let referralCode = $state('');
 	let referralInitialized = $state(false);
 	let turnstileEnabled = $state(false);
@@ -21,7 +22,7 @@
 	const authHighlights = [
 		['1 元用 1 刀', '按 USD 额度入账，按实际调用扣费。'],
 		['满血不掺水', '模型能力以实际已接入服务为准。'],
-		['一把 Key 接入 8+ 工具', 'Codex 当前可用，Claude 家族接入后共用同一控制台。'],
+		['一把 Key 接入 8+ 工具', 'Claude Code、Codex、Cursor 等共用同一控制台。'],
 		['1 元 = 1 刀', '余额、消费和奖励统一进入账户账本。'],
 		['永不断线', '多账号池调度，异常状态可观察、可切换。']
 	];
@@ -49,7 +50,7 @@
 			const body: Record<string, string | undefined> = {
 				email: email.trim(),
 				password,
-				name: name.trim() || undefined,
+				name: undefined,
 				turnstile_token: turnstileToken || undefined
 			};
 			if (referralCode.trim()) body.referral_code = referralCode.trim();
@@ -126,7 +127,7 @@
 				<span class="text-2xl">{BRAND_NAME}</span>
 			</a>
 			<h1 class="mt-8 max-w-xl text-3xl font-semibold tracking-tight">注册 {BRAND_NAME}，创建你的 API 中转账户</h1>
-			<p class="mt-4 max-w-lg text-sm leading-relaxed text-muted">注册账号、充值、创建 API Key，然后把客户端 base URL 指向 {BRAND_NAME}。当前提供 Codex 中转，Claude 家族接入中。</p>
+			<p class="mt-4 max-w-lg text-sm leading-relaxed text-muted">注册账号、充值、创建 API Key，然后把客户端 base URL 指向 {BRAND_NAME}，即可一套密钥接入主流编码工具。</p>
 			<div class="mt-8 grid max-w-lg gap-3 text-sm text-muted">
 				{#each authHighlights as item}
 					<div class="rounded-lg border border-line bg-card/60 p-4">
@@ -151,21 +152,29 @@
 			</div>
 			<form class="mt-7 space-y-4" onsubmit={register}>
 				<div>
-					<label class="mb-1.5 block text-sm text-muted" for="name">用户名</label>
-					<input id="name" class="h-10 w-full rounded-md border border-line bg-transparent px-3 text-sm outline-none placeholder:text-faint focus:border-brand" placeholder="请输入用户名" type="text" autocomplete="name" bind:value={name}>
-				</div>
-				<div>
 					<label class="mb-1.5 block text-sm text-muted" for="email">邮箱</label>
-					<input id="email" class="h-10 w-full rounded-md border border-line bg-transparent px-3 text-sm outline-none placeholder:text-faint focus:border-brand" placeholder="请输入邮箱" type="email" autocomplete="email" bind:value={email}>
+					<div class="relative">
+						<span class="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-faint"><Icon name="mail" size={16} /></span>
+						<input id="email" class="h-10 w-full rounded-md border border-line bg-transparent pl-10 pr-3 text-sm outline-none placeholder:text-faint focus:border-brand" placeholder="请输入邮箱" type="email" autocomplete="email" bind:value={email}>
+					</div>
 				</div>
 				<div>
 					<label class="mb-1.5 block text-sm text-muted" for="password">密码</label>
-					<input id="password" class="h-10 w-full rounded-md border border-line bg-transparent px-3 text-sm outline-none placeholder:text-faint focus:border-brand" placeholder="请输入密码" type="password" autocomplete="new-password" bind:value={password}>
+					<div class="relative">
+						<span class="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-faint"><Icon name="lock" size={16} /></span>
+						<input id="password" class="h-10 w-full rounded-md border border-line bg-transparent pl-10 pr-10 text-sm outline-none placeholder:text-faint focus:border-brand" placeholder="请输入密码" type={showPassword ? 'text' : 'password'} autocomplete="new-password" bind:value={password}>
+						<button class="absolute right-2 top-1/2 -translate-y-1/2 border-0 bg-transparent p-1 text-faint hover:text-white" type="button" aria-label={showPassword ? '隐藏密码' : '显示密码'} onclick={() => (showPassword = !showPassword)}>
+							<Icon name={showPassword ? 'eye-off' : 'eye'} size={16} />
+						</button>
+					</div>
 					<div class="mt-1 text-xs text-faint">至少 8 个字符。</div>
 				</div>
 				<div>
 					<label class="mb-1.5 block text-sm text-muted" for="referral">邀请码</label>
-					<input id="referral" class="h-10 w-full rounded-md border border-line bg-transparent px-3 text-sm outline-none placeholder:text-faint focus:border-brand" placeholder="可选" type="text" autocomplete="off" bind:value={referralCode}>
+					<div class="relative">
+						<span class="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-faint"><Icon name="gift" size={16} /></span>
+						<input id="referral" class="h-10 w-full rounded-md border border-line bg-transparent pl-10 pr-3 text-sm outline-none placeholder:text-faint focus:border-brand" placeholder="可选" type="text" autocomplete="off" bind:value={referralCode}>
+					</div>
 				</div>
 				{#if turnstileEnabled}
 					<div bind:this={turnstileEl}></div>
@@ -174,7 +183,7 @@
 					<p class="rounded-md border border-red-500/30 bg-red-500/10 px-3 py-2 text-sm text-red-300">{error}</p>
 				{/if}
 				<button class="h-10 w-full rounded-md bg-brand text-sm font-semibold text-black disabled:opacity-50" type="submit" disabled={loading || !email.trim() || !password}>
-					{loading ? '创建中...' : '创建账号'}
+					{loading ? '创建中...' : '创建账户'}
 				</button>
 				<div class="text-center text-xs text-muted">已有账户？<a class="ml-1 text-brand hover:underline" href="{base}/app/login">登录</a></div>
 				<p class="text-center text-xs text-faint">注册即表示同意 <a class="underline underline-offset-4 hover:text-white" href="{base}/terms-of-service">服务条款</a> 和 <a class="underline underline-offset-4 hover:text-white" href="{base}/privacy-policy">隐私政策</a></p>

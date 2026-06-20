@@ -1,4 +1,6 @@
 <script lang="ts">
+	import { base } from '$app/paths';
+	import Icon from '$lib/components/Icon.svelte';
 	import { customerApi } from '$lib/customer-api';
 	import type { PaymentOrder } from '$lib/customer-types';
 	import { fmtCost, fmtDate } from '$lib/format';
@@ -63,7 +65,12 @@
 {:else if loading}
 	<p class="text-sm text-faint">正在加载...</p>
 {:else if orders.length === 0}
-	<div class="rounded-lg border border-dashed border-line bg-card/30 px-6 py-16 text-center text-sm text-faint">暂无订单记录</div>
+	<div class="flex flex-col items-center rounded-lg border border-dashed border-line bg-card/30 px-6 py-16 text-center">
+		<Icon name="inbox" size={32} class="text-faint" />
+		<div class="mt-4 text-lg font-semibold">暂无订单记录</div>
+		<p class="mt-2 text-sm text-faint">购买套餐或充值后，订单将显示在这里。</p>
+		<a class="mt-5 inline-flex h-10 items-center rounded-md bg-brand px-4 text-sm font-semibold text-black hover:bg-brand/90" href={`${base}/app/billing`}>去购买</a>
+	</div>
 {:else}
 	<div class="overflow-x-auto rounded-lg border border-line bg-card/60">
 		<div class="grid gap-3 border-b border-line p-4 sm:grid-cols-[1fr_160px_160px]">
@@ -75,7 +82,7 @@
 				<option value="expired">expired</option>
 				<option value="failed">failed</option>
 			</select>
-			<select class="h-10 rounded-md border border-line bg-black/30 px-3 text-sm outline-none focus:border-brand" bind:value={methodFilter} disabled>
+			<select class="h-10 rounded-md border border-line bg-black/30 px-3 text-sm opacity-50 outline-none focus:border-brand cursor-not-allowed" bind:value={methodFilter} disabled>
 				<option value="all">全部方式</option>
 				<option value="wechat">微信</option>
 				<option value="alipay">支付宝</option>

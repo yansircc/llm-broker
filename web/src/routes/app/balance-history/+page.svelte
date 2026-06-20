@@ -2,6 +2,7 @@
 	import { customerApi } from '$lib/customer-api';
 	import type { BillingLedgerResponse } from '$lib/customer-types';
 	import { fmtCost, fmtDate } from '$lib/format';
+	import Icon from '$lib/components/Icon.svelte';
 
 	let data = $state<BillingLedgerResponse | null>(null);
 	let error = $state('');
@@ -70,17 +71,22 @@
 	<p class="text-sm text-faint">正在加载...</p>
 {:else}
 	<div class="mb-6 grid gap-4 sm:grid-cols-3">
-		<div class="rounded-lg border border-line bg-card/70 p-5">
+		<div class="relative rounded-lg border border-line bg-card/70 p-5">
+			<Icon name="arrow-down-left" size={20} class="absolute right-4 top-4 text-brand" />
 			<div class="text-sm text-faint">累计充值</div>
 			<div class="mt-3 font-mono text-2xl font-bold text-brand">{fmtCost(credits)}</div>
+			<div class="mt-1 text-xs text-faint">充值与兑换合计</div>
 		</div>
-		<div class="rounded-lg border border-line bg-card/70 p-5">
+		<div class="relative rounded-lg border border-line bg-card/70 p-5">
+			<Icon name="arrow-up-right" size={20} class="absolute right-4 top-4 text-faint" />
 			<div class="text-sm text-faint">累计消费</div>
 			<div class="mt-3 font-mono text-2xl font-bold">{fmtCost(debits)}</div>
+			<div class="mt-1 text-xs text-faint">近 30 天按天聚合</div>
 		</div>
 		<div class="rounded-lg border border-line bg-card/70 p-5">
 			<div class="text-sm text-faint">净额度</div>
 			<div class="mt-3 font-mono text-2xl font-bold">{fmtCost(credits - debits)}</div>
+			<div class="mt-1 text-xs text-faint">充值 - 消费</div>
 		</div>
 	</div>
 	<div class="mb-4 inline-flex rounded-md border border-line bg-black/20 p-1">

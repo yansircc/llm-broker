@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { browser } from '$app/environment';
 	import { base } from '$app/paths';
-	import { BRAND_DESCRIPTION, BRAND_NAME } from '$lib/brand';
+	import { BRAND_DESCRIPTION, BRAND_NAME, BRAND_SUPPORT_EMAIL } from '$lib/brand';
 
 	const activeHref = '/docs';
 	const docsNav = [
@@ -97,21 +97,38 @@
 
 		<article class="min-w-0">
 			<div class="font-mono text-xs uppercase tracking-wider text-brand">docs</div>
-			<h1 class="mt-3 text-4xl font-bold tracking-tight sm:text-5xl">文档</h1>
+			<h1 class="mt-3 text-4xl font-bold tracking-tight sm:text-5xl">{BRAND_NAME} 文档</h1>
 			<p class={`max-w-3xl text-base leading-7 ${mutedClass}`}>
-				AI API 中转服务使用指南 —— Claude Code / Codex / Cursor 零门槛接入
+				{BRAND_NAME} AI API 中转服务使用指南 —— Claude Code / Codex / Cursor 零门槛接入
 			</p>
 
 			<section class={`mt-10 border-t pt-8 ${borderClass}`}>
-				<h2 class="text-2xl font-semibold">什么是产品</h2>
+				<h2 class="text-2xl font-semibold">{BRAND_NAME} 使用指南</h2>
 				<p class={`mt-3 leading-7 ${mutedClass}`}>
-					{BRAND_NAME} 是{BRAND_DESCRIPTION}。它把账号、密钥、余额、模型路由和请求记录收在一个网关里，用户侧只需要一把 API Key 和一个 base URL。
-					当前 Codex 可用，Claude 家族即将接入；文档中的 Claude Code 配置用于说明同一套网关接入方式，不代表所有 Claude 模型已经全量上线。
+					欢迎使用 {BRAND_NAME} —— Claude Code 超强平替，{BRAND_DESCRIPTION}。
+				</p>
+				<p class={`mt-3 leading-7 ${mutedClass}`}>
+					无论你是刚接触终端 AI 工具的新手，还是已经在用 Claude Code / Codex 的开发者，本文档都会带你一步一步从注册走到能正常使用。
 				</p>
 			</section>
 
 			<section class={`mt-8 border-t pt-8 ${borderClass}`}>
+				<h2 class="text-2xl font-semibold">什么是 {BRAND_NAME}</h2>
+				<p class={`mt-3 leading-7 ${mutedClass}`}>
+					{BRAND_NAME} 把 Claude Code、OpenAI Codex、Cursor、VS Code (Continue / Cline)、JetBrains、Gemini CLI 等主流 AI 编码工具接入同一条稳定线路，提供统一的配置方式、透明计费与使用体验。
+				</p>
+				<ul class={`mt-4 space-y-3 leading-7 ${mutedClass}`}>
+					<li><strong>统一中转：</strong>一个 API 地址 <span class="font-mono text-brand">{origin}</span>，同时支持全部主流工具</li>
+					<li><strong>无需梯子：</strong>国内直连，企业级服务器集群转发</li>
+					<li><strong>透明计费：</strong>1 RMB = 1 USD 额度，约官方 1.4 折</li>
+					<li><strong>账号安全：</strong>封号风险由 {BRAND_NAME} 承担，多条独立上游线路毫秒级故障切换</li>
+					<li><strong>多平台：</strong>Windows / macOS / Linux 全覆盖</li>
+				</ul>
+			</section>
+
+			<section class={`mt-8 border-t pt-8 ${borderClass}`}>
 				<h2 class="text-2xl font-semibold">文档导航</h2>
+				<p class={`mt-3 leading-7 ${mutedClass}`}>按以下顺序阅读，适合零基础用户完整跑通：</p>
 				<div class="mt-5 grid gap-4 md:grid-cols-2">
 					{#each docsNav.slice(1) as item (item.href)}
 						<a class={`rounded-lg border p-5 hover:border-brand/50 ${panelClass}`} href="{base}{item.href}">
@@ -123,18 +140,21 @@
 			</section>
 
 			<section class={`mt-8 border-t pt-8 ${borderClass}`}>
-				<h2 class="text-2xl font-semibold">快速开始</h2>
+				<h2 class="text-2xl font-semibold">快速开始（已有基础）</h2>
+				<p class={`mt-3 leading-7 ${mutedClass}`}>如果你熟悉终端工具，直接：</p>
 				<ol class={`mt-4 space-y-3 leading-7 ${mutedClass}`}>
-					<li>1. 注册账号并完成充值，余额大于 0 后再创建 API Key。</li>
-					<li>2. 在控制台创建 API Key，按项目或工具分开管理。</li>
-					<li>3. Codex CLI 使用 <span class="font-mono text-brand">{origin}/openai</span> 作为 base URL；OpenAI Responses 兼容调用可使用 <span class="font-mono text-brand">{origin}/v1</span>。</li>
-					<li>4. 先用最小请求验证密钥和余额，再迁移日常工具。</li>
+					<li>1. 前往 <a class="text-brand" href="{base}/app/register">注册页面</a> 注册并充值。</li>
+					<li>2. 在 <a class="text-brand" href="{base}/app/keys">API 密钥</a> 页面创建 Key。</li>
+					<li>3. 将 Base URL 配置为 <span class="font-mono text-brand">{origin}</span>（Codex 等 OpenAI 兼容工具使用 <span class="font-mono text-brand">{origin}/v1</span>），密钥贴入工具配置。</li>
+					<li>4. 开始使用。</li>
 				</ol>
 				<pre class={`mt-5 whitespace-pre-wrap text-sm ${codeClass}`}>curl {origin}/v1/responses \
   -H "Authorization: Bearer sk-xxx" \
   -H "Content-Type: application/json" \
   -d '&#123;"model":"gpt-5.3-codex","input":"hello"&#125;'</pre>
-				<p class={`mt-4 text-sm ${faintClass}`}>如果返回 401、余额不足或模型不存在，先进入故障排查页确认密钥、余额和模型名。</p>
+				<p class={`mt-4 text-sm ${faintClass}`}>
+					遇到问题？先翻 <a class="text-brand" href="{base}/docs/troubleshooting">故障排查</a>，再翻 <a class="text-brand" href="{base}/docs/faq">FAQ</a>，仍未解决请发邮件到 <a class="font-mono text-brand" href="mailto:{BRAND_SUPPORT_EMAIL}">{BRAND_SUPPORT_EMAIL}</a>。
+				</p>
 			</section>
 		</article>
 	</div>

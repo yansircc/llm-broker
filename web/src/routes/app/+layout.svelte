@@ -5,40 +5,41 @@
 	import { customerApi } from '$lib/customer-api';
 	import type { BillingSummary, CustomerMe } from '$lib/customer-types';
 	import { fmtCost } from '$lib/format';
+	import Icon from '$lib/components/Icon.svelte';
 
 	interface Props {
 		children: import('svelte').Snippet;
 	}
 
 	const navGroups = [
-		{ label: '', items: [{ href: '/app/dashboard', label: '仪表盘' }] },
+		{ label: '', items: [{ href: '/app/dashboard', label: '仪表盘', icon: 'dashboard' }] },
 		{
 			label: 'API',
 			items: [
-				{ href: '/app/keys', label: 'API 密钥' },
-				{ href: '/app/key-test', label: 'Key 测试' },
-				{ href: '/app/images', label: 'AI 生图', badge: 'NEW' },
-				{ href: '/app/usage', label: '使用记录' }
+				{ href: '/app/keys', label: 'API 密钥', icon: 'key' },
+				{ href: '/app/key-test', label: 'Key 测试', icon: 'test' },
+				{ href: '/app/images', label: 'AI 生图', icon: 'image', badge: 'NEW' },
+				{ href: '/app/usage', label: '使用记录', icon: 'usage' }
 			]
 		},
 		{
 			label: '账单',
 			items: [
-				{ href: '/app/billing', label: '充值 / 订阅' },
-				{ href: '/app/orders', label: '我的订单' },
-				{ href: '/app/subscriptions', label: '我的订阅' },
-				{ href: '/app/balance-history', label: '额度记录' }
+				{ href: '/app/billing', label: '充值 / 订阅', icon: 'billing' },
+				{ href: '/app/orders', label: '我的订单', icon: 'orders' },
+				{ href: '/app/subscriptions', label: '我的订阅', icon: 'calendar' },
+				{ href: '/app/balance-history', label: '额度记录', icon: 'history' }
 			]
 		},
-		{ label: '', items: [{ href: '/app/redeem', label: '兑换码' }] },
+		{ label: '', items: [{ href: '/app/redeem', label: '兑换码', icon: 'gift' }] },
 		{
 			label: '分销',
 			items: [
-				{ href: '/app/referrals', label: '分销中心' },
-				{ href: '/app/referrals/earnings', label: '佣金明细' }
+				{ href: '/app/referrals', label: '分销中心', icon: 'referrals' },
+				{ href: '/app/referrals/earnings', label: '佣金明细', icon: 'coins' }
 			]
 		},
-		{ label: '', items: [{ href: '/app/settings', label: '个人设置' }] }
+		{ label: '', items: [{ href: '/app/settings', label: '个人设置', icon: 'settings' }] }
 	];
 
 	const accountMenuItems = [
@@ -114,9 +115,9 @@
 				</div>
 
 				<div class="flex min-w-0 items-center gap-3">
-					<button class="hidden h-8 items-center rounded-md px-2 text-sm text-faint hover:bg-white/[0.04] hover:text-white sm:inline-flex" type="button">ZH</button>
-					<a href="{base}/app/billing" class="hidden rounded-full border border-line bg-card px-3 py-1.5 font-mono text-sm hover:border-brand/50 sm:inline-flex">
-						<span class="mr-1 text-brand">$</span>{billing ? fmtCost(billing.balance_usd).replace('$', '') : '0.00'}
+					<button class="hidden h-8 items-center gap-1 rounded-md px-2 text-sm text-faint hover:bg-white/[0.04] hover:text-white sm:inline-flex" type="button"><Icon name="globe" size={15} />ZH</button>
+					<a href="{base}/app/billing" class="hidden items-center rounded-full bg-brand px-3 py-1.5 font-mono text-sm font-semibold text-black hover:bg-[#35ff67] sm:inline-flex">
+						<span class="mr-1">$</span>{billing ? fmtCost(billing.balance_usd).replace('$', '') : '0.00'}
 					</a>
 					<div class="hidden min-w-0 text-right text-xs text-faint sm:block">
 						<div class="truncate text-slate-200">{me?.user.email ?? 'loading session...'}</div>
@@ -169,9 +170,10 @@
 								{#each group.items as item}
 									<a
 										href="{base}{item.href}"
-										class={`flex items-center justify-between rounded-md px-3 py-2 text-sm transition-colors ${activeNav(item.href) ? 'bg-brand font-semibold text-black' : 'text-slate-300 hover:bg-white/[0.04] hover:text-white'}`}
+										class={`flex items-center gap-2.5 rounded-md px-3 py-2 text-sm transition-colors ${activeNav(item.href) ? 'bg-brand font-semibold text-black' : 'text-slate-300 hover:bg-white/[0.04] hover:text-white'}`}
 									>
-										<span>{item.label}</span>
+										<Icon name={item.icon} size={16} />
+										<span class="flex-1">{item.label}</span>
 										{#if item.badge}
 											<span class={`rounded px-1.5 py-0.5 font-mono text-[10px] ${activeNav(item.href) ? 'bg-black/10 text-black' : 'bg-brand/10 text-brand'}`}>{item.badge}</span>
 										{/if}
@@ -204,9 +206,10 @@
 										<a
 											href="{base}{item.href}"
 											onclick={() => (mobileOpen = false)}
-											class={`mb-1 flex items-center justify-between rounded-md px-3 py-2 text-sm ${activeNav(item.href) ? 'bg-brand font-semibold text-black' : 'text-slate-300 hover:bg-white/[0.04]'}`}
+											class={`mb-1 flex items-center gap-2.5 rounded-md px-3 py-2 text-sm ${activeNav(item.href) ? 'bg-brand font-semibold text-black' : 'text-slate-300 hover:bg-white/[0.04]'}`}
 										>
-											<span>{item.label}</span>
+											<Icon name={item.icon} size={16} />
+											<span class="flex-1">{item.label}</span>
 											{#if item.badge}
 												<span class={`rounded px-1.5 py-0.5 font-mono text-[10px] ${activeNav(item.href) ? 'bg-black/10 text-black' : 'bg-brand/10 text-brand'}`}>{item.badge}</span>
 											{/if}

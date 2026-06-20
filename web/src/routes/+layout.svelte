@@ -4,7 +4,7 @@
 	import { page } from '$app/stores';
 	import { onMount } from 'svelte';
 	import Logo from '$lib/components/Logo.svelte';
-	import { BRAND_COPYRIGHT, BRAND_DESCRIPTION, BRAND_NAME, BRAND_TAGLINE } from '$lib/brand';
+	import { BRAND_COPYRIGHT, BRAND_DESCRIPTION, BRAND_NAME, BRAND_SUPPORT_EMAIL, BRAND_TAGLINE } from '$lib/brand';
 	import type { CustomerMe, CustomerUser } from '$lib/customer-types';
 
 	interface Props {
@@ -157,27 +157,51 @@
 			{@render children()}
 		</main>
 		<footer class="border-t border-line">
-			<div class="mx-auto grid max-w-6xl gap-8 px-5 py-10 text-sm text-faint sm:grid-cols-[1.2fr_2fr]">
+			<div class="mx-auto grid max-w-6xl gap-8 px-5 py-12 text-sm text-faint sm:grid-cols-2 lg:grid-cols-[1.4fr_1fr_1fr_1fr]">
 				<div>
 					<a href="{base}/" class="flex items-center gap-3 font-semibold text-slate-100">
 						<span class="brand-mark" aria-hidden="true"></span>
 						<span class="text-xl">{BRAND_NAME}</span>
 					</a>
-					<p class="mt-3 max-w-sm">{BRAND_TAGLINE}。{BRAND_DESCRIPTION}。</p>
+					<p class="mt-3 max-w-xs">{BRAND_TAGLINE}。{BRAND_DESCRIPTION}。</p>
 				</div>
-				<div class="grid gap-3 sm:grid-cols-3">
-					<a class="hover:text-brand" href="{base}/pricing">按量付费</a>
-					<a class="hover:text-brand" href="{base}/models">支持模型</a>
-					<a class="hover:text-brand" href="{base}/docs">使用文档</a>
-					<a class="hover:text-brand" href="{base}/blog">博客</a>
-					<a class="hover:text-brand" href="{base}/partner">分销合作</a>
-					<a class="hover:text-brand" href="{base}/contact">联系我们</a>
+				<div>
+					<h3 class="mb-3 text-xs font-semibold uppercase tracking-wider text-slate-300">产品</h3>
+					<ul class="space-y-2.5">
+						<li><a class="hover:text-brand" href="{base}/pricing">按量付费</a></li>
+						<li><a class="hover:text-brand" href="{base}/pricing">月卡订阅</a></li>
+						<li><a class="hover:text-brand" href="{base}/models">模型定价</a></li>
+						<li><a class="hover:text-brand" href="{base}/contact">企业方案</a></li>
+					</ul>
+				</div>
+				<div>
+					<h3 class="mb-3 text-xs font-semibold uppercase tracking-wider text-slate-300">支持模型</h3>
+					<ul class="space-y-2.5">
+						<li><a class="hover:text-brand" href="{base}/models">Claude Opus / Sonnet / Haiku</a></li>
+						<li><a class="hover:text-brand" href="{base}/models">GPT-5.4 / GPT-4o</a></li>
+						<li><a class="hover:text-brand" href="{base}/models">o3 / o4-mini / Codex</a></li>
+						<li><a class="hover:text-brand" href="{base}/models">查看全部</a></li>
+					</ul>
+				</div>
+				<div>
+					<h3 class="mb-3 text-xs font-semibold uppercase tracking-wider text-slate-300">资源 & 联系</h3>
+					<ul class="space-y-2.5">
+						<li><a class="hover:text-brand" href="{base}/docs">使用文档</a></li>
+						<li><a class="hover:text-brand" href="{base}/blog">博客</a></li>
+						<li><a class="hover:text-brand" href="{base}/docs/faq">常见问题</a></li>
+						<li><a class="hover:text-brand" href="mailto:{BRAND_SUPPORT_EMAIL}">{BRAND_SUPPORT_EMAIL}</a></li>
+						<li><a class="hover:text-brand" href="{base}/partner">分销合作</a></li>
+					</ul>
+				</div>
+			</div>
+			<div class="mx-auto flex max-w-6xl flex-wrap items-center justify-between gap-3 border-t border-line px-5 py-6 text-xs text-faint">
+				<span>{BRAND_COPYRIGHT}</span>
+				<div class="flex items-center gap-4">
 					<a class="hover:text-brand" href="{base}/terms-of-service">服务条款</a>
 					<a class="hover:text-brand" href="{base}/privacy-policy">隐私政策</a>
 					<a class="hover:text-brand" href="{base}/acceptable-use-policy">使用政策</a>
 				</div>
 			</div>
-			<div class="mx-auto max-w-6xl px-5 pb-8 text-xs text-faint">{BRAND_COPYRIGHT}</div>
 		</footer>
 	</div>
 {:else}

@@ -3,10 +3,12 @@
 	import { BRAND_NAME } from '$lib/brand';
 	import { customerApi } from '$lib/customer-api';
 	import type { AuthResponse } from '$lib/customer-types';
+	import Icon from '$lib/components/Icon.svelte';
 	import { onMount, tick } from 'svelte';
 
 	let email = $state('');
 	let password = $state('');
+	let showPassword = $state(false);
 	let turnstileEnabled = $state(false);
 	let turnstileSiteKey = $state('');
 	let turnstileToken = $state('');
@@ -17,7 +19,7 @@
 	const authHighlights = [
 		['1 元用 1 刀', '按 USD 额度入账，按实际调用扣费。'],
 		['满血不掺水', '模型能力以实际已接入服务为准。'],
-		['一把 Key 接入 8+ 工具', 'Codex 当前可用，Claude 家族接入后共用同一控制台。'],
+		['一把 Key 接入 8+ 工具', 'Claude Code、Codex、Cursor 等共用同一控制台。'],
 		['1 元 = 1 刀', '充值额度以账户余额为唯一消费来源。'],
 		['永不断线', '多账号池调度，异常状态可观察、可切换。']
 	];
@@ -109,7 +111,7 @@
 				<span class="text-2xl">{BRAND_NAME}</span>
 			</a>
 			<h1 class="mt-8 max-w-xl text-3xl font-semibold tracking-tight">1 元用 1 刀，登录 {BRAND_NAME} 控制台</h1>
-			<p class="mt-4 max-w-lg text-sm leading-relaxed text-muted">当前提供 Codex 中转；Claude Opus / Sonnet / Haiku 家族正在接入，后续沿用同一套密钥、用量和账本。</p>
+			<p class="mt-4 max-w-lg text-sm leading-relaxed text-muted">一套密钥接入主流编码工具，用量、消费和账本统一管理。</p>
 			<div class="mt-8 grid max-w-lg gap-3 text-sm text-muted">
 				{#each authHighlights as item}
 					<div class="rounded-lg border border-line bg-card/60 p-4">
@@ -131,11 +133,20 @@
 			<form class="mt-7 space-y-4" onsubmit={login}>
 				<div>
 					<label class="mb-1.5 block text-sm text-muted" for="email">邮箱</label>
-					<input id="email" class="h-10 w-full rounded-md border border-line bg-transparent px-3 text-sm outline-none placeholder:text-faint focus:border-brand" placeholder="请输入邮箱" type="email" autocomplete="email" bind:value={email}>
+					<div class="relative">
+						<span class="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-faint"><Icon name="mail" size={16} /></span>
+						<input id="email" class="h-10 w-full rounded-md border border-line bg-transparent pl-10 pr-3 text-sm outline-none placeholder:text-faint focus:border-brand" placeholder="请输入邮箱" type="email" autocomplete="email" bind:value={email}>
+					</div>
 				</div>
 				<div>
 					<label class="mb-1.5 block text-sm text-muted" for="password">密码</label>
-					<input id="password" class="h-10 w-full rounded-md border border-line bg-transparent px-3 text-sm outline-none placeholder:text-faint focus:border-brand" placeholder="请输入密码" type="password" autocomplete="current-password" bind:value={password}>
+					<div class="relative">
+						<span class="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-faint"><Icon name="lock" size={16} /></span>
+						<input id="password" class="h-10 w-full rounded-md border border-line bg-transparent pl-10 pr-10 text-sm outline-none placeholder:text-faint focus:border-brand" placeholder="请输入密码" type={showPassword ? 'text' : 'password'} autocomplete="current-password" bind:value={password}>
+						<button class="absolute right-2 top-1/2 -translate-y-1/2 border-0 bg-transparent p-1 text-faint hover:text-white" type="button" aria-label={showPassword ? '隐藏密码' : '显示密码'} onclick={() => (showPassword = !showPassword)}>
+							<Icon name={showPassword ? 'eye-off' : 'eye'} size={16} />
+						</button>
+					</div>
 				</div>
 				{#if turnstileEnabled}
 					<div bind:this={turnstileEl}></div>
@@ -146,10 +157,10 @@
 				<button class="h-10 w-full rounded-md bg-brand text-sm font-semibold text-black disabled:opacity-50" type="submit" disabled={loading || !email.trim() || !password}>
 					{loading ? '登录中...' : '登录'}
 				</button>
-				<div class="flex items-center justify-between text-xs text-muted">
+				<div class="text-center">
 					<button class="border-0 bg-transparent p-0 text-xs text-faint hover:text-brand disabled:cursor-not-allowed disabled:opacity-60" type="button" disabled>忘记密码？</button>
-					<span>没有账户？<a class="ml-1 text-brand hover:underline" href="{base}/app/register">注册</a></span>
 				</div>
+				<div class="text-center text-xs text-muted">没有账户？<a class="ml-1 text-brand hover:underline" href="{base}/app/register">注册</a></div>
 				<p class="text-center text-xs text-faint">登录即表示同意 <a class="underline underline-offset-4 hover:text-white" href="{base}/terms-of-service">服务条款</a> 和 <a class="underline underline-offset-4 hover:text-white" href="{base}/privacy-policy">隐私政策</a></p>
 			</form>
 		</section>

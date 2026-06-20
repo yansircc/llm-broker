@@ -6,11 +6,13 @@
 		provider: string;
 		name: string;
 		id: string;
-		useCase: string;
+		desc: string;
+		tags: string[];
 		input: string;
 		output: string;
-		cache: string;
-		status: 'current' | 'planned' | 'reserved';
+		cacheRead?: string;
+		perImage?: string;
+		note?: string;
 	};
 
 	type ModelGroup = {
@@ -22,75 +24,68 @@
 	const groups: ModelGroup[] = [
 		{
 			provider: 'Anthropic',
-			summary: 'Claude 家族将接入同一 Key、账本和套餐表达；正式可用以后端模型目录为准。',
+			summary: 'Claude 全系列满血支持，共用同一 Key、账本和套餐，按官方定价享汇率优惠。',
 			models: [
-				{ provider: 'Anthropic', name: 'Claude Opus 4.8', id: 'claude-opus-4-8', useCase: '复杂推理、长上下文架构设计', input: '$15.00/MTok', output: '$75.00/MTok', cache: 'write $18.75 · read $1.50', status: 'planned' },
-				{ provider: 'Anthropic', name: 'Claude Opus 4.7', id: 'claude-opus-4-7', useCase: '高难度代码审查和重构规划', input: '$15.00/MTok', output: '$75.00/MTok', cache: 'write $18.75 · read $1.50', status: 'planned' },
-				{ provider: 'Anthropic', name: 'Claude Opus 4.6', id: 'claude-opus-4-6', useCase: '复杂代理任务和深度分析', input: '$15.00/MTok', output: '$75.00/MTok', cache: 'write $18.75 · read $1.50', status: 'planned' },
-				{ provider: 'Anthropic', name: 'Claude Opus 4.5', id: 'claude-opus-4-5', useCase: '大型工程理解和方案推演', input: '$15.00/MTok', output: '$75.00/MTok', cache: 'write $18.75 · read $1.50', status: 'planned' },
-				{ provider: 'Anthropic', name: 'Claude Sonnet 4.7', id: 'claude-sonnet-4-7', useCase: '日常编码、测试和文档生成', input: '$3.00/MTok', output: '$15.00/MTok', cache: 'write $3.75 · read $0.30', status: 'planned' },
-				{ provider: 'Anthropic', name: 'Claude Sonnet 4.6', id: 'claude-sonnet-4-6', useCase: '稳定代码编辑和工具调用', input: '$3.00/MTok', output: '$15.00/MTok', cache: 'write $3.75 · read $0.30', status: 'planned' },
-				{ provider: 'Anthropic', name: 'Claude Sonnet 4.5', id: 'claude-sonnet-4-5', useCase: '主力开发模型和多文件修改', input: '$3.00/MTok', output: '$15.00/MTok', cache: 'write $3.75 · read $0.30', status: 'planned' },
-				{ provider: 'Anthropic', name: 'Claude Haiku 4.5', id: 'claude-haiku-4-5', useCase: '轻量分类、摘要和快速补全', input: '$0.80/MTok', output: '$4.00/MTok', cache: 'write $1.00 · read $0.08', status: 'planned' }
+				{ provider: 'Anthropic', name: 'Claude Opus 4.8', id: 'claude-opus-4-8', desc: '最新旗舰推理模型，超强编码与多步推理', tags: ['推理', '编码', '最强', '最新'], input: '$5', output: '$25', cacheRead: '$0.5' },
+				{ provider: 'Anthropic', name: 'Claude Opus 4.7', id: 'claude-opus-4-7', desc: '旗舰推理模型', tags: ['推理', '编码', '最强'], input: '$5', output: '$25', cacheRead: '$0.5' },
+				{ provider: 'Anthropic', name: 'Claude Opus 4.6', id: 'claude-opus-4-6', desc: '最强推理模型，适合复杂推理与高价值工程任务', tags: ['推理', '编码', '最强'], input: '$5', output: '$25', cacheRead: '$0.5' },
+				{ provider: 'Anthropic', name: 'Claude Opus 4.5', id: 'claude-opus-4-5', desc: '高性能推理模型', tags: ['推理', '编码'], input: '$5', output: '$25', cacheRead: '$0.5' },
+				{ provider: 'Anthropic', name: 'Claude Sonnet 4.7', id: 'claude-sonnet-4-7', desc: '最新高效编码模型', tags: ['编码', '高效', '主力'], input: '$3', output: '$15', cacheRead: '$0.3' },
+				{ provider: 'Anthropic', name: 'Claude Sonnet 4.6', id: 'claude-sonnet-4-6', desc: '日常主力编码模型，速度与性能的最佳组合', tags: ['编码', '高效', '主力'], input: '$3', output: '$15', cacheRead: '$0.3' },
+				{ provider: 'Anthropic', name: 'Claude Sonnet 4.5', id: 'claude-sonnet-4-5', desc: '高效编码模型', tags: ['编码', '高效'], input: '$3', output: '$15', cacheRead: '$0.3' },
+				{ provider: 'Anthropic', name: 'Claude Haiku 4.5', id: 'claude-haiku-4-5', desc: '最快模型，适合轻量补全与快速迭代', tags: ['快速', '轻量'], input: '$0.8', output: '$4', cacheRead: '$0.08' }
 			]
 		},
 		{
 			provider: 'OpenAI',
-			summary: '当前服务重点是 Codex 中转；其余 OpenAI 模型按目标商业页保留价格位。',
+			summary: 'GPT、o 系列与 Codex 全面可用，兼容 OpenAI 接口，按官方定价计费。',
 			models: [
-				{ provider: 'OpenAI', name: 'GPT-5.4', id: 'gpt-5.4', useCase: '复杂任务规划、深度推理', input: '$5.00/MTok', output: '$15.00/MTok', cache: 'read $0.50', status: 'reserved' },
-				{ provider: 'OpenAI', name: 'GPT-5', id: 'gpt-5', useCase: '通用推理和代码生成', input: '$2.50/MTok', output: '$10.00/MTok', cache: 'read $0.25', status: 'reserved' },
-				{ provider: 'OpenAI', name: 'GPT-5 Mini', id: 'gpt-5-mini', useCase: '低成本批量任务和工具调用', input: '$0.25/MTok', output: '$2.00/MTok', cache: 'read $0.025', status: 'reserved' },
-				{ provider: 'OpenAI', name: 'GPT-4o', id: 'gpt-4o', useCase: '多模态对话和通用应用', input: '$2.50/MTok', output: '$10.00/MTok', cache: 'read $1.25', status: 'reserved' },
-				{ provider: 'OpenAI', name: 'o3', id: 'o3', useCase: '高强度推理和问题求解', input: '$2.00/MTok', output: '$8.00/MTok', cache: 'read $0.50', status: 'reserved' },
-				{ provider: 'OpenAI', name: 'o3-pro', id: 'o3-pro', useCase: '更高推理预算的复杂分析', input: '$20.00/MTok', output: '$80.00/MTok', cache: 'read $5.00', status: 'reserved' },
-				{ provider: 'OpenAI', name: 'o4-mini', id: 'o4-mini', useCase: '低延迟推理和自动化流程', input: '$1.10/MTok', output: '$4.40/MTok', cache: 'read $0.275', status: 'reserved' },
-				{ provider: 'OpenAI', name: 'Codex Mini', id: 'codex-mini-latest', useCase: 'Codex CLI、编程代理和代码修改', input: '$1.50/MTok', output: '$6.00/MTok', cache: '按后端账单记录', status: 'current' }
+				{ provider: 'OpenAI', name: 'GPT-5.4', id: 'gpt-5.4', desc: 'OpenAI 最新旗舰模型，融合推理与编码', tags: ['推理', '编码', '多模态'], input: '$5', output: '$15' },
+				{ provider: 'OpenAI', name: 'GPT-5', id: 'gpt-5', desc: 'GPT-5 基础版', tags: ['推理', '多模态'], input: '$5', output: '$15' },
+				{ provider: 'OpenAI', name: 'GPT-5 Mini', id: 'gpt-5-mini', desc: 'GPT-5 轻量版，性价比更高', tags: ['快速', '高效'], input: '$1.5', output: '$6' },
+				{ provider: 'OpenAI', name: 'GPT-4o', id: 'gpt-4o', desc: 'GPT-4o 多模态模型', tags: ['多模态'], input: '$2.5', output: '$10' },
+				{ provider: 'OpenAI', name: 'o3', id: 'o3', desc: '推理模型，擅长数学/科学/编码', tags: ['推理', '编码'], input: '$10', output: '$40' },
+				{ provider: 'OpenAI', name: 'o3-pro', id: 'o3-pro', desc: 'o3 增强版，更长思考更可靠', tags: ['推理', '最强'], input: '$20', output: '$80' },
+				{ provider: 'OpenAI', name: 'o4-mini', id: 'o4-mini', desc: '最新轻量推理模型', tags: ['推理', '快速'], input: '$1.1', output: '$4.4' },
+				{ provider: 'OpenAI', name: 'Codex Mini', id: 'codex-mini-latest', desc: '专为代码生成优化', tags: ['编码'], input: '$1.5', output: '$6' }
 			]
 		},
 		{
 			provider: 'Google',
-			summary: 'Gemini 组用于目标模型目录和套餐表达展示，当前不作为已上线承诺。',
+			summary: 'Gemini 全系列可用，长上下文与多模态能力，适合高性价比批量处理。',
 			models: [
-				{ provider: 'Google', name: 'Gemini 3.5 Flash', id: 'gemini-3.5-flash', useCase: '快速多模态和低延迟摘要', input: '$0.50/MTok', output: '$3.00/MTok', cache: 'read $0.125', status: 'reserved' },
-				{ provider: 'Google', name: 'Gemini 2.5 Pro', id: 'gemini-2.5-pro', useCase: '长上下文推理和复杂分析', input: '$1.25/MTok', output: '$10.00/MTok', cache: 'read $0.31', status: 'reserved' },
-				{ provider: 'Google', name: 'Gemini 2.5 Flash', id: 'gemini-2.5-flash', useCase: '高性价比批量处理', input: '$0.30/MTok', output: '$2.50/MTok', cache: 'read $0.075', status: 'reserved' },
-				{ provider: 'Google', name: 'Gemini 2.5 Flash Lite', id: 'gemini-2.5-flash-lite', useCase: '轻量分类、抽取和路由', input: '$0.10/MTok', output: '$0.40/MTok', cache: 'read $0.025', status: 'reserved' }
+				{ provider: 'Google', name: 'Gemini 3.5 Flash', id: 'gemini-3.5-flash', desc: 'Google 最新旗舰模型，最强推理与多模态能力', tags: ['推理', '多模态', '最新'], input: '$0.15', output: '$0.6' },
+				{ provider: 'Google', name: 'Gemini 2.5 Pro', id: 'gemini-2.5-pro', desc: 'Google 顶级推理模型，百万上下文，支持多模态', tags: ['推理', '多模态', '长上下文'], input: '$1.25', output: '$10' },
+				{ provider: 'Google', name: 'Gemini 2.5 Flash', id: 'gemini-2.5-flash', desc: 'Google 高速模型，性价比极高', tags: ['快速', '高效', '多模态'], input: '$0.15', output: '$0.6' },
+				{ provider: 'Google', name: 'Gemini 2.5 Flash Lite', id: 'gemini-2.5-flash-lite', desc: 'Google 最轻量模型，最快速最低价', tags: ['快速', '轻量', '低价'], input: '$0.05', output: '$0.2' }
 			]
 		},
 		{
 			provider: '图像生成',
-			summary: '图像模型作为目标商业页条目展示，开放状态以控制台入口和后端能力为准。',
+			summary: '兼容 OpenAI Images 接口，新建生图分组 Key 即可文生图、改图，按张计费。',
 			models: [
-				{ provider: 'OpenAI', name: 'OpenAI 图像生成', id: 'gpt-image-1', useCase: '文生图、改图和视觉素材生成', input: '按请求/尺寸', output: '按张计费', cache: '不适用', status: 'reserved' }
+				{ provider: '图像生成', name: 'OpenAI 图像生成', id: 'gpt-image-1', desc: '文生图，OpenAI Images 接口兼容（/v1/images/generations）', tags: ['文生图', 'OpenAI 兼容'], input: '', output: '', perImage: '$0.04', note: '需使用「生图分组」的 API Key · 也支持 dall-e-3 / gemini-image' }
 			]
 		}
 	];
-
-	const statusCopy = {
-		current: '当前 Codex 中转',
-		planned: '即将接入',
-		reserved: '价格位保留'
-	};
 </script>
 
 <section class="border-b border-line">
-	<div class="mx-auto max-w-6xl px-5 py-16 text-center">
-		<div class="font-mono text-xs uppercase tracking-wider text-brand">models</div>
-		<h1 class="mt-3 text-4xl font-bold tracking-tight sm:text-5xl">目标模型目录</h1>
+	<div class="mx-auto max-w-6xl px-5 py-28 text-center">
+		<span class="inline-flex items-center gap-2 rounded-full border border-brand/40 bg-brand/[0.06] px-3 py-1 text-xs font-medium text-brand">支持模型</span>
+		<h1 class="mt-3 text-4xl font-bold tracking-tight sm:text-5xl">一个 Key，调用所有模型</h1>
 		<p class="mx-auto mt-4 max-w-3xl text-muted">
-			{BRAND_NAME} 公开页按参考站结构展示模型分组和计费字段。当前实际可用能力集中在 Codex 中转；Claude 家族将接入同一套餐表达，其他条目仅为目录占位，不代表现在可调用。
+			Claude 全系列满血支持，GPT / o3 / Codex 同步可用。按官方定价计费，通过 {BRAND_NAME} 享 1.4 折汇率优惠。
 		</p>
-		<div class="mt-8 flex flex-wrap justify-center gap-3 text-sm">
-			<span class="rounded-md border border-brand/50 bg-brand/[0.08] px-3 py-2 text-brand">21 个目标模型条目</span>
-			<span class="rounded-md border border-line bg-card/60 px-3 py-2 text-faint">输入 / 输出 / cache / 模型 ID</span>
+		<div class="mt-16 flex flex-wrap justify-center gap-3 text-sm">
 			<a class="rounded-md bg-brand px-4 py-2 font-semibold text-black" href="{base}/app/register">创建 API Key</a>
+			<a class="rounded-md border border-line bg-card/60 px-4 py-2 hover:border-brand/50" href="{base}/pricing">查看价格表</a>
 		</div>
 	</div>
 </section>
 
-<section class="mx-auto max-w-6xl px-5 py-14">
-	<div class="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+<section class="mx-auto max-w-6xl px-5 py-28">
+	<div class="grid gap-6 sm:grid-cols-2 lg:grid-cols-4">
 		{#each groups as group (group.provider)}
 			<a class="rounded-lg border border-line bg-card/60 p-5 hover:border-brand/50" href="{base}/models#{group.provider}">
 				<div class="font-mono text-xs uppercase tracking-wider text-brand">{group.provider}</div>
@@ -103,7 +98,7 @@
 
 {#each groups as group (group.provider)}
 	<section class="border-t border-line" id={group.provider}>
-		<div class="mx-auto max-w-6xl px-5 py-14">
+		<div class="mx-auto max-w-6xl px-5 py-28">
 			<div class="flex flex-col justify-between gap-3 sm:flex-row sm:items-end">
 				<div>
 					<div class="font-mono text-xs uppercase tracking-wider text-brand">{group.provider}</div>
@@ -113,30 +108,53 @@
 				<div class="rounded-md border border-line bg-card/60 px-3 py-2 font-mono text-xs text-faint">{group.models.length} models</div>
 			</div>
 
-			<div class="mt-8 grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+			<div class="mt-16 grid gap-6 sm:grid-cols-2 lg:grid-cols-4">
 				{#each group.models as model (model.id)}
-					<article class={`flex min-h-[300px] flex-col rounded-lg border bg-card/60 p-5 ${model.status === 'current' ? 'border-brand/60' : 'border-line'}`}>
+					<article class="flex flex-col rounded-lg border border-line bg-card/60 p-5">
 						<div class="flex items-start justify-between gap-3">
-							<div class="font-mono text-xs text-faint">{model.provider}</div>
-							<span class={`rounded-md px-2 py-1 text-xs ${model.status === 'current' ? 'bg-brand text-black' : 'border border-line text-faint'}`}>{statusCopy[model.status]}</span>
+							{#if model.provider === 'Anthropic'}
+								<span class="rounded-full bg-brand px-2 py-0.5 text-[11px] font-semibold text-black">{model.provider}</span>
+							{:else}
+								<span class="rounded-full border border-line px-2 py-0.5 font-mono text-[11px] text-faint">{model.provider}</span>
+							{/if}
 						</div>
 						<h3 class="mt-4 text-lg font-semibold">{model.name}</h3>
-						<p class="min-h-12 text-sm text-faint">{model.useCase}</p>
-						<div class="mt-4 rounded-md border border-line bg-black/20 p-3 font-mono text-xs text-brand">{model.id}</div>
-						<div class="mt-4 grid gap-2 text-xs">
-							<div class="flex justify-between gap-3 rounded-md border border-line bg-black/20 p-2">
-								<span class="text-faint">input</span>
-								<span class="font-mono text-brand">{model.input}</span>
-							</div>
-							<div class="flex justify-between gap-3 rounded-md border border-line bg-black/20 p-2">
-								<span class="text-faint">output</span>
-								<span class="font-mono text-brand">{model.output}</span>
-							</div>
-							<div class="rounded-md border border-line bg-black/20 p-2">
-								<div class="text-faint">cache</div>
-								<div class="mt-1 font-mono text-muted">{model.cache}</div>
-							</div>
+						<p class="mt-2 min-h-12 text-sm text-faint">{model.desc}</p>
+						<div class="mt-3 flex flex-wrap gap-1.5">
+							{#each model.tags as tag (tag)}
+								<span class="rounded-full border border-line bg-black/20 px-2 py-0.5 text-[11px] text-muted">{tag}</span>
+							{/each}
 						</div>
+						<div class="mt-4 grid gap-2 rounded-md border border-line bg-black/20 p-3 text-xs">
+							{#if model.perImage}
+								<div class="flex justify-between gap-3">
+									<span class="text-faint">每张</span>
+									<span class="font-mono text-brand">{model.perImage}/张</span>
+								</div>
+							{:else}
+								<div class="flex justify-between gap-3">
+									<span class="text-faint">输入</span>
+									<span class="font-mono text-brand">{model.input}/MTok</span>
+								</div>
+								<div class="flex justify-between gap-3">
+									<span class="text-faint">输出</span>
+									<span class="font-mono text-brand">{model.output}/MTok</span>
+								</div>
+								{#if model.cacheRead}
+									<div class="flex justify-between gap-3">
+										<span class="text-faint">缓存读取</span>
+										<span class="font-mono text-brand">{model.cacheRead}/MTok</span>
+									</div>
+								{/if}
+							{/if}
+						</div>
+						<div class="mt-4">
+							<div class="text-[11px] text-faint">模型 ID</div>
+							<div class="mt-1 font-mono text-xs text-brand">{model.id}</div>
+						</div>
+						{#if model.note}
+							<p class="mt-3 text-[11px] leading-relaxed text-faint">{model.note}</p>
+						{/if}
 					</article>
 				{/each}
 			</div>
@@ -145,13 +163,28 @@
 {/each}
 
 <section class="border-t border-line bg-surface/30">
-	<div class="mx-auto max-w-6xl px-5 py-14">
-		<div class="rounded-lg border border-line bg-card/60 p-6">
-			<div class="font-mono text-xs uppercase tracking-wider text-brand">availability</div>
-			<h2 class="mt-3 text-2xl font-bold">实际可用性</h2>
-			<p class="mt-3 text-sm leading-relaxed text-muted">
-				本页覆盖参考站要求的完整公开模型结构，但不是运行时模型源。运行时模型、价格和准入结果必须以服务端模型目录、账单配置和控制台展示为准。
-			</p>
+	<div class="mx-auto max-w-6xl px-5 py-28">
+		<div class="grid gap-6 md:grid-cols-3">
+			<div class="rounded-lg border border-line bg-card/60 p-6">
+				<h3 class="text-lg font-semibold text-brand">满血无阉割</h3>
+				<p class="mt-2 text-sm leading-relaxed text-muted">所有模型保持原版能力，支持工具调用、联网搜索和长上下文。</p>
+			</div>
+			<div class="rounded-lg border border-line bg-card/60 p-6">
+				<h3 class="text-lg font-semibold text-brand">100% 缓存支持</h3>
+				<p class="mt-2 text-sm leading-relaxed text-muted">缓存读取 / 写入按官方价格计费，大幅降低重复请求成本。</p>
+			</div>
+			<div class="rounded-lg border border-line bg-card/60 p-6">
+				<h3 class="text-lg font-semibold text-brand">官方定价</h3>
+				<p class="mt-2 text-sm leading-relaxed text-muted">按 Anthropic / OpenAI 官方价格计费，{BRAND_NAME} 只赚汇率差。</p>
+			</div>
+		</div>
+		<div class="mt-12 text-center">
+			<h2 class="text-3xl font-bold tracking-tight">3 分钟开始你的 AI 编码之旅</h2>
+			<p class="mx-auto mt-3 max-w-2xl text-muted">注册账号 → 充值 → 创建 API Key → 开始使用。就是这么简单。</p>
+			<div class="mt-6 flex justify-center">
+				<a class="rounded-md bg-brand px-10 py-3 text-base font-semibold text-black shadow-lg shadow-brand/20" href="{base}/app/register">立即注册</a>
+			</div>
+			<p class="mt-4 text-sm text-faint">1 元 = 1 刀额度 · 额度永不过期 · 支持微信 / 支付宝 / USDT</p>
 		</div>
 	</div>
 </section>

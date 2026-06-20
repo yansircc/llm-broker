@@ -99,83 +99,217 @@
 			<div class="font-mono text-xs uppercase tracking-wider text-brand">Install</div>
 			<h1 class="mt-3 text-4xl font-bold tracking-tight sm:text-5xl">安装配置</h1>
 			<p class={`max-w-3xl text-base leading-7 ${mutedClass}`}>
-				先装运行环境，再装工具，最后把工具的 API 地址和密钥指向 {BRAND_NAME}。当前 Codex 可用，Claude 家族即将接入。
+				Windows / macOS 上从零安装 Node.js、Claude Code、Codex，并接入 {BRAND_NAME}。本章完成后你的电脑上会有：
+			</p>
+			<ul class={`mt-4 space-y-2 leading-7 ${mutedClass}`}>
+				<li><strong>Node.js</strong> —— Claude Code / Codex 的运行环境</li>
+				<li><strong>Claude Code</strong> —— Anthropic 终端助手</li>
+				<li><strong>Codex CLI</strong> —— OpenAI 终端助手</li>
+				<li><strong>CC Switch（可选）</strong> —— 图形化切换不同 API 供应商</li>
+			</ul>
+			<p class={`mt-4 rounded-md border p-4 text-sm leading-6 ${faintClass} ${borderClass}`}>
+				⚠️ 开始前先退出所有翻墙 / 代理软件（Clash、V2Ray、机场客户端等）。浏览器能上网 ≠ 终端能上网。代理是安装过程中最常见的“隐形坑”，详见
+				<a class="text-brand" href="{base}/docs/troubleshooting">故障排查 §代理问题</a>。
 			</p>
 
 			<section class={`mt-10 border-t pt-8 ${borderClass}`}>
-				<h2 class="text-2xl font-semibold">安装 Node.js</h2>
-				<p class={`mt-3 leading-7 ${mutedClass}`}>Node.js 提供 npm 包管理器，Claude Code 的 npm 安装方式和很多开发工具都会用到它。安装 LTS 版本后先确认命令可用。</p>
+				<h2 class="text-2xl font-semibold">第一步：安装 Node.js</h2>
+				<p class={`mt-3 leading-7 ${mutedClass}`}>Node.js 是 Claude Code 和 Codex 的运行环境，版本需 ≥ v18 LTS（推荐最新 LTS）。安装后两个版本号都能打印出来，表示安装成功。</p>
 				<div class="mt-5 grid gap-4 md:grid-cols-3">
 					<div class={`rounded-lg border p-5 ${panelClass}`}>
 						<h3 class="text-lg font-semibold">Windows</h3>
+						<p class={`mt-2 text-xs leading-5 ${faintClass}`}>打开 PowerShell（Win → 输入 PowerShell → 回车），提示确认时输入 Y。装完关闭重开。</p>
 						<pre class={`mt-3 whitespace-pre-wrap text-sm ${codeClass}`}>winget install OpenJS.NodeJS.LTS
 node -v
 npm -v</pre>
 					</div>
 					<div class={`rounded-lg border p-5 ${panelClass}`}>
 						<h3 class="text-lg font-semibold">macOS</h3>
-						<pre class={`mt-3 whitespace-pre-wrap text-sm ${codeClass}`}>brew install node
+						<p class={`mt-2 text-xs leading-5 ${faintClass}`}>方式 A：到 nodejs.org 下载 .pkg 安装包双击安装。方式 B：Homebrew。</p>
+						<pre class={`mt-3 whitespace-pre-wrap text-sm ${codeClass}`}>brew install node@20
 node -v
 npm -v</pre>
 					</div>
 					<div class={`rounded-lg border p-5 ${panelClass}`}>
 						<h3 class="text-lg font-semibold">Linux</h3>
-						<pre class={`mt-3 whitespace-pre-wrap text-sm ${codeClass}`}># 使用系统包管理器或 nvm 安装 LTS
-node -v
-npm -v</pre>
+						<p class={`mt-2 text-xs leading-5 ${faintClass}`}>其他发行版参考 NodeSource 官方说明。</p>
+						<pre class={`mt-3 whitespace-pre-wrap text-sm ${codeClass}`}>curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
+sudo apt install -y nodejs</pre>
 					</div>
 				</div>
 			</section>
 
 			<section class={`mt-8 border-t pt-8 ${borderClass}`}>
-				<h2 class="text-2xl font-semibold">安装 Claude Code</h2>
+				<h2 class="text-2xl font-semibold">第二步：安装 Claude Code</h2>
 				<p class={`mt-3 leading-7 ${mutedClass}`}>
-					Claude Code 是 Anthropic 的终端编码工具。{BRAND_NAME} 的 Claude 家族接入完成后，可以使用同一套网关地址和 API Key；当前请先以 Codex 路径完成验证。
+					Claude Code 是 Anthropic 的终端编码工具。推荐使用 npm 全局安装，配合 {BRAND_NAME} 的同一套网关地址和 API Key 即可使用。
 				</p>
-				<pre class={`mt-5 whitespace-pre-wrap text-sm ${codeClass}`}># macOS / Linux / WSL
-curl -fsSL https://claude.ai/install.sh | bash
+				<pre class={`mt-5 whitespace-pre-wrap text-sm ${codeClass}`}># macOS / Linux（需要 sudo）
+sudo npm install -g @anthropic-ai/claude-code@latest
 
-# Windows PowerShell
-irm https://claude.ai/install.ps1 | iex
+# Windows（无需 sudo）
+npm install -g @anthropic-ai/claude-code@latest
 
-# npm 方式
-npm install -g @anthropic-ai/claude-code
 claude --version</pre>
 			</section>
 
 			<section class={`mt-8 border-t pt-8 ${borderClass}`}>
-				<h2 class="text-2xl font-semibold">配置 Claude Code 到网关</h2>
-				<p class={`mt-3 leading-7 ${mutedClass}`}>Claude 家族接入后，终端里设置 Anthropic 兼容环境变量，再启动 Claude Code。</p>
-				<pre class={`mt-5 whitespace-pre-wrap text-sm ${codeClass}`}>export ANTHROPIC_BASE_URL="{origin}"
-export ANTHROPIC_API_KEY="sk-xxx"
-claude</pre>
-				<p class={`mt-3 text-sm ${faintClass}`}>如果工具要求 token 变量名，也可以按工具版本使用 <span class="font-mono">ANTHROPIC_AUTH_TOKEN</span>，密钥值仍然来自 {BRAND_NAME} 控制台。</p>
+				<h2 class="text-2xl font-semibold">第三步：配置 Claude Code 连到 {BRAND_NAME}</h2>
+				<p class={`mt-3 leading-7 ${mutedClass}`}>Claude Code 通过两个环境变量知道要走 {BRAND_NAME}：</p>
+				<div class="mt-4 overflow-x-auto">
+					<table class={`w-full border-collapse text-sm ${mutedClass}`}>
+						<thead>
+							<tr class={`border-b ${borderClass} text-left`}>
+								<th class="py-2 pr-4 font-semibold">变量</th>
+								<th class="py-2 font-semibold">值</th>
+							</tr>
+						</thead>
+						<tbody>
+							<tr class={`border-b ${borderClass}`}>
+								<td class="py-2 pr-4 font-mono">ANTHROPIC_BASE_URL</td><td class="py-2 font-mono text-brand">{origin}</td>
+							</tr>
+							<tr>
+								<td class="py-2 pr-4 font-mono">ANTHROPIC_AUTH_TOKEN</td><td class="py-2">你在 API 密钥页创建的 API Key</td>
+							</tr>
+						</tbody>
+					</table>
+				</div>
+				<p class={`mt-5 leading-7 ${mutedClass}`}>下面是临时生效的写法，要永久生效请写入 shell 配置文件（zsh 用户改 <span class="font-mono">~/.zshrc</span>，bash 用户改 <span class="font-mono">~/.bashrc</span>）：</p>
+				<div class="mt-4 grid gap-4 md:grid-cols-2">
+					<div class={`rounded-lg border p-5 ${panelClass}`}>
+						<h3 class="text-lg font-semibold">macOS / Linux（zsh）</h3>
+						<pre class={`mt-3 whitespace-pre-wrap text-sm ${codeClass}`}>echo 'export ANTHROPIC_BASE_URL="{origin}"' >> ~/.zshrc
+echo 'export ANTHROPIC_AUTH_TOKEN="sk-你的密钥"' >> ~/.zshrc
+source ~/.zshrc</pre>
+					</div>
+					<div class={`rounded-lg border p-5 ${panelClass}`}>
+						<h3 class="text-lg font-semibold">Windows（PowerShell，永久）</h3>
+						<pre class={`mt-3 whitespace-pre-wrap text-sm ${codeClass}`}>[System.Environment]::SetEnvironmentVariable('ANTHROPIC_BASE_URL','{origin}','User')
+[System.Environment]::SetEnvironmentVariable('ANTHROPIC_AUTH_TOKEN','sk-你的密钥','User')
+# 关闭所有终端窗口重新打开才会生效</pre>
+					</div>
+				</div>
+				<p class={`mt-4 text-sm ${faintClass}`}>
+					部分 Claude Code 版本要求 <span class="font-mono">ANTHROPIC_AUTH_TOKEN</span>，因此优先使用它；如果你的版本只认 <span class="font-mono">ANTHROPIC_API_KEY</span>，把变量名替换即可。在任意项目目录下运行 <span class="font-mono">claude</span> 启动，首次进入一路回车即可。
+				</p>
 			</section>
 
 			<section class={`mt-8 border-t pt-8 ${borderClass}`}>
-				<h2 class="text-2xl font-semibold">安装 Codex CLI</h2>
-				<p class={`mt-3 leading-7 ${mutedClass}`}>Codex CLI 当前可用。安装完成后用 API Key 登录或通过环境变量指定网关。</p>
-				<pre class={`mt-5 whitespace-pre-wrap text-sm ${codeClass}`}># macOS / Linux
-curl -fsSL https://chatgpt.com/codex/install.sh | sh
+				<h2 class="text-2xl font-semibold">第四步：安装 Codex CLI</h2>
+				<pre class={`mt-5 whitespace-pre-wrap text-sm ${codeClass}`}># macOS / Linux（需要 sudo）
+sudo npm install -g @openai/codex@latest
 
-# npm 方式
-npm install -g @openai/codex
+# Windows（无需 sudo）
+npm install -g @openai/codex@latest
+
 codex --version</pre>
 			</section>
 
 			<section class={`mt-8 border-t pt-8 ${borderClass}`}>
-				<h2 class="text-2xl font-semibold">配置 Codex CLI</h2>
-				<p class={`mt-3 leading-7 ${mutedClass}`}>Codex CLI 使用 OpenAI 兼容环境变量。base URL 指向 <span class="font-mono text-brand">{origin}/openai</span>。</p>
-				<pre class={`mt-5 whitespace-pre-wrap text-sm ${codeClass}`}>export OPENAI_BASE_URL="{origin}/openai"
-export OPENAI_API_KEY="sk-xxx"
-codex</pre>
-				<p class={`mt-3 text-sm ${faintClass}`}>Windows PowerShell 使用 <span class="font-mono">$env:OPENAI_BASE_URL="{origin}/openai"</span> 和 <span class="font-mono">$env:OPENAI_API_KEY="sk-xxx"</span>。</p>
+				<h2 class="text-2xl font-semibold">第五步：配置 Codex 连到 {BRAND_NAME}</h2>
+				<p class={`mt-3 leading-7 ${mutedClass}`}>Codex 使用 OpenAI 协议，环境变量名略有不同。base URL 指向 <span class="font-mono text-brand">{origin}/openai</span>：</p>
+				<div class="mt-4 overflow-x-auto">
+					<table class={`w-full border-collapse text-sm ${mutedClass}`}>
+						<thead>
+							<tr class={`border-b ${borderClass} text-left`}>
+								<th class="py-2 pr-4 font-semibold">变量</th>
+								<th class="py-2 font-semibold">值</th>
+							</tr>
+						</thead>
+						<tbody>
+							<tr class={`border-b ${borderClass}`}>
+								<td class="py-2 pr-4 font-mono">OPENAI_BASE_URL</td><td class="py-2 font-mono text-brand">{origin}/openai</td>
+							</tr>
+							<tr>
+								<td class="py-2 pr-4 font-mono">OPENAI_API_KEY</td><td class="py-2">你的 {BRAND_NAME} API Key</td>
+							</tr>
+						</tbody>
+					</table>
+				</div>
+				<div class="mt-4 grid gap-4 md:grid-cols-2">
+					<div class={`rounded-lg border p-5 ${panelClass}`}>
+						<h3 class="text-lg font-semibold">macOS / Linux（zsh）</h3>
+						<pre class={`mt-3 whitespace-pre-wrap text-sm ${codeClass}`}>echo 'export OPENAI_BASE_URL="{origin}/openai"' >> ~/.zshrc
+echo 'export OPENAI_API_KEY="sk-你的密钥"' >> ~/.zshrc
+source ~/.zshrc</pre>
+					</div>
+					<div class={`rounded-lg border p-5 ${panelClass}`}>
+						<h3 class="text-lg font-semibold">Windows（PowerShell，永久）</h3>
+						<pre class={`mt-3 whitespace-pre-wrap text-sm ${codeClass}`}>[System.Environment]::SetEnvironmentVariable('OPENAI_BASE_URL','{origin}/openai','User')
+[System.Environment]::SetEnvironmentVariable('OPENAI_API_KEY','sk-你的密钥','User')
+# 重开终端后生效</pre>
+					</div>
+				</div>
+				<p class={`mt-4 text-sm ${faintClass}`}>配置完成后运行 <span class="font-mono">codex</span> 启动，同样有引导，默认即可。</p>
 			</section>
 
 			<section class={`mt-8 border-t pt-8 ${borderClass}`}>
-				<h2 class="text-2xl font-semibold">CC Switch 可选</h2>
+				<h2 class="text-2xl font-semibold">第六步（可选）：CC Switch 图形化管理</h2>
 				<p class={`mt-3 leading-7 ${mutedClass}`}>
-					如果你已经用 CC Switch 管理多个 Claude Code 配置，可以把 {BRAND_NAME} 做成一个独立 profile。它只是配置管理工具，不是使用 {BRAND_NAME} 的前置条件。
+					如果你同时用多个 API 供应商（{BRAND_NAME}、官方、其他中转），推荐 CC Switch，一个开源 GUI 工具，一键切换。下载地址：
+					<span class="font-mono">https://github.com/farion1231/cc-switch/releases</span>（Windows 用 .msi，macOS 用 .dmg）。系统要求：Windows 10+ / macOS 12+ / Ubuntu 22.04+。
+				</p>
+				<p class="mt-4 font-semibold">添加 {BRAND_NAME} 供应商：</p>
+				<ol class={`mt-2 space-y-2 leading-7 ${mutedClass}`}>
+					<li>1. 打开 CC Switch → 点右上角 +。</li>
+					<li>2. 选择「自定义配置」。</li>
+					<li>3. 填写：供应商名称 {BRAND_NAME}；请求地址 <span class="font-mono text-brand">{origin}</span>（不勾选“完整 URL”）；API Key 贴入 {BRAND_NAME} 密钥。</li>
+					<li>4. 点「添加」→ 列表中点「启用」→ 点「检测」。</li>
+					<li>5. 顶部出现绿色提示 = 配置成功。</li>
+				</ol>
+				<p class={`mt-3 text-sm ${faintClass}`}>CC Switch 会自动帮你写好 Claude Code 的配置，不需要再手动改环境变量。</p>
+			</section>
+
+			<section class={`mt-8 border-t pt-8 ${borderClass}`}>
+				<h2 class="text-2xl font-semibold">其他工具接入</h2>
+				<div class="mt-5 overflow-x-auto">
+					<table class={`w-full border-collapse text-sm ${mutedClass}`}>
+						<thead>
+							<tr class={`border-b ${borderClass} text-left`}>
+								<th class="py-2 pr-4 font-semibold">工具</th>
+								<th class="py-2 pr-4 font-semibold">Base URL</th>
+								<th class="py-2 font-semibold">密钥字段</th>
+							</tr>
+						</thead>
+						<tbody>
+							<tr class={`border-b ${borderClass}`}>
+								<td class="py-2 pr-4">Cursor</td>
+								<td class="py-2 pr-4">Settings → Models → Override OpenAI Base URL：<span class="font-mono text-brand">{origin}/v1</span></td>
+								<td class="py-2">OpenAI API Key</td>
+							</tr>
+							<tr class={`border-b ${borderClass}`}>
+								<td class="py-2 pr-4">Continue (VS Code)</td>
+								<td class="py-2 pr-4 font-mono text-brand">apiBase: "{origin}/v1"</td>
+								<td class="py-2 font-mono">apiKey</td>
+							</tr>
+							<tr class={`border-b ${borderClass}`}>
+								<td class="py-2 pr-4">Cline (VS Code)</td>
+								<td class="py-2 pr-4">API Provider 选 OpenAI Compatible，Base URL：<span class="font-mono text-brand">{origin}/v1</span></td>
+								<td class="py-2">API Key</td>
+							</tr>
+							<tr class={`border-b ${borderClass}`}>
+								<td class="py-2 pr-4">Gemini CLI</td>
+								<td class="py-2 pr-4">参考工具文档，指向 <span class="font-mono text-brand">{origin}</span></td>
+								<td class="py-2">{BRAND_NAME} Key</td>
+							</tr>
+							<tr>
+								<td class="py-2 pr-4">JetBrains AI Assistant</td>
+								<td class="py-2 pr-4">通过 Continue 插件或 Proxy 配置</td>
+								<td class="py-2">{BRAND_NAME} Key</td>
+							</tr>
+						</tbody>
+					</table>
+				</div>
+			</section>
+
+			<section class={`mt-8 border-t pt-8 ${borderClass}`}>
+				<h2 class="text-2xl font-semibold">验证一切正常</h2>
+				<p class={`mt-3 leading-7 ${mutedClass}`}>在 Claude Code 或 Codex 里问一句：</p>
+				<pre class={`mt-5 whitespace-pre-wrap text-sm ${codeClass}`}>你现在用的是什么模型？</pre>
+				<p class={`mt-3 leading-7 ${mutedClass}`}>如果它回答了一个模型名（比如 claude-sonnet-4-6），说明整条链路打通。</p>
+				<p class={`mt-4 text-sm ${faintClass}`}>
+					遇到报错？ → 翻 <a class="text-brand" href="{base}/docs/troubleshooting">故障排查</a>。能用了？ → 进入
+					<a class="text-brand" href="{base}/docs/usage">入门使用手册</a>。
 				</p>
 			</section>
 		</article>

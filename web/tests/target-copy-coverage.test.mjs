@@ -8,10 +8,10 @@ const requiredPhrases = {
 	'src/routes/+page.svelte': [
 		'六月限时活动',
 		'BRAND_TAGLINE',
-		'CC = Claude Code',
+		'一个 Key，调用所有模型',
 		'内置一键 Key 测试功能',
 		'新功能 · AI 生图',
-		'月卡用户每日享有固定额度'
+		'简单透明，用多少付多少'
 	],
 	'src/routes/app/keys/+page.svelte': [
 		'平台 Key 现在会安全保存',

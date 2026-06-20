@@ -92,65 +92,106 @@
 			<div class="font-mono text-xs uppercase tracking-wider text-brand">Getting started</div>
 			<h1 class="mt-3 text-4xl font-bold tracking-tight sm:text-5xl">新手入门</h1>
 			<p class={`max-w-3xl text-base leading-7 ${mutedClass}`}>
-				先把几个概念对齐，再开始配置工具。{BRAND_NAME} 的核心目标是让用户不用自己处理海外账号、网络、余额和模型路由。
+				如果你是第一次接触 Claude Code、Codex、终端 AI 工具，从这里开始。
 			</p>
 
 			<section class={`mt-10 border-t pt-8 ${borderClass}`}>
-				<h2 class="text-2xl font-semibold">OpenAI 和 Anthropic 是什么</h2>
+				<h2 class="text-2xl font-semibold">这些工具到底是什么</h2>
 				<p class={`mt-3 leading-7 ${mutedClass}`}>
-					OpenAI 和 Anthropic 是模型提供方。Codex 属于 OpenAI 生态，Claude Code 属于 Anthropic 生态。
-					它们的 API、鉴权、模型名和错误格式不同，但最终都可以被开发工具当成“给 AI 发请求、拿结果”的接口来使用。
+					在开始配置之前，先花 3 分钟理清几个基本概念。如果你已经熟悉，直接跳到
+					<a class="text-brand" href="{base}/docs/pricing">注册与充值</a>。
 				</p>
 			</section>
 
 			<section class={`mt-8 border-t pt-8 ${borderClass}`}>
-				<h2 class="text-2xl font-semibold">网页聊天版 vs 终端工具</h2>
+				<h2 class="text-2xl font-semibold">两家 AI 公司，两类产品</h2>
+				<p class={`mt-3 leading-7 ${mutedClass}`}>
+					目前在 AI 编码工具领域最具代表性的两家公司是 OpenAI 和 Anthropic。它们各自有两类产品：
+				</p>
 				<div class="mt-5 grid gap-4 md:grid-cols-2">
 					<div class={`rounded-lg border p-5 ${panelClass}`}>
-						<h3 class="text-lg font-semibold">网页聊天版</h3>
-						<p class={`mt-2 text-sm leading-6 ${mutedClass}`}>适合问答、写作和临时分析。它通常跑在浏览器里，不能天然读取你的项目目录，也不适合反复执行命令。</p>
+						<h3 class="text-lg font-semibold">OpenAI</h3>
+						<p class={`mt-2 text-sm leading-6 ${mutedClass}`}>网页聊天版：ChatGPT（给普通人）</p>
+						<p class={`mt-1 text-sm leading-6 ${mutedClass}`}>终端工具：Codex CLI（给开发者）</p>
 					</div>
 					<div class={`rounded-lg border p-5 ${panelClass}`}>
-						<h3 class="text-lg font-semibold">终端工具</h3>
-						<p class={`mt-2 text-sm leading-6 ${mutedClass}`}>适合写代码、看文件、跑测试和修改项目。Claude Code、Codex CLI、Cursor 这类工具会在你的电脑或开发环境里工作。</p>
+						<h3 class="text-lg font-semibold">Anthropic</h3>
+						<p class={`mt-2 text-sm leading-6 ${mutedClass}`}>网页聊天版：Claude（给普通人）</p>
+						<p class={`mt-1 text-sm leading-6 ${mutedClass}`}>终端工具：Claude Code（给开发者）</p>
 					</div>
 				</div>
+				<p class={`mt-4 leading-7 ${mutedClass}`}>
+					网页版只能聊天；Claude Code 和 Codex 能直接在你的电脑里读写文件、执行命令、帮你完成工作。它们不是“更强的聊天”，而是“长了手脚的助手”。
+				</p>
 			</section>
 
 			<section class={`mt-8 border-t pt-8 ${borderClass}`}>
-				<h2 class="text-2xl font-semibold">终端、API、工具跑在哪儿</h2>
+				<h2 class="text-2xl font-semibold">什么是终端</h2>
 				<p class={`mt-3 leading-7 ${mutedClass}`}>
-					终端是你输入命令的地方。API 是工具和模型服务之间的通信入口。工具本身运行在你的电脑、服务器或云开发环境里；
-					它读取本地文件、发起 API 请求，然后把模型返回的结果变成命令、补丁或回答。
+					终端（Terminal）是电脑里一个专门用来输入命令的窗口，通常看起来像一个黑色方框，很多人叫它“黑框框”。Claude Code 和 Codex 都运行在终端里。
+				</p>
+				<p class={`mt-4 font-semibold`}>如何打开终端</p>
+				<ul class={`mt-2 space-y-2 leading-7 ${mutedClass}`}>
+					<li><strong>Windows：</strong>按 Win 键 → 输入 Terminal 或 PowerShell → 回车</li>
+					<li><strong>macOS：</strong>按 Command + 空格 → 输入 Terminal → 回车</li>
+					<li><strong>Linux：</strong>桌面环境通常是 Ctrl + Alt + T</li>
+				</ul>
+			</section>
+
+			<section class={`mt-8 border-t pt-8 ${borderClass}`}>
+				<h2 class="text-2xl font-semibold">什么是 API</h2>
+				<p class={`mt-3 leading-7 ${mutedClass}`}>API 就是让软件程序去和 AI 大脑说话的通道。</p>
+				<ul class={`mt-4 space-y-2 leading-7 ${mutedClass}`}>
+					<li>你在网页和 Claude 聊天 = 人直接对 AI 说话</li>
+					<li>软件（Claude Code、Cursor 等）通过 API 调用 AI = 软件替你对 AI 说话</li>
+				</ul>
+				<p class={`mt-4 leading-7 ${mutedClass}`}>
+					所以 Claude Code 本质上是一个终端界面的客户端，它通过 API 把你的请求发给模型，再把结果返回到终端。
+				</p>
+			</section>
+
+			<section class={`mt-8 border-t pt-8 ${borderClass}`}>
+				<h2 class="text-2xl font-semibold">这些工具跑在哪儿</h2>
+				<p class={`mt-3 leading-7 ${mutedClass}`}>
+					你的电脑 + 云端 AI 模型。你的电脑负责打开终端、显示结果；真正的理解和生成由云端模型完成。所以使用时必须联网。
 				</p>
 			</section>
 
 			<section class={`mt-8 border-t pt-8 ${borderClass}`}>
 				<h2 class="text-2xl font-semibold">为什么很多人用不起来</h2>
+				<p class={`mt-3 leading-7 ${mutedClass}`}>知道这些工具的人多，能稳定用起来的人少，常见卡点：</p>
 				<ul class={`mt-4 space-y-3 leading-7 ${mutedClass}`}>
-					<li>海外账号、银行卡、手机号或组织限制导致账号注册失败。</li>
-					<li>网络链路不稳定，工具能安装但请求经常超时。</li>
-					<li>API Key、base URL、模型名和工具配置混在一起，错一个就不能用。</li>
-					<li>不同工具使用不同环境变量，新手很难判断到底是哪一层出错。</li>
+					<li><strong>需要科学上网：</strong>官方 API 在国内直连不稳定</li>
+					<li><strong>官方订阅贵：</strong>Claude Pro $20/月起，Max $200/月</li>
+					<li><strong>封号风险：</strong>机房 IP 容易被风控，封了退款流程繁琐</li>
+					<li><strong>API 按量计费失控：</strong>不熟悉的新手一天烧掉几十美金是常见的</li>
+					<li><strong>多工具配置重复：</strong>Cursor、Codex、Claude Code 都要单独接一次</li>
 				</ul>
 			</section>
 
 			<section class={`mt-8 border-t pt-8 ${borderClass}`}>
-				<h2 class="text-2xl font-semibold">产品解决什么</h2>
-				<p class={`mt-3 leading-7 ${mutedClass}`}>
-					{BRAND_NAME} 把可用账号、请求转发、余额扣费、密钥管理和用量记录放在同一个控制台里。
-					用户只需要充值、创建 API Key，并把工具的 base URL 指向网关。当前 Codex 可用，Claude 家族即将接入同一套账号和账本体验。
+				<h2 class="text-2xl font-semibold">{BRAND_NAME} 解决了什么</h2>
+				<p class={`mt-3 leading-7 ${mutedClass}`}>{BRAND_NAME} 把上面 5 件事一次性解决：</p>
+				<ul class={`mt-4 space-y-3 leading-7 ${mutedClass}`}>
+					<li><strong>无需梯子：</strong>国内直连</li>
+					<li><strong>更便宜：</strong>1 RMB = 1 USD 额度，按量付费永不过期，月卡 $50/天起</li>
+					<li><strong>不会封号：</strong>请求通过 {BRAND_NAME} 的企业账号池转发，风险在我们这边</li>
+					<li><strong>一个 Key 通吃：</strong>Claude Code / Codex / Cursor / VS Code 共享同一个密钥</li>
+					<li><strong>透明计费：</strong>每一次调用的输入/输出 Token 都在使用记录里看得到</li>
+				</ul>
+			</section>
+
+			<section class={`mt-8 border-t pt-8 ${borderClass}`}>
+				<h2 class="text-2xl font-semibold">谁适合用 {BRAND_NAME}</h2>
+				<ul class={`mt-4 space-y-3 leading-7 ${mutedClass}`}>
+					<li>想体验 Claude Code、Codex，但不想折腾海外账号和代理。</li>
+					<li>Windows / macOS 用户想在本地终端跑 AI 编码工具。</li>
+					<li>对成本敏感，或者想先小额试用。</li>
+					<li>用多种 AI 工具（Cursor + Claude Code + Codex），不想每个都单独买。</li>
+				</ul>
+				<p class={`mt-5 text-sm ${faintClass}`}>
+					准备好了就继续下一步 → <a class="text-brand" href="{base}/docs/pricing">注册与充值</a>
 				</p>
-			</section>
-
-			<section class={`mt-8 border-t pt-8 ${borderClass}`}>
-				<h2 class="text-2xl font-semibold">谁适合用</h2>
-				<ul class={`mt-4 space-y-3 leading-7 ${mutedClass}`}>
-					<li>想尽快把 Codex CLI 接到稳定 API 的开发者。</li>
-					<li>需要给团队统一管理 Key、余额和使用记录的小团队。</li>
-					<li>正在从网页聊天过渡到终端 AI 编程工具的新手。</li>
-					<li>未来准备同时使用 Codex、Claude Code、Cursor 等工具的人。</li>
-				</ul>
 			</section>
 		</article>
 	</div>

@@ -1,10 +1,12 @@
 export function fmtNum(n: number): string {
+	if (n == null || Number.isNaN(n)) return '-';
 	if (n >= 1_000_000) return (n / 1_000_000).toFixed(1).replace(/\.0$/, '') + 'M';
 	if (n >= 1_000) return (n / 1_000).toFixed(n >= 10_000 ? 0 : 1).replace(/\.0$/, '') + 'K';
 	return n.toLocaleString();
 }
 
 export function fmtCost(n: number): string {
+	if (n == null || Number.isNaN(n)) return '$0.00';
 	if (n < 0) return '-$' + fmtCost(-n).slice(1);
 	if (n >= 100) return '$' + Math.round(n).toLocaleString();
 	if (n >= 10) return '$' + n.toFixed(1);
