@@ -152,7 +152,7 @@
 					<tr><th class="px-5 py-3 font-medium">用户</th><th class="px-5 py-3 font-medium">邮箱</th><th class="px-5 py-3 font-medium">注册时间</th><th class="px-5 py-3 font-medium">累计充值</th></tr>
 				</thead>
 				<tbody>
-					<tr><td class="px-5 py-10 text-center text-faint" colspan="4">客户明细后端待补</td></tr>
+					<tr><td class="px-5 py-10 text-center text-faint" colspan="4">暂无客户明细</td></tr>
 				</tbody>
 			</table>
 		</div>

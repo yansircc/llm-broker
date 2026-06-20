@@ -14,7 +14,7 @@ const requiredPhrases = {
 		'简单透明，用多少付多少'
 	],
 	'src/routes/app/keys/+page.svelte': [
-		'平台 Key 现在会安全保存',
+		'平台 Key 会安全保存',
 		'OpenAI 兼容',
 		'Anthropic',
 		'创建密钥'

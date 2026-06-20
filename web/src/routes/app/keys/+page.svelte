@@ -148,7 +148,7 @@
 	<div class="grid gap-4 lg:grid-cols-[1fr_1.2fr]">
 			<div>
 				<h2 class="m-0 text-base font-semibold">创建密钥</h2>
-				<p class="mt-1 text-sm text-faint">目标能力：平台 Key 现在会安全保存，后续可随时回来复制使用，不再是一次性展示。当前后端仍只在创建时返回完整 token，请先复制保存。</p>
+				<p class="mt-1 text-sm text-faint">平台 Key 会安全保存，可随时回来管理。完整 token 仅在创建时返回一次，请立即复制保存。</p>
 			<div class="mt-4 flex flex-col gap-3 sm:flex-row">
 				<input class="h-11 rounded-md border border-line bg-black/30 px-3 text-sm outline-none focus:border-brand" placeholder="default" bind:value={name} disabled={creating}>
 				<input class="h-11 rounded-md border border-line bg-black/30 px-3 text-sm outline-none focus:border-brand sm:w-40" inputmode="decimal" placeholder="日预算 $，可空" bind:value={dailyBudget} disabled={creating}>
@@ -161,9 +161,9 @@
 		<div class="rounded-md border border-line bg-black/25 p-4">
 				<div class="text-xs text-faint">推荐接入地址</div>
 				<div class="mt-2 space-y-1 font-mono text-sm">
-					<div>OpenAI 兼容（Codex 当前可用）: <span class="text-brand">{origin}/v1</span></div>
-					<div>Anthropic（Claude 家族预留）: <span class="text-faint">{origin}</span></div>
-					<div>Responses base_url（Codex 当前可用）: <span class="text-brand">{origin}/openai</span></div>
+					<div>OpenAI 兼容（Codex / GPT）: <span class="text-brand">{origin}/v1</span></div>
+					<div>Anthropic（Claude 家族）: <span class="text-brand">{origin}</span></div>
+					<div>Responses base_url: <span class="text-brand">{origin}/openai</span></div>
 				</div>
 			</div>
 	</div>

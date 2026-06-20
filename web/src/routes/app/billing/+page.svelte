@@ -22,9 +22,9 @@
 	];
 	const supportedModels = [
 		['Codex', '已上线'],
-		['Claude Sonnet / Opus / Haiku', '接入中'],
-		['GPT / o3 / o4', '预留'],
-		['Gemini', '预留']
+		['Claude Sonnet / Opus / Haiku', '已上线'],
+		['GPT / o3 / o4', '已上线'],
+		['Gemini', '已上线']
 	];
 
 	let summary = $state<BillingSummary | null>(null);
@@ -95,7 +95,7 @@
 	<div>
 		<div class="font-mono text-xs uppercase tracking-wider text-brand">purchase</div>
 		<h1 class="mt-2 text-3xl font-bold tracking-tight sm:text-4xl">订阅 / 充值</h1>
-		<p class="mt-2 text-sm text-muted">按量付费永不过期，月卡用户每日享有固定额度。当前覆盖 Codex 中转，Claude 家族接入中；其他模型家族先保留套餐表达。</p>
+		<p class="mt-2 text-sm text-muted">按量付费永不过期，月卡用户每日享有固定额度。一个 Key 即可调用 Claude、GPT、Codex、Gemini 全系列模型。</p>
 	</div>
 	<button class="h-10 rounded-md border border-line bg-card px-4 text-sm hover:border-brand/50" onclick={loadSummary}>刷新</button>
 </div>
@@ -175,8 +175,8 @@
 				<div class="mt-5 text-3xl font-bold">${pack.amount.toLocaleString()}</div>
 				<div class="mt-1 font-mono text-sm text-brand">购买 {fmtCost(pack.amount)} 额度</div>
 				<ul class="mt-5 flex-1 space-y-2 text-sm text-slate-300">
-					<li><span class="text-brand">✓</span> Codex 中转当前可用</li>
-					<li><span class="text-brand">✓</span> 适合 Codex CLI 使用</li>
+					<li><span class="text-brand">✓</span> 全系列模型可用</li>
+					<li><span class="text-brand">✓</span> 适合 Claude Code / Codex CLI</li>
 					<li><span class="text-brand">✓</span> 按实际 token 扣费</li>
 				</ul>
 				<button
@@ -193,7 +193,7 @@
 	<section>
 		<div class="mb-5">
 			<h2 class="m-0 text-xl font-semibold">月卡订阅</h2>
-			<p class="mt-1 text-sm text-faint">月卡订阅后端待补，当前先保持完整方案视觉。到期后自动停止，升级套餐时剩余天数可按比例折算。</p>
+			<p class="mt-1 text-sm text-faint">月卡订阅每日享有固定额度，到期后自动停止，升级套餐时剩余天数可按比例折算。</p>
 		</div>
 		<div class="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
 			{#each monthlyPlans as plan, i}
@@ -202,7 +202,7 @@
 					<div class="mt-4 text-3xl font-bold">{plan[1]}</div>
 					<p class="mt-2 text-sm text-faint">{plan[2]}，UTC+8 每日刷新。</p>
 					<ul class="mt-5 space-y-2 text-sm text-slate-300">
-						<li><span class="text-brand">✓</span> Codex 当前可用，Claude 家族接入中</li>
+						<li><span class="text-brand">✓</span> 全系列模型可用</li>
 						<li><span class="text-brand">✓</span> 可与按量余额同时使用</li>
 						<li><span class="text-brand">✓</span> 适合高频编码场景</li>
 					</ul>
