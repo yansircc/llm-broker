@@ -122,3 +122,42 @@
 - `npm run build` 通过;三个 coverage 测试通过（key-test 一句文案因重排恢复原短语,subscriptions 仍保留 `升级套餐`/`到期后自动停止` 断言短语）。
 - 本地 preview 截图核对:shell（图标 + 绿 pill）、login、register、redeem、subscriptions、key-test 视觉无误。
 - **数据驱动页（dashboard / referrals / orders / usage / billing / settings）在 preview 无后端时只渲染 shell + 错误态**;完整数据态需部署到 cdx 或本地起 Go 后端才能核对。
+
+---
+
+## 更新 2026-06-20（续 2）— 接手 review + /app 口径统一 + 部署
+
+本轮(另一会话接手)做了三件事并已部署到 cdx：
+
+### 1. 提交此前未提交的 work
+- `560f92b` 之后工作区有一大坨未提交改动(+2057/-1016, 33 文件)，且 `web/src/lib/components/Icon.svelte` 是 **untracked 但已被大量页面 import** —— 干净 clone 编译不过。已全部提交并推送(`4a04218`)。
+
+### 2. 修复 + 口径统一(FX 拍板)
+- **title 泄漏**：`app.html` 默认 `<title>broker</title>`，首页/models/blog/partner/contact/所有 `/app`·`/console` 都没设 title → 标签页显示 "broker"。已在根 layout 加 BRAND fallback title，去掉 app.html 硬编码(`fd7c17f`)。
+- **dashboard 移动端横向溢出 56px**：最近订单卡的订单号(nowrap)把 grid auto track 撑到 max-content。给 grid 子项加 `min-w-0`(`c1efc12`)。
+- **/app 内部口径冲突 → FX 决定全部改成"全上线"**(`392ef63`)：
+  - billing：模型列表全 `已上线`；intro/套餐卡去掉 "Codex 中转 / Claude 接入中 / GPT·Gemini 预留"。
+  - keys：endpoint 去掉 "当前可用 / 家族预留"，Anthropic base_url 改为可用态。
+  - key-test：「说明」改为与实际行为一致(去「使用记录」看结果)，不再承诺内联结果面板。
+  - referrals：客户明细空态去掉 "后端待补"。
+
+### 3. Playwright(agent-browser)登录全量回归
+- 13 个 `/app` 页面全部渲染、0 console error、无意外重定向(用管理员账号 tsuicx@gmail.com，直接访问 /app/* 均渲染真实数据态)。
+- 移动端：除 dashboard(已修)外全部无溢出；公开页移动端全部无溢出。
+- 部署后线上复验：dashboard 溢出归零、billing/keys 口径已上线。
+
+## ⚠️ "全上线"口径放大的后端缺口(FX 需知 / 后续补后端或收口)
+
+公开页 + 现在 /app 都按全上线宣传，但以下登录后交互的后端仍是 stub：
+
+1. **月卡订阅**：billing「立即订阅」按钮仍 `disabled`(无订阅/额度账本/续费后端)。copy 已不再承认，但按钮是诚实信号 —— 这是"copy 说能买、按钮点不动"的矛盾。
+2. **AI 生图**：images 页给出 `/v1/images/generations` curl 示例，但无 image driver/relay/计费 —— 客户照做会失败。
+3. **兑换码**：redeem 是**硬编码拒绝**("无效或已使用")，无兑换码表/校验/入账 —— 将来发真码也会被拒。
+4. **佣金提现**：申请提现状态"待开通"，referrals 客户明细表是静态空态 —— 无佣金 ledger/被邀客户列表/提现流程。
+5. **改用户名**：settings 输入框 disabled(无 update username API)，文案诚实("请联系客服")。
+6. **key-test probe**：不伪造结果，引导去「使用记录」看真实调用。
+7. **Claude/GPT/Gemini 中转**：公开页 + /app 均宣称全系列可用；需确认 cdx 后端这些 provider 账号池已 provision、relay 实际可跑(目前真实可用的是 Codex)。
+
+> 占位邮箱 `support@example.com`(redeem/referrals/页脚/partner)由 FX 之后自行改 `brand.ts` 的 `BRAND_SUPPORT_EMAIL`。
+
+> 实现后端时遵守 AGENTS.md 不变量：经唯一真源入账(provider driver / probe endpoint / ledger / quota)，不要在前端造影子状态。
