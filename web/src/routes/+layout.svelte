@@ -95,6 +95,11 @@
 	}
 </script>
 
+<svelte:head>
+	<title>{BRAND_NAME} · {BRAND_TAGLINE}</title>
+	<meta name="description" content={BRAND_DESCRIPTION} />
+</svelte:head>
+
 {#if showConsoleShell()}
 	<div class="admin-shell">
 		<header class="top-glass">
