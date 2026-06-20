@@ -157,7 +157,7 @@
 	</div>
 
 	<div class="mt-6 grid gap-4 lg:grid-cols-2">
-		<section class="rounded-lg border border-line bg-card/60 p-5">
+		<section class="min-w-0 rounded-lg border border-line bg-card/60 p-5">
 			<div class="mb-4 flex items-center justify-between">
 				<h2 class="m-0 text-base font-semibold">最近订单</h2>
 				<a class="text-sm text-brand hover:underline" href="{base}/app/orders">全部</a>
@@ -182,7 +182,7 @@
 			{/if}
 		</section>
 
-		<section class="rounded-lg border border-line bg-card/60 p-5">
+		<section class="min-w-0 rounded-lg border border-line bg-card/60 p-5">
 			<div class="mb-4 flex items-center justify-between">
 				<h2 class="m-0 text-base font-semibold">模型分布</h2>
 				<a class="text-sm text-brand hover:underline" href="{base}/app/usage">使用记录</a>
