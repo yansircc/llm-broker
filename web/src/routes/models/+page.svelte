@@ -174,8 +174,8 @@
 				<p class="mt-2 text-sm leading-relaxed text-muted">缓存读取 / 写入按官方价格计费，大幅降低重复请求成本。</p>
 			</div>
 			<div class="rounded-lg border border-line bg-card/60 p-6">
-				<h3 class="text-lg font-semibold text-brand">官方定价</h3>
-				<p class="mt-2 text-sm leading-relaxed text-muted">按 Anthropic / OpenAI 官方价格计费，{BRAND_NAME} 只赚汇率差。</p>
+				<h3 class="text-lg font-semibold text-brand">汇率优惠</h3>
+				<p class="mt-2 text-sm leading-relaxed text-muted">1 元 = 1 美元额度，约官方 1.4 折，只赚汇率差，不阉割、不加价。</p>
 			</div>
 		</div>
 		<div class="mt-12 text-center">
