@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/yansircc/llm-broker/internal/domain"
+	"github.com/yansircc/llm-broker/internal/driver"
 )
 
 func compatOpenAIChatToClaudeRequest(req *compatOpenAIChatRequest) (*compatClaudeRequest, string, error) {
@@ -86,12 +87,7 @@ func compatOpenAIChatToClaudeRequest(req *compatOpenAIChatRequest) (*compatClaud
 }
 
 func compatClaudeUsesModernEnvelope(model string) bool {
-	switch strings.TrimSpace(model) {
-	case "claude-sonnet-4-6", "claude-opus-4-6":
-		return true
-	default:
-		return false
-	}
+	return driver.ClaudeModelUsesCompatModernEnvelope(strings.TrimSpace(model))
 }
 
 func compatClaudeToOpenAIChatResponse(body []byte, requestedModel string) (*compatOpenAIChatResponse, error) {

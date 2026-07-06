@@ -96,6 +96,20 @@ func TestClaudeModelsIncludesFable5(t *testing.T) {
 	t.Fatal("claude-fable-5 missing from Claude model catalog")
 }
 
+func TestClaudeModelsIncludesSonnet5(t *testing.T) {
+	d := NewClaudeDriver(ClaudeConfig{}, NoopStainlessStore{}, 4)
+	for _, model := range d.Models() {
+		if model.ID != "claude-sonnet-5" {
+			continue
+		}
+		if model.ContextWindow != 1000000 {
+			t.Fatalf("claude-sonnet-5 context_window = %d, want 1000000", model.ContextWindow)
+		}
+		return
+	}
+	t.Fatal("claude-sonnet-5 missing from Claude model catalog")
+}
+
 func TestClaudeInterpret_400DisabledOrganizationBlocks(t *testing.T) {
 	d := NewClaudeDriver(ClaudeConfig{
 		Pauses: ErrorPauses{Pause401: time.Minute},

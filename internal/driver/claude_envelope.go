@@ -13,8 +13,7 @@ func normalizeClaudeMessageEnvelope(body map[string]interface{}) {
 
 func claudeNeedsCodeSystemEnvelope(body map[string]interface{}) bool {
 	model, _ := body["model"].(string)
-	entry, ok := claudeModelEntryForID(model)
-	return ok && entry.CodeSystemEnvelope
+	return ClaudeModelUsesCodeSystemEnvelope(model)
 }
 
 func normalizeClaudeSystemValue(system interface{}) []interface{} {

@@ -193,6 +193,37 @@ func TestCompatOpenAIChatToClaudeRequest_ModernEnvelopeAlias(t *testing.T) {
 	}
 }
 
+func TestCompatOpenAIChatToClaudeRequest_ModernEnvelopeForSonnet5(t *testing.T) {
+	temperature := 0.2
+	req := &compatOpenAIChatRequest{
+		Model:       "anthropic/claude-sonnet-5.0",
+		Temperature: &temperature,
+		Messages: []compatMessage{
+			{Role: "user", Content: json.RawMessage(`"hello"`)},
+		},
+	}
+
+	got, requestedModel, err := compatOpenAIChatToClaudeRequest(req)
+	if err != nil {
+		t.Fatalf("compatOpenAIChatToClaudeRequest() error = %v", err)
+	}
+	if requestedModel != "claude/claude-sonnet-5" {
+		t.Fatalf("requestedModel = %q", requestedModel)
+	}
+	if got.Model != "claude-sonnet-5" {
+		t.Fatalf("model = %q", got.Model)
+	}
+	if got.Temperature != nil {
+		t.Fatalf("temperature = %#v, want nil when thinking is enabled", got.Temperature)
+	}
+	if got.OutputConfig == nil || got.OutputConfig.Effort != "medium" {
+		t.Fatalf("output_config = %#v", got.OutputConfig)
+	}
+	if got.Thinking == nil || got.Thinking.Type != "adaptive" {
+		t.Fatalf("thinking = %#v", got.Thinking)
+	}
+}
+
 func TestResolveCompatModelAliases(t *testing.T) {
 	tests := []struct {
 		model         string
@@ -209,6 +240,7 @@ func TestResolveCompatModelAliases(t *testing.T) {
 		{"claude-opus-4-1-20250805", domain.ProviderClaude, "claude-opus-4-1", "claude/claude-opus-4-1"},
 		{"anthropic/claude-haiku-4.5", domain.ProviderClaude, "claude-haiku-4-5", "claude/claude-haiku-4-5"},
 		{"claude-sonnet-4-20250514", domain.ProviderClaude, "claude-sonnet-4-6", "claude/claude-sonnet-4-6"},
+		{"claude-sonnet-5.0", domain.ProviderClaude, "claude-sonnet-5", "claude/claude-sonnet-5"},
 		{"gemini/gemini-2.5-flash", domain.ProviderGemini, "gemini-2.5-flash", "gemini/gemini-2.5-flash"},
 		{"google/gemini-2.5-pro", domain.ProviderGemini, "gemini-2.5-pro", "gemini/gemini-2.5-pro"},
 		{"gemini-2.5-pro", domain.ProviderGemini, "gemini-2.5-pro", "gemini/gemini-2.5-pro"},
@@ -469,6 +501,9 @@ func TestHandleCompatListModels(t *testing.T) {
 	}
 	if !ids["claude/claude-fable-5"] {
 		t.Fatalf("compat models missing fable model: %#v", ids)
+	}
+	if !ids["claude/claude-sonnet-5"] {
+		t.Fatalf("compat models missing sonnet 5 model: %#v", ids)
 	}
 	if !ids["gemini/gemini-2.5-flash"] {
 		t.Fatalf("compat models missing gemini model: %#v", ids)

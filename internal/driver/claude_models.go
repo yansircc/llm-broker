@@ -7,12 +7,13 @@ import (
 )
 
 type claudeModelEntry struct {
-	PublicID           string
-	UpstreamID         string
-	ContextWindow      int
-	Advertise          bool
-	CodeSystemEnvelope bool
-	Pricing            claudeModelPricing
+	PublicID             string
+	UpstreamID           string
+	ContextWindow        int
+	Advertise            bool
+	CodeSystemEnvelope   bool
+	CompatModernEnvelope bool
+	Pricing              claudeModelPricing
 }
 
 type claudeModelPricing struct {
@@ -23,21 +24,23 @@ type claudeModelPricing struct {
 }
 
 var (
-	claudeFablePricing  = claudeModelPricing{Input: 10, Output: 50, CacheRead: 1.00, CacheCreate: 12.50}
-	claudeOpusPricing   = claudeModelPricing{Input: 5, Output: 25, CacheRead: 0.50, CacheCreate: 6.25}
-	claudeSonnetPricing = claudeModelPricing{Input: 3, Output: 15, CacheRead: 0.30, CacheCreate: 3.75}
-	claudeHaikuPricing  = claudeModelPricing{Input: 1, Output: 5, CacheRead: 0.10, CacheCreate: 1.25}
+	claudeFablePricing   = claudeModelPricing{Input: 10, Output: 50, CacheRead: 1.00, CacheCreate: 12.50}
+	claudeOpusPricing    = claudeModelPricing{Input: 5, Output: 25, CacheRead: 0.50, CacheCreate: 6.25}
+	claudeSonnetPricing  = claudeModelPricing{Input: 3, Output: 15, CacheRead: 0.30, CacheCreate: 3.75}
+	claudeSonnet5Pricing = claudeModelPricing{Input: 2, Output: 10, CacheRead: 0.20, CacheCreate: 2.50}
+	claudeHaikuPricing   = claudeModelPricing{Input: 1, Output: 5, CacheRead: 0.10, CacheCreate: 1.25}
 )
 
 var claudeModelEntries = []claudeModelEntry{
 	{PublicID: "claude-fable-5", UpstreamID: "claude-fable-5", ContextWindow: 1000000, Advertise: true, CodeSystemEnvelope: true, Pricing: claudeFablePricing},
 	{PublicID: "claude-opus-4-8", UpstreamID: "claude-opus-4-8", ContextWindow: 1000000, Advertise: true, CodeSystemEnvelope: true, Pricing: claudeOpusPricing},
 	{PublicID: "claude-opus-4-7", UpstreamID: "claude-opus-4-7", ContextWindow: 200000, Advertise: true, CodeSystemEnvelope: true, Pricing: claudeOpusPricing},
-	{PublicID: "claude-opus-4-6", UpstreamID: "claude-opus-4-6", ContextWindow: 200000, Advertise: true, CodeSystemEnvelope: true, Pricing: claudeOpusPricing},
+	{PublicID: "claude-opus-4-6", UpstreamID: "claude-opus-4-6", ContextWindow: 200000, Advertise: true, CodeSystemEnvelope: true, CompatModernEnvelope: true, Pricing: claudeOpusPricing},
 	{PublicID: "claude-opus-4-5", UpstreamID: "claude-opus-4-5", ContextWindow: 200000, Advertise: true, CodeSystemEnvelope: true, Pricing: claudeOpusPricing},
 	{PublicID: "claude-opus-4-1", UpstreamID: "claude-opus-4-1", ContextWindow: 200000, Advertise: true, CodeSystemEnvelope: true, Pricing: claudeOpusPricing},
 	{PublicID: "claude-opus-4", UpstreamID: "claude-opus-4", ContextWindow: 200000, Advertise: true, CodeSystemEnvelope: true, Pricing: claudeOpusPricing},
-	{PublicID: "claude-sonnet-4-6", UpstreamID: "claude-sonnet-4-6", ContextWindow: 200000, Advertise: true, CodeSystemEnvelope: true, Pricing: claudeSonnetPricing},
+	{PublicID: "claude-sonnet-5", UpstreamID: "claude-sonnet-5", ContextWindow: 1000000, Advertise: true, CodeSystemEnvelope: true, CompatModernEnvelope: true, Pricing: claudeSonnet5Pricing},
+	{PublicID: "claude-sonnet-4-6", UpstreamID: "claude-sonnet-4-6", ContextWindow: 200000, Advertise: true, CodeSystemEnvelope: true, CompatModernEnvelope: true, Pricing: claudeSonnetPricing},
 	{PublicID: "claude-sonnet-4-5", UpstreamID: "claude-sonnet-4-5", ContextWindow: 200000, Advertise: true, CodeSystemEnvelope: true, Pricing: claudeSonnetPricing},
 	{PublicID: "claude-sonnet-4", UpstreamID: "claude-sonnet-4", ContextWindow: 200000, Advertise: true, CodeSystemEnvelope: true, Pricing: claudeSonnetPricing},
 	{PublicID: "claude-haiku-4-5-20251001", UpstreamID: "claude-haiku-4-5-20251001", ContextWindow: 200000, Advertise: true, Pricing: claudeHaikuPricing},
@@ -60,6 +63,16 @@ func claudeSupportedModels() []Model {
 		})
 	}
 	return models
+}
+
+func ClaudeModelUsesCodeSystemEnvelope(model string) bool {
+	entry, ok := claudeModelEntryForID(model)
+	return ok && entry.CodeSystemEnvelope
+}
+
+func ClaudeModelUsesCompatModernEnvelope(model string) bool {
+	entry, ok := claudeModelEntryForID(model)
+	return ok && entry.CompatModernEnvelope
 }
 
 func normalizeClaudeModelID(model string) (string, error) {
