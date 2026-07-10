@@ -174,29 +174,7 @@ func (d *CodexDriver) ComputeExhaustedCooldown(state json.RawMessage, now time.T
 }
 
 func (d *CodexDriver) CalcCost(model string, usage *Usage) float64 {
-	if usage == nil {
-		return 0
-	}
-	lower := strings.ToLower(model)
-	var inPrice, outPrice, cacheReadPrice float64
-	switch {
-	case strings.Contains(lower, "o3"):
-		inPrice, outPrice, cacheReadPrice = 2, 8, 0.50
-	case strings.Contains(lower, "o4-mini"):
-		inPrice, outPrice, cacheReadPrice = 1.10, 4.40, 0.275
-	case strings.Contains(lower, "codex-mini"):
-		inPrice, outPrice, cacheReadPrice = 1.50, 6, 0.375
-	case strings.Contains(lower, "4.1-nano"):
-		inPrice, outPrice, cacheReadPrice = 0.10, 0.40, 0.025
-	case strings.Contains(lower, "4.1-mini"):
-		inPrice, outPrice, cacheReadPrice = 0.40, 1.60, 0.10
-	case strings.Contains(lower, "4.1"):
-		inPrice, outPrice, cacheReadPrice = 2, 8, 0.50
-	default:
-		inPrice, outPrice, cacheReadPrice = 2, 8, 0.50
-	}
-	return (float64(usage.InputTokens)*inPrice + float64(usage.OutputTokens)*outPrice +
-		float64(usage.CacheReadTokens)*cacheReadPrice) / 1_000_000
+	return codexPricingForModel(model).cost(usage)
 }
 
 func (d *CodexDriver) GetUtilization(state json.RawMessage) []UtilWindow {

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"io"
+	"math"
 	"net/http"
 	"strings"
 	"testing"
@@ -302,6 +303,9 @@ func TestCodexModelFamily(t *testing.T) {
 		model string
 		want  string
 	}{
+		{"gpt-5.6-sol", ""},
+		{"gpt-5.6-terra", ""},
+		{"gpt-5.6-luna", ""},
 		{"gpt-5.5", ""},
 		{"gpt-5.3-codex", ""},
 		{"gpt-5.4", ""},
@@ -313,6 +317,34 @@ func TestCodexModelFamily(t *testing.T) {
 	for _, tt := range tests {
 		if got := codexModelFamily(tt.model); got != tt.want {
 			t.Errorf("codexModelFamily(%q) = %q, want %q", tt.model, got, tt.want)
+		}
+	}
+}
+
+func TestCodexModelsIncludesGPT56Family(t *testing.T) {
+	d := NewCodexDriver(CodexConfig{})
+	models := d.Models()
+	want := map[string]int{
+		"gpt-5.6-sol":   1050000,
+		"gpt-5.6-terra": 1050000,
+		"gpt-5.6-luna":  400000,
+	}
+	seen := make(map[string]int)
+	for _, model := range models {
+		if _, ok := want[model.ID]; ok {
+			seen[model.ID] = model.ContextWindow
+		}
+		if model.ID == "gpt-5.6" {
+			t.Fatal("gpt-5.6 alias should not be advertised without live Codex backend acceptance")
+		}
+	}
+	for id, contextWindow := range want {
+		got, ok := seen[id]
+		if !ok {
+			t.Fatalf("%s missing from codex model catalog", id)
+		}
+		if got != contextWindow {
+			t.Fatalf("%s context_window = %d, want %d", id, got, contextWindow)
 		}
 	}
 }
@@ -330,6 +362,51 @@ func TestCodexModelsIncludesGPT55(t *testing.T) {
 		return
 	}
 	t.Fatal("gpt-5.5 missing from codex model catalog")
+}
+
+func TestCodexProbeModelDefaultsToGPT56Sol(t *testing.T) {
+	d := NewCodexDriver(CodexConfig{})
+	if got := d.probeModel(); got != "gpt-5.6-sol" {
+		t.Fatalf("probeModel() before traffic = %q, want gpt-5.6-sol", got)
+	}
+}
+
+func TestParseCodexUsageCapturesCacheWriteTokens(t *testing.T) {
+	usage := parseCodexUsage(`{"type":"response.completed","response":{"usage":{"input_tokens":1000,"output_tokens":20,"input_tokens_details":{"cached_tokens":300,"cache_write_tokens":200}}}}`)
+	if usage == nil {
+		t.Fatal("parseCodexUsage() = nil")
+	}
+	if usage.InputTokens != 1000 {
+		t.Fatalf("InputTokens = %d, want 1000", usage.InputTokens)
+	}
+	if usage.OutputTokens != 20 {
+		t.Fatalf("OutputTokens = %d, want 20", usage.OutputTokens)
+	}
+	if usage.CacheReadTokens != 300 {
+		t.Fatalf("CacheReadTokens = %d, want 300", usage.CacheReadTokens)
+	}
+	if usage.CacheCreateTokens != 200 {
+		t.Fatalf("CacheCreateTokens = %d, want 200", usage.CacheCreateTokens)
+	}
+}
+
+func TestCodexCalcCostGPT56Pricing(t *testing.T) {
+	d := NewCodexDriver(CodexConfig{})
+	usage := &Usage{InputTokens: 1000, OutputTokens: 10, CacheReadTokens: 300, CacheCreateTokens: 200}
+	tests := []struct {
+		model string
+		want  float64
+	}{
+		{model: "gpt-5.6-sol", want: 0.0084},
+		{model: "gpt-5.6", want: 0.0084},
+		{model: "gpt-5.6-terra", want: 0.0042},
+		{model: "gpt-5.6-luna", want: 0.00168},
+	}
+	for _, tt := range tests {
+		if got := d.CalcCost(tt.model, usage); math.Abs(got-tt.want) > 1e-12 {
+			t.Fatalf("CalcCost(%q) = %.12f, want %.12f", tt.model, got, tt.want)
+		}
+	}
 }
 
 func TestDiscoverCodexFamilyPrefixes(t *testing.T) {

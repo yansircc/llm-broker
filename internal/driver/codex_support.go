@@ -65,6 +65,9 @@ func (s *CodexState) allFamilies() []string {
 
 // codexModelFamily maps a model name to its quota family prefix.
 func codexModelFamily(model string) string {
+	if entry, ok := codexModelEntryForID(model); ok {
+		return entry.Family
+	}
 	if strings.Contains(strings.ToLower(model), "spark") {
 		return "bengalfox"
 	}
@@ -192,7 +195,8 @@ type codexUsageFields struct {
 	InputTokens  int `json:"input_tokens"`
 	OutputTokens int `json:"output_tokens"`
 	Details      *struct {
-		CachedTokens int `json:"cached_tokens"`
+		CachedTokens     int `json:"cached_tokens"`
+		CacheWriteTokens int `json:"cache_write_tokens"`
 	} `json:"input_tokens_details"`
 }
 
@@ -206,6 +210,7 @@ func codexUsageToUsage(u *codexUsageFields) *Usage {
 	}
 	if u.Details != nil {
 		result.CacheReadTokens = u.Details.CachedTokens
+		result.CacheCreateTokens = u.Details.CacheWriteTokens
 	}
 	return result
 }
