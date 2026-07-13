@@ -150,6 +150,12 @@ export OPENAI_API_KEY="$API_TOKEN"
 codex
 ```
 
+`/openai/responses` also accepts OpenAI Responses clients such as pi. The
+ChatGPT Codex upstream does not accept `max_output_tokens` or
+`prompt_cache_retention`, so the broker omits both fields before forwarding.
+Consequently, client-supplied output limits are not enforced and prompt-cache
+retention remains upstream-managed on this surface.
+
 ### 6. Verify a key
 
 Use a copy-paste-safe shell form:

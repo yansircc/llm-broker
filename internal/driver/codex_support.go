@@ -2,12 +2,45 @@ package driver
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"sort"
 	"strconv"
 	"strings"
 	"time"
 )
+
+var codexUnsupportedRequestFields = [...]string{
+	"max_output_tokens",
+	"prompt_cache_retention",
+}
+
+// normalizeCodexRequestBody projects the public Responses request onto the
+// narrower request shape accepted by the ChatGPT Codex upstream.
+func normalizeCodexRequestBody(rawBody []byte) ([]byte, error) {
+	var body map[string]json.RawMessage
+	if err := json.Unmarshal(rawBody, &body); err != nil {
+		return nil, fmt.Errorf("decode codex request body: %w", err)
+	}
+
+	changed := false
+	for _, field := range codexUnsupportedRequestFields {
+		if _, ok := body[field]; !ok {
+			continue
+		}
+		delete(body, field)
+		changed = true
+	}
+	if !changed {
+		return rawBody, nil
+	}
+
+	normalized, err := json.Marshal(body)
+	if err != nil {
+		return nil, fmt.Errorf("encode codex request body: %w", err)
+	}
+	return normalized, nil
+}
 
 // CodexFamilyLimits holds rate-limit state for one quota family.
 type CodexFamilyLimits struct {

@@ -34,7 +34,11 @@ func (d *CodexDriver) BuildRequest(ctx context.Context, input *RelayInput, acct 
 	if acct.Subject == "" {
 		return nil, fmt.Errorf("codex account missing subject")
 	}
-	req, err := http.NewRequestWithContext(ctx, "POST", d.cfg.APIURL, strings.NewReader(string(input.RawBody)))
+	body, err := normalizeCodexRequestBody(input.RawBody)
+	if err != nil {
+		return nil, err
+	}
+	req, err := http.NewRequestWithContext(ctx, "POST", d.cfg.APIURL, bytes.NewReader(body))
 	if err != nil {
 		return nil, err
 	}

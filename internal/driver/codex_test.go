@@ -1,6 +1,7 @@
 package driver
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"io"
@@ -37,6 +38,99 @@ func TestCodexBuildRequestUsesSubjectForAccountHeader(t *testing.T) {
 	}
 	if got := req.Header.Get("Chatgpt-Account-Id"); got != acct.Subject {
 		t.Fatalf("Chatgpt-Account-Id = %q, want %q", got, acct.Subject)
+	}
+}
+
+func TestCodexBuildRequestNormalizesUnsupportedResponsesFields(t *testing.T) {
+	tests := []struct {
+		name            string
+		rawBody         string
+		wantExactBody   bool
+		wantInputFields []string
+	}{
+		{
+			name:          "unchanged when unsupported fields are absent",
+			rawBody:       `{ "model": "gpt-5.5", "stream": true, "store": false }`,
+			wantExactBody: true,
+		},
+		{
+			name:            "removes max output tokens",
+			rawBody:         `{"model":"gpt-5.5","max_output_tokens":16384,"stream":true}`,
+			wantInputFields: []string{"max_output_tokens"},
+		},
+		{
+			name:            "removes prompt cache retention",
+			rawBody:         `{"model":"gpt-5.5","prompt_cache_retention":"24h","store":false}`,
+			wantInputFields: []string{"prompt_cache_retention"},
+		},
+		{
+			name:            "removes both and preserves unrelated values",
+			rawBody:         `{"model":"gpt-5.5","max_output_tokens":16384,"prompt_cache_retention":"24h","metadata":{"large":9007199254740993},"input":[{"role":"user","content":"hi"}]}`,
+			wantInputFields: []string{"max_output_tokens", "prompt_cache_retention"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			inputBody := make(map[string]interface{})
+			if err := json.Unmarshal([]byte(tt.rawBody), &inputBody); err != nil {
+				t.Fatalf("unmarshal fixture: %v", err)
+			}
+			input := &RelayInput{
+				Body:    inputBody,
+				RawBody: []byte(tt.rawBody),
+				Headers: make(http.Header),
+			}
+			originalRawBody := append([]byte(nil), input.RawBody...)
+
+			d := NewCodexDriver(CodexConfig{APIURL: "https://chatgpt.com/backend-api/codex"})
+			req, err := d.BuildRequest(context.Background(), input, &domain.Account{Subject: "acct-1"}, "tok")
+			if err != nil {
+				t.Fatalf("BuildRequest() error = %v", err)
+			}
+			gotBody, err := io.ReadAll(req.Body)
+			if err != nil {
+				t.Fatalf("read request body: %v", err)
+			}
+
+			if tt.wantExactBody && string(gotBody) != tt.rawBody {
+				t.Fatalf("request body = %q, want exact %q", gotBody, tt.rawBody)
+			}
+			var got map[string]json.RawMessage
+			if err := json.Unmarshal(gotBody, &got); err != nil {
+				t.Fatalf("unmarshal request body: %v", err)
+			}
+			for _, field := range codexUnsupportedRequestFields {
+				if _, ok := got[field]; ok {
+					t.Errorf("request body still contains %q", field)
+				}
+			}
+			if gotModel := string(got["model"]); gotModel != `"gpt-5.5"` {
+				t.Errorf("model = %s, want gpt-5.5", gotModel)
+			}
+			if strings.Contains(tt.name, "preserves unrelated") && !bytes.Contains(gotBody, []byte("9007199254740993")) {
+				t.Errorf("request body lost exact unrelated numeric value: %s", gotBody)
+			}
+
+			if !bytes.Equal(input.RawBody, originalRawBody) {
+				t.Fatalf("BuildRequest mutated RawBody: got %s, want %s", input.RawBody, originalRawBody)
+			}
+			for _, field := range tt.wantInputFields {
+				if _, ok := input.Body[field]; !ok {
+					t.Errorf("BuildRequest mutated input Body by removing %q", field)
+				}
+			}
+		})
+	}
+}
+
+func TestCodexBuildRequestRejectsInvalidJSON(t *testing.T) {
+	d := NewCodexDriver(CodexConfig{APIURL: "https://chatgpt.com/backend-api/codex"})
+	input := &RelayInput{RawBody: []byte(`{"model":`), Headers: make(http.Header)}
+
+	_, err := d.BuildRequest(context.Background(), input, &domain.Account{Subject: "acct-1"}, "tok")
+	if err == nil || !strings.Contains(err.Error(), "decode codex request body") {
+		t.Fatalf("BuildRequest() error = %v, want decode error", err)
 	}
 }
 
