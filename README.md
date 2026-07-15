@@ -239,6 +239,12 @@ Main endpoints:
 | `GET` | `/admin/accounts/{id}` | account detail |
 | `POST` | `/admin/accounts/{id}/refresh` | refresh token |
 | `POST` | `/admin/accounts/{id}/test` | probe account |
+| `POST` | `/admin/accounts/{id}/cell` | bind or unbind an account egress cell |
+| `GET` | `/admin/egress/cells` | list egress cells and bound accounts |
+| `POST` | `/admin/egress/cells` | create or update an egress cell |
+| `DELETE` | `/admin/egress/cells/{id}` | delete an unbound egress cell |
+| `POST` | `/admin/egress/cells/{id}/test` | test an egress cell proxy |
+| `POST` | `/admin/egress/cells/{id}/clear-cooldown` | clear an egress cell cooldown |
 | `GET` | `/admin/dashboard` | dashboard data |
 | `GET` | `/admin/users` | list users |
 | `POST` | `/admin/users` | create user key |

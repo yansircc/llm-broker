@@ -3,6 +3,7 @@ package pool
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"math"
 	"math/rand"
 	"net/http"
@@ -258,7 +259,9 @@ func TestPickForSurface_ClaudeIgnoresCellLanes(t *testing.T) {
 		}
 	}
 
-	gotNative, err := p.PickForSurface(testDriver, nil, "claude-haiku", "", domain.SurfaceNative)
+	exclusions := []Exclusion{ExcludeAccount("native")}
+
+	gotNative, err := p.PickForSurface(testDriver, exclusions, "claude-haiku", "", domain.SurfaceNative)
 	if err != nil {
 		t.Fatalf("PickForSurface(native): %v", err)
 	}
@@ -266,7 +269,7 @@ func TestPickForSurface_ClaudeIgnoresCellLanes(t *testing.T) {
 		t.Fatalf("PickForSurface(native) = %s, want compat", gotNative.ID)
 	}
 
-	gotCompat, err := p.PickForSurface(testDriver, nil, "claude-haiku", "", domain.SurfaceCompat)
+	gotCompat, err := p.PickForSurface(testDriver, exclusions, "claude-haiku", "", domain.SurfaceCompat)
 	if err != nil {
 		t.Fatalf("PickForSurface(compat): %v", err)
 	}
@@ -447,6 +450,265 @@ func TestClearCellCooldown(t *testing.T) {
 	}
 	if cell.CooldownUntil != nil {
 		t.Fatalf("cell cooldown = %v, want nil", cell.CooldownUntil)
+	}
+}
+
+func TestDeleteCell_RemovesUnboundCell(t *testing.T) {
+	p := newTestPool(t)
+	if err := p.SaveCell(&domain.EgressCell{
+		ID:        "cell-a",
+		Name:      "cell-a",
+		Status:    domain.EgressCellActive,
+		Proxy:     &domain.ProxyConfig{Type: "socks5", Host: "127.0.0.1", Port: 11080},
+		CreatedAt: time.Now().UTC(),
+		UpdatedAt: time.Now().UTC(),
+	}); err != nil {
+		t.Fatalf("SaveCell(cell-a): %v", err)
+	}
+
+	if err := p.DeleteCell("cell-a"); err != nil {
+		t.Fatalf("DeleteCell(cell-a): %v", err)
+	}
+	if cell := p.GetCell("cell-a"); cell != nil {
+		t.Fatalf("GetCell(cell-a) = %#v, want nil", cell)
+	}
+}
+
+func TestDeleteCell_RejectsBoundCell(t *testing.T) {
+	acct := activeAccount("acct-a", "acct-a@example.com")
+	acct.CellID = "cell-a"
+
+	p := newTestPool(t, acct)
+	if err := p.SaveCell(&domain.EgressCell{
+		ID:        "cell-a",
+		Name:      "cell-a",
+		Status:    domain.EgressCellActive,
+		Proxy:     &domain.ProxyConfig{Type: "socks5", Host: "127.0.0.1", Port: 11080},
+		CreatedAt: time.Now().UTC(),
+		UpdatedAt: time.Now().UTC(),
+	}); err != nil {
+		t.Fatalf("SaveCell(cell-a): %v", err)
+	}
+
+	if err := p.DeleteCell("cell-a"); !errors.Is(err, ErrCellInUse) {
+		t.Fatalf("DeleteCell(cell-a) = %v, want %v", err, ErrCellInUse)
+	}
+	if cell := p.GetCell("cell-a"); cell == nil {
+		t.Fatal("bound cell should remain")
+	}
+	if got := p.Get("acct-a"); got == nil || got.CellID != "cell-a" {
+		t.Fatalf("account cell_id = %#v, want cell-a", got)
+	}
+}
+
+func TestUpdate_TrimsCellIDBeforePersisting(t *testing.T) {
+	acct := activeAccount("acct-a", "acct-a@example.com")
+	p := newTestPool(t, acct)
+	if err := p.SaveCell(&domain.EgressCell{
+		ID:        "cell-trim",
+		Name:      "cell-trim",
+		Status:    domain.EgressCellActive,
+		Proxy:     &domain.ProxyConfig{Type: "socks5", Host: "127.0.0.1", Port: 11080},
+		CreatedAt: time.Now().UTC(),
+		UpdatedAt: time.Now().UTC(),
+	}); err != nil {
+		t.Fatalf("SaveCell(cell-trim): %v", err)
+	}
+
+	if err := p.Update("acct-a", func(a *domain.Account) {
+		a.CellID = " cell-trim "
+	}); err != nil {
+		t.Fatalf("Update(cell_id): %v", err)
+	}
+	if got := p.Get("acct-a"); got == nil || got.CellID != "cell-trim" {
+		t.Fatalf("account cell_id = %#v, want cell-trim", got)
+	}
+	if err := p.DeleteCell("cell-trim"); !errors.Is(err, ErrCellInUse) {
+		t.Fatalf("DeleteCell(cell-trim) = %v, want %v", err, ErrCellInUse)
+	}
+}
+
+func TestAdd_TrimsCellIDBeforePersisting(t *testing.T) {
+	p := newTestPool(t)
+	if err := p.SaveCell(&domain.EgressCell{
+		ID:        "cell-trim",
+		Name:      "cell-trim",
+		Status:    domain.EgressCellActive,
+		Proxy:     &domain.ProxyConfig{Type: "socks5", Host: "127.0.0.1", Port: 11080},
+		CreatedAt: time.Now().UTC(),
+		UpdatedAt: time.Now().UTC(),
+	}); err != nil {
+		t.Fatalf("SaveCell(cell-trim): %v", err)
+	}
+
+	acct := activeAccount("acct-new", "new@example.com")
+	acct.CellID = " cell-trim "
+	if err := p.Add(acct); err != nil {
+		t.Fatalf("Add(): %v", err)
+	}
+	if got := p.Get("acct-new"); got == nil || got.CellID != "cell-trim" {
+		t.Fatalf("account cell_id = %#v, want cell-trim", got)
+	}
+	if err := p.DeleteCell("cell-trim"); !errors.Is(err, ErrCellInUse) {
+		t.Fatalf("DeleteCell(cell-trim) = %v, want %v", err, ErrCellInUse)
+	}
+}
+
+func TestUpdate_RevalidatesOccupiedCellWhenProviderChanges(t *testing.T) {
+	owner := activeAccount("acct-owner", "owner@example.com")
+	owner.CellID = "cell-http"
+	other := &domain.Account{
+		ID:       "acct-other",
+		Email:    "other@example.com",
+		Provider: domain.ProviderGemini,
+		Subject:  "acct-other",
+		Status:   domain.StatusActive,
+		Priority: 50,
+		CellID:   "cell-http",
+	}
+
+	p := newTestPool(t, owner, other)
+	if err := p.SaveCell(&domain.EgressCell{
+		ID:        "cell-http",
+		Name:      "cell-http",
+		Status:    domain.EgressCellActive,
+		Proxy:     &domain.ProxyConfig{Type: "http", Host: "127.0.0.1", Port: 11080},
+		CreatedAt: time.Now().UTC(),
+		UpdatedAt: time.Now().UTC(),
+	}); err != nil {
+		t.Fatalf("SaveCell(cell-http): %v", err)
+	}
+
+	err := p.Update("acct-other", func(a *domain.Account) {
+		a.Provider = domain.ProviderClaude
+	})
+	if !errors.Is(err, ErrCellOccupied) {
+		t.Fatalf("Update(provider) = %v, want %v", err, ErrCellOccupied)
+	}
+	if got := p.Get("acct-other"); got == nil || got.Provider != domain.ProviderGemini || got.CellID != "cell-http" {
+		t.Fatalf("account after failed provider update = %#v", got)
+	}
+}
+
+func TestValidateCellBinding_CanonicalizesExistingCellOccupancy(t *testing.T) {
+	owner := activeAccount("acct-owner", "owner@example.com")
+	owner.CellID = " cell-http "
+	other := activeAccount("acct-other", "other@example.com")
+
+	p := newTestPool(t, owner, other)
+	if err := p.SaveCell(&domain.EgressCell{
+		ID:        "cell-http",
+		Name:      "cell-http",
+		Status:    domain.EgressCellActive,
+		Proxy:     &domain.ProxyConfig{Type: "http", Host: "127.0.0.1", Port: 11080},
+		CreatedAt: time.Now().UTC(),
+		UpdatedAt: time.Now().UTC(),
+	}); err != nil {
+		t.Fatalf("SaveCell(cell-http): %v", err)
+	}
+
+	err := p.BindAccountCell("acct-other", "cell-http", time.Now().UTC())
+	if !errors.Is(err, ErrCellOccupied) {
+		t.Fatalf("BindAccountCell() = %v, want %v", err, ErrCellOccupied)
+	}
+	if got := p.Get("acct-owner"); got == nil || got.CellID != "cell-http" || got.Cell == nil || got.Cell.ID != "cell-http" {
+		t.Fatalf("projected dirty owner = %#v, want canonical cell-http with cell projection", got)
+	}
+	if err := p.DeleteCell("cell-http"); !errors.Is(err, ErrCellInUse) {
+		t.Fatalf("DeleteCell(cell-http) = %v, want %v", err, ErrCellInUse)
+	}
+}
+
+func TestBindAccountCell_RejectsCellDeletedAfterPreflight(t *testing.T) {
+	acct := activeAccount("acct-a", "acct-a@example.com")
+	p := newTestPool(t, acct)
+	if err := p.SaveCell(&domain.EgressCell{
+		ID:        "cell-race",
+		Name:      "cell-race",
+		Status:    domain.EgressCellActive,
+		Proxy:     &domain.ProxyConfig{Type: "socks5", Host: "127.0.0.1", Port: 11080},
+		CreatedAt: time.Now().UTC(),
+		UpdatedAt: time.Now().UTC(),
+	}); err != nil {
+		t.Fatalf("SaveCell(cell-race): %v", err)
+	}
+
+	if cell := p.GetCell("cell-race"); cell == nil {
+		t.Fatal("preflight expected cell-race to exist")
+	}
+	if err := p.DeleteCell("cell-race"); err != nil {
+		t.Fatalf("DeleteCell(cell-race): %v", err)
+	}
+
+	err := p.BindAccountCell("acct-a", "cell-race", time.Now().UTC())
+	if !errors.Is(err, ErrCellNotFound) {
+		t.Fatalf("BindAccountCell() = %v, want %v", err, ErrCellNotFound)
+	}
+	if got := p.Get("acct-a"); got == nil || got.CellID != "" {
+		t.Fatalf("account cell_id = %#v, want empty", got)
+	}
+}
+
+func TestUpdate_RejectsCellDeletedAfterPreflight(t *testing.T) {
+	acct := activeAccount("acct-a", "acct-a@example.com")
+	p := newTestPool(t, acct)
+	if err := p.SaveCell(&domain.EgressCell{
+		ID:        "cell-race",
+		Name:      "cell-race",
+		Status:    domain.EgressCellActive,
+		Proxy:     &domain.ProxyConfig{Type: "socks5", Host: "127.0.0.1", Port: 11080},
+		CreatedAt: time.Now().UTC(),
+		UpdatedAt: time.Now().UTC(),
+	}); err != nil {
+		t.Fatalf("SaveCell(cell-race): %v", err)
+	}
+
+	if cell := p.GetCell("cell-race"); cell == nil {
+		t.Fatal("preflight expected cell-race to exist")
+	}
+	if err := p.DeleteCell("cell-race"); err != nil {
+		t.Fatalf("DeleteCell(cell-race): %v", err)
+	}
+
+	err := p.Update("acct-a", func(a *domain.Account) {
+		a.CellID = "cell-race"
+	})
+	if !errors.Is(err, ErrCellNotFound) {
+		t.Fatalf("Update() = %v, want %v", err, ErrCellNotFound)
+	}
+	if got := p.Get("acct-a"); got == nil || got.CellID != "" {
+		t.Fatalf("account cell_id = %#v, want empty", got)
+	}
+}
+
+func TestAdd_RejectsCellDeletedAfterPreflight(t *testing.T) {
+	p := newTestPool(t)
+	if err := p.SaveCell(&domain.EgressCell{
+		ID:        "cell-race",
+		Name:      "cell-race",
+		Status:    domain.EgressCellActive,
+		Proxy:     &domain.ProxyConfig{Type: "socks5", Host: "127.0.0.1", Port: 11080},
+		CreatedAt: time.Now().UTC(),
+		UpdatedAt: time.Now().UTC(),
+	}); err != nil {
+		t.Fatalf("SaveCell(cell-race): %v", err)
+	}
+
+	if cell := p.GetCell("cell-race"); cell == nil {
+		t.Fatal("preflight expected cell-race to exist")
+	}
+	if err := p.DeleteCell("cell-race"); err != nil {
+		t.Fatalf("DeleteCell(cell-race): %v", err)
+	}
+
+	acct := activeAccount("acct-new", "new@example.com")
+	acct.CellID = "cell-race"
+	err := p.Add(acct)
+	if !errors.Is(err, ErrCellNotFound) {
+		t.Fatalf("Add() = %v, want %v", err, ErrCellNotFound)
+	}
+	if got := p.Get("acct-new"); got != nil {
+		t.Fatalf("Get(acct-new) = %#v, want nil", got)
 	}
 }
 

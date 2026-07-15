@@ -52,7 +52,7 @@ func (s *Server) dashboardAccounts() []DashboardAccount {
 			Weight:          proj.effectiveWeight,
 			CooldownUntil:   acct.CooldownUntil,
 			LastUsedAt:      acct.LastUsedAt,
-			CellID:          acct.CellID,
+			CellID:          canonicalCellID(acct.CellID),
 			AvailableNative: avail.Native,
 			AvailableCompat: avail.Compat,
 			Windows:         proj.windows,
