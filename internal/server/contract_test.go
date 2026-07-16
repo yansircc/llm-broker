@@ -942,6 +942,35 @@ func TestCompatRoute_RejectsNativeOnlyUser(t *testing.T) {
 	}
 }
 
+func TestCodexResponsesRoutes_RegisterOnlySupportedAliases(t *testing.T) {
+	srv := newTestServer(t)
+	srv.authMw = auth.NewMiddleware("admin-secret", srv.store)
+	srv.catalogDrivers = map[domain.Provider]driver.Descriptor{
+		domain.ProviderCodex: driver.NewCodexDriver(driver.CodexConfig{}),
+	}
+
+	mux := http.NewServeMux()
+	srv.registerRelayRoutes(mux)
+
+	for _, path := range []string{"/openai/responses", "/openai/v1/responses"} {
+		req := httptest.NewRequest(http.MethodPost, path, nil)
+		w := httptest.NewRecorder()
+		mux.ServeHTTP(w, req)
+
+		if w.Code != http.StatusUnauthorized {
+			t.Errorf("POST %s status = %d, want %d", path, w.Code, http.StatusUnauthorized)
+		}
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/openai/v1/chat/completions", nil)
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+
+	if w.Code != http.StatusNotFound {
+		t.Errorf("POST /openai/v1/chat/completions status = %d, want %d", w.Code, http.StatusNotFound)
+	}
+}
+
 func TestNativeRoute_RejectsCompatOnlyUser(t *testing.T) {
 	srv := newTestServer(t)
 	srv.authMw = auth.NewMiddleware("admin-secret", srv.store)

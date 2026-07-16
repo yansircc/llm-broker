@@ -66,7 +66,7 @@ func (d *CodexDriver) BucketKey(acct *domain.Account) string {
 func (d *CodexDriver) Info() ProviderInfo {
 	return ProviderInfo{
 		Label:               "Codex",
-		RelayPaths:          []string{"/openai/responses"},
+		RelayPaths:          []string{"/openai/responses", "/openai/v1/responses"},
 		OAuthStateRequired:  false,
 		CallbackPlaceholder: "http://localhost:1455/auth/callback?code=...",
 		CallbackHint:        "account metadata is extracted from the id_token.",
