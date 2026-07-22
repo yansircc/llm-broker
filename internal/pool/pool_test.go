@@ -3,8 +3,7 @@ package pool
 import (
 	"context"
 	"encoding/json"
-	"math"
-	"math/rand"
+	"errors"
 	"net/http"
 	"strings"
 	"sync"
@@ -20,6 +19,246 @@ import (
 // mockDriver is a minimal Driver implementation for pool tests.
 type mockDriver struct {
 	provider domain.Provider
+}
+
+func TestAcquireRouteLeastInflightReservesDistinctBuckets(t *testing.T) {
+	p := newTestPool(t,
+		activeAccount("a", "a@x"),
+		activeAccount("b", "b@x"),
+		activeAccount("c", "c@x"),
+		activeAccount("d", "d@x"),
+	)
+
+	type result struct {
+		acct  *domain.Account
+		lease *AttemptLease
+		err   error
+	}
+	start := make(chan struct{})
+	results := make(chan result, 3)
+	for i := 0; i < 3; i++ {
+		go func() {
+			<-start
+			acct, lease, err := p.AcquireRoute(context.Background(), testDriver, RouteRequest{Model: "claude-haiku"})
+			results <- result{acct: acct, lease: lease, err: err}
+		}()
+	}
+	close(start)
+
+	seen := make(map[string]struct{})
+	leases := make([]*AttemptLease, 0, 3)
+	for i := 0; i < 3; i++ {
+		got := <-results
+		if got.err != nil {
+			t.Fatalf("AcquireRoute(%d): %v", i, got.err)
+		}
+		seen[got.acct.ID] = struct{}{}
+		leases = append(leases, got.lease)
+	}
+	for _, lease := range leases {
+		lease.Finish()
+	}
+	if len(seen) != 3 {
+		t.Fatalf("three overlapping acquisitions used %d buckets, want 3: %#v", len(seen), seen)
+	}
+}
+
+func TestPickSequentiallyRotatesEqualIdleBuckets(t *testing.T) {
+	p := newTestPool(t,
+		activeAccount("a", "a@x"),
+		activeAccount("b", "b@x"),
+		activeAccount("c", "c@x"),
+		activeAccount("d", "d@x"),
+	)
+
+	seen := make(map[string]struct{})
+	for i := 0; i < 4; i++ {
+		acct, err := p.Pick(testDriver, nil, "claude-haiku", "")
+		if err != nil {
+			t.Fatalf("Pick(%d): %v", i, err)
+		}
+		seen[acct.ID] = struct{}{}
+	}
+	if len(seen) != 4 {
+		t.Fatalf("four sequential picks used %d buckets, want 4: %#v", len(seen), seen)
+	}
+}
+
+func TestAcquireRouteEstablishedAffinityStaysAndContributesLoad(t *testing.T) {
+	a := activeAccount("a", "a@x")
+	b := activeAccount("b", "b@x")
+	p := newTestPool(t, a, b)
+	if err := p.SetSessionBinding(context.Background(), "session-a", a, time.Hour); err != nil {
+		t.Fatalf("SetSessionBinding: %v", err)
+	}
+
+	bound, boundLease, err := p.AcquireRoute(context.Background(), testDriver, RouteRequest{
+		Model:       "claude-haiku",
+		AffinityKey: "session-a",
+		Continuity:  driver.AffinityPrefer,
+	})
+	if err != nil {
+		t.Fatalf("AcquireRoute(bound): %v", err)
+	}
+	if bound.ID != a.ID {
+		t.Fatalf("bound account = %q, want %q", bound.ID, a.ID)
+	}
+
+	unbound, unboundLease, err := p.AcquireRoute(context.Background(), testDriver, RouteRequest{Model: "claude-haiku"})
+	if err != nil {
+		t.Fatalf("AcquireRoute(unbound): %v", err)
+	}
+	if unbound.ID != b.ID {
+		t.Fatalf("unbound account = %q, want idle %q", unbound.ID, b.ID)
+	}
+
+	boundAgain, boundAgainLease, err := p.AcquireRoute(context.Background(), testDriver, RouteRequest{
+		Model:       "claude-haiku",
+		AffinityKey: "session-a",
+		Continuity:  driver.AffinityPrefer,
+	})
+	if err != nil {
+		t.Fatalf("AcquireRoute(bound again): %v", err)
+	}
+	if boundAgain.ID != a.ID {
+		t.Fatalf("loaded bound account migrated to %q, want %q", boundAgain.ID, a.ID)
+	}
+
+	boundLease.Finish()
+	unboundLease.Finish()
+	boundAgainLease.Finish()
+}
+
+func TestAttemptLeaseFinishAndAbortAreIdempotent(t *testing.T) {
+	p := newTestPool(t, activeAccount("a", "a@x"))
+	_, lease, err := p.AcquireRoute(context.Background(), testDriver, RouteRequest{Model: "claude-haiku"})
+	if err != nil {
+		t.Fatalf("AcquireRoute: %v", err)
+	}
+
+	p.mu.RLock()
+	before := p.routeLoads[lease.loadKey].inflight
+	p.mu.RUnlock()
+	if before != 1 {
+		t.Fatalf("inflight before finish = %d, want 1", before)
+	}
+
+	lease.Finish()
+	lease.Finish()
+	lease.Abort()
+	p.mu.RLock()
+	after := p.routeLoads[lease.loadKey].inflight
+	p.mu.RUnlock()
+	if after != 0 {
+		t.Fatalf("inflight after idempotent terminal calls = %d, want 0", after)
+	}
+}
+
+func TestAcquireRouteColdAffinityFollowerWaitsForAcceptedBinding(t *testing.T) {
+	p := newTestPool(t, activeAccount("a", "a@x"), activeAccount("b", "b@x"))
+	first, firstLease, err := p.AcquireRoute(context.Background(), testDriver, RouteRequest{
+		Model:       "claude-haiku",
+		AffinityKey: "cold-session",
+		Continuity:  driver.AffinityPrefer,
+	})
+	if err != nil {
+		t.Fatalf("AcquireRoute(first): %v", err)
+	}
+
+	type result struct {
+		acct  *domain.Account
+		lease *AttemptLease
+		err   error
+	}
+	resultCh := make(chan result, 1)
+	go func() {
+		acct, lease, err := p.AcquireRoute(context.Background(), testDriver, RouteRequest{
+			Model:       "claude-haiku",
+			AffinityKey: "cold-session",
+			Continuity:  driver.AffinityPrefer,
+		})
+		resultCh <- result{acct: acct, lease: lease, err: err}
+	}()
+
+	select {
+	case got := <-resultCh:
+		if got.lease != nil {
+			got.lease.Abort()
+		}
+		t.Fatal("cold-affinity follower returned before the first attempt resolved")
+	case <-time.After(20 * time.Millisecond):
+	}
+
+	if err := firstLease.Accept(context.Background(), time.Hour); err != nil {
+		t.Fatalf("Accept(first): %v", err)
+	}
+	got := <-resultCh
+	if got.err != nil {
+		t.Fatalf("AcquireRoute(follower): %v", got.err)
+	}
+	if got.acct.ID != first.ID {
+		t.Fatalf("follower account = %q, want accepted owner %q", got.acct.ID, first.ID)
+	}
+	firstLease.Finish()
+	got.lease.Finish()
+}
+
+func TestAcquireRouteRequiredAffinityRejectsMissingAndUnavailableOwner(t *testing.T) {
+	a := activeAccount("a", "a@x")
+	p := newTestPool(t, a)
+
+	_, _, err := p.AcquireRoute(context.Background(), testDriver, RouteRequest{
+		Model:       "claude-haiku",
+		AffinityKey: "required-session",
+		Continuity:  driver.AffinityRequire,
+	})
+	if !errors.Is(err, ErrAffinityOwnerMissing) {
+		t.Fatalf("missing required owner error = %v, want %v", err, ErrAffinityOwnerMissing)
+	}
+
+	if err := p.SetSessionBinding(context.Background(), "required-session", a, time.Hour); err != nil {
+		t.Fatalf("SetSessionBinding: %v", err)
+	}
+	p.Observe(a.ID, driver.Effect{
+		Kind:          driver.EffectCooldown,
+		Scope:         driver.EffectScopeBucket,
+		CooldownUntil: time.Now().Add(time.Hour),
+	})
+	_, _, err = p.AcquireRoute(context.Background(), testDriver, RouteRequest{
+		Model:       "claude-haiku",
+		AffinityKey: "required-session",
+		Continuity:  driver.AffinityRequire,
+	})
+	if !errors.Is(err, ErrAffinityOwnerUnavailable) {
+		t.Fatalf("unavailable required owner error = %v, want %v", err, ErrAffinityOwnerUnavailable)
+	}
+}
+
+func TestSessionBindingResolvesRecreatedAccountByStableIdentity(t *testing.T) {
+	a := activeAccount("old-row", "old@x")
+	a.Subject = "stable-subject"
+	p := newTestPool(t, a)
+	if err := p.SetSessionBinding(context.Background(), "stable-session", a, time.Hour); err != nil {
+		t.Fatalf("SetSessionBinding: %v", err)
+	}
+
+	ms := p.store.(*store.MockStore)
+	if err := ms.DeleteAccount(context.Background(), a.ID); err != nil {
+		t.Fatalf("DeleteAccount(old): %v", err)
+	}
+	recreated := activeAccount("new-row", "new@x")
+	recreated.Subject = a.Subject
+	if err := ms.SaveAccount(context.Background(), recreated); err != nil {
+		t.Fatalf("SaveAccount(new): %v", err)
+	}
+
+	accountID, ok, err := p.GetSessionBinding(context.Background(), "stable-session")
+	if err != nil {
+		t.Fatalf("GetSessionBinding: %v", err)
+	}
+	if !ok || accountID != recreated.ID {
+		t.Fatalf("resolved binding = (%q, %v), want recreated row %q", accountID, ok, recreated.ID)
+	}
 }
 
 func (m *mockDriver) Provider() domain.Provider { return m.provider }
@@ -91,6 +330,12 @@ func (m *mockDriver) CanServe(state json.RawMessage, model string, _ time.Time) 
 		return true
 	}
 	return !flags.DenyOpus
+}
+func (m *mockDriver) AssessCapacity(state json.RawMessage, model string, now time.Time) driver.CapacityAssessment {
+	return driver.CapacityAssessment{
+		Eligible: m.CanServe(state, model, now),
+		Priority: m.AutoPriority(state),
+	}
 }
 func (m *mockDriver) CalcCost(_ string, _ *driver.Usage) float64           { return 0 }
 func (m *mockDriver) GetUtilization(_ json.RawMessage) []driver.UtilWindow { return nil }
@@ -705,35 +950,6 @@ func TestPick_SameBucketUsesLeastRecentlyUsed(t *testing.T) {
 	}
 	if acct.ID != "older" {
 		t.Fatalf("expected older account from shared bucket, got %s", acct.ID)
-	}
-}
-
-func TestPickBucketCandidate_UsesSqrtWeightedLottery(t *testing.T) {
-	candidates := make([]bucketCandidate, 0, 15)
-	for i := 0; i < 14; i++ {
-		candidates = append(candidates, bucketCandidate{key: "old", priority: 20})
-	}
-	candidates = append(candidates, bucketCandidate{key: "new", priority: 100})
-
-	rng := rand.New(rand.NewSource(1))
-	const draws = 20000
-	newHits := 0
-	for i := 0; i < draws; i++ {
-		chosen := pickBucketCandidate(candidates, func(totalWeight float64) float64 {
-			return rng.Float64() * totalWeight
-		})
-		if chosen.key == "new" {
-			newHits++
-		}
-	}
-
-	share := float64(newHits) / draws
-	want := bucketPriorityWeight(100) / (14*bucketPriorityWeight(20) + bucketPriorityWeight(100))
-	if math.Abs(share-want) > 0.02 {
-		t.Fatalf("new bucket share = %.4f, want around %.4f", share, want)
-	}
-	if share >= 0.20 {
-		t.Fatalf("new bucket share = %.4f, want well below monopoly", share)
 	}
 }
 
@@ -1440,147 +1656,5 @@ func TestCleanup_SharedBucket_BlockedStaysBlocked(t *testing.T) {
 	}
 	if !hasExpiry {
 		t.Fatal("missing 'cooldown expired' event")
-	}
-}
-
-// priorityDriver is a mockDriver that computes AutoPriority from a "remaining"
-// field in the state JSON, mirroring the real Codex driver's behaviour.
-type priorityDriver struct {
-	mockDriver
-}
-
-func (d *priorityDriver) AutoPriority(state json.RawMessage) int {
-	var s struct {
-		Remaining int `json:"remaining"`
-	}
-	if json.Unmarshal(state, &s) != nil || s.Remaining == 0 {
-		return 50 // default for empty/unparseable state
-	}
-	return s.Remaining
-}
-
-func TestShouldKeepRouteBinding_RebalancesWhenBetterAlternative(t *testing.T) {
-	drv := &priorityDriver{mockDriver{provider: domain.ProviderClaude}}
-
-	// acctA: low remaining capacity (priority 10)
-	acctA := activeAccount("a", "a@x")
-	acctA.PriorityMode = "auto"
-	acctA.ProviderStateJSON = `{"remaining":10}`
-
-	// acctB: high remaining capacity (priority 90)
-	acctB := activeAccount("b", "b@x")
-	acctB.PriorityMode = "auto"
-	acctB.ProviderStateJSON = `{"remaining":90}`
-
-	p := newTestPool(t, acctA, acctB)
-
-	// Gap is 80 (90-10) > rebalanceGap(30) → should NOT keep binding to A
-	if p.ShouldKeepRouteBinding("a", drv, "", domain.SurfaceNative) {
-		t.Fatal("expected rebalance: gap 80 > 30, but binding was kept")
-	}
-}
-
-func TestShouldKeepRouteBinding_SticksWhenGapSmall(t *testing.T) {
-	drv := &priorityDriver{mockDriver{provider: domain.ProviderClaude}}
-
-	acctA := activeAccount("a", "a@x")
-	acctA.PriorityMode = "auto"
-	acctA.ProviderStateJSON = `{"remaining":60}`
-
-	acctB := activeAccount("b", "b@x")
-	acctB.PriorityMode = "auto"
-	acctB.ProviderStateJSON = `{"remaining":70}`
-
-	p := newTestPool(t, acctA, acctB)
-
-	// Gap is 10 (70-60) <= rebalanceGap(30) → should keep binding
-	if !p.ShouldKeepRouteBinding("a", drv, "", domain.SurfaceNative) {
-		t.Fatal("expected sticky: gap 10 <= 30, but binding was released")
-	}
-}
-
-func TestShouldKeepRouteBinding_UnavailableReturnsFalse(t *testing.T) {
-	drv := &priorityDriver{mockDriver{provider: domain.ProviderClaude}}
-
-	acctA := activeAccount("a", "a@x")
-	future := time.Now().Add(time.Hour)
-	acctA.CooldownUntil = &future
-
-	acctB := activeAccount("b", "b@x")
-
-	p := newTestPool(t, acctA, acctB)
-
-	// A is in cooldown → should not keep
-	if p.ShouldKeepRouteBinding("a", drv, "", domain.SurfaceNative) {
-		t.Fatal("expected false for unavailable account in cooldown")
-	}
-}
-
-func TestShouldKeepRouteBinding_NoAlternativeSticks(t *testing.T) {
-	drv := &priorityDriver{mockDriver{provider: domain.ProviderClaude}}
-
-	acctA := activeAccount("a", "a@x")
-	acctA.PriorityMode = "auto"
-	acctA.ProviderStateJSON = `{"remaining":5}`
-
-	p := newTestPool(t, acctA)
-
-	// Only account → bestPri=0, currentPri=5, gap=-5 ≤ 30 → stick
-	if !p.ShouldKeepRouteBinding("a", drv, "", domain.SurfaceNative) {
-		t.Fatal("expected sticky when no alternatives exist")
-	}
-}
-
-func TestBestAvailablePriorityLocked(t *testing.T) {
-	drv := &priorityDriver{mockDriver{provider: domain.ProviderClaude}}
-
-	acctA := activeAccount("a", "a@x")
-	acctA.PriorityMode = "auto"
-	acctA.ProviderStateJSON = `{"remaining":10}`
-
-	acctB := activeAccount("b", "b@x")
-	acctB.PriorityMode = "auto"
-	acctB.ProviderStateJSON = `{"remaining":90}`
-
-	acctC := activeAccount("c", "c@x")
-	acctC.PriorityMode = "auto"
-	acctC.ProviderStateJSON = `{"remaining":60}`
-
-	p := newTestPool(t, acctA, acctB, acctC)
-
-	p.mu.RLock()
-	defer p.mu.RUnlock()
-
-	// Best excluding A → B with 90
-	best := p.bestAvailablePriorityLocked(drv, "", domain.SurfaceNative, "a")
-	if best != 90 {
-		t.Fatalf("bestAvailablePriority excluding a = %d, want 90", best)
-	}
-
-	// Best excluding B → C with 60
-	best = p.bestAvailablePriorityLocked(drv, "", domain.SurfaceNative, "b")
-	if best != 60 {
-		t.Fatalf("bestAvailablePriority excluding b = %d, want 60", best)
-	}
-}
-
-func TestShouldKeepRouteBinding_ManualModeAlwaysSticks(t *testing.T) {
-	drv := &priorityDriver{mockDriver{provider: domain.ProviderClaude}}
-
-	// acctA: manual mode with low priority
-	acctA := activeAccount("a", "a@x")
-	acctA.PriorityMode = "manual"
-	acctA.Priority = 5
-
-	// acctB: auto mode with high remaining capacity
-	acctB := activeAccount("b", "b@x")
-	acctB.PriorityMode = "auto"
-	acctB.ProviderStateJSON = `{"remaining":95}`
-
-	p := newTestPool(t, acctA, acctB)
-
-	// Even though gap is huge, manual mode account always sticks
-	if !p.ShouldKeepRouteBinding("a", drv, "", domain.SurfaceNative) {
-		t.Fatal("expected manual-mode account to always stick, but binding was released")
 	}
 }

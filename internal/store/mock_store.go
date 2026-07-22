@@ -15,7 +15,6 @@ type MockStore struct {
 	cells           map[string]*domain.EgressCell
 	buckets         map[string]*domain.QuotaBucket
 	sessionBindings map[string]*domain.SessionBinding
-	userRouteBinds  map[string]*domain.UserRouteBinding
 	stainless       map[string]*domain.StainlessBinding
 	oauthSessions   map[string]*domain.OAuthSessionState
 	refreshLocks    map[string]*domain.RefreshLock
@@ -37,7 +36,6 @@ func NewMockStore() *MockStore {
 		cells:           make(map[string]*domain.EgressCell),
 		buckets:         make(map[string]*domain.QuotaBucket),
 		sessionBindings: make(map[string]*domain.SessionBinding),
-		userRouteBinds:  make(map[string]*domain.UserRouteBinding),
 		stainless:       make(map[string]*domain.StainlessBinding),
 		oauthSessions:   make(map[string]*domain.OAuthSessionState),
 		refreshLocks:    make(map[string]*domain.RefreshLock),
@@ -182,13 +180,13 @@ func (m *MockStore) GetSessionBinding(_ context.Context, sessionUUID string) (*d
 	return &copy, nil
 }
 
-func (m *MockStore) ListSessionBindingsByAccount(_ context.Context, accountID string) ([]domain.SessionBinding, error) {
+func (m *MockStore) ListSessionBindingsByTarget(_ context.Context, provider domain.Provider, subject string) ([]domain.SessionBinding, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	now := time.Now()
 	var result []domain.SessionBinding
 	for _, binding := range m.sessionBindings {
-		if binding.AccountID != accountID || !binding.ExpiresAt.After(now) {
+		if binding.Provider != provider || binding.Subject != subject || !binding.ExpiresAt.After(now) {
 			continue
 		}
 		result = append(result, *binding)
@@ -222,41 +220,6 @@ func (m *MockStore) PurgeExpiredSessionBindings(_ context.Context, before time.T
 		}
 	}
 	return purged, nil
-}
-
-func userRouteBindingKey(userID string, provider domain.Provider, surface domain.Surface) string {
-	return userID + "|" + string(provider) + "|" + string(domain.NormalizeSurface(string(surface)))
-}
-
-func (m *MockStore) GetUserRouteBinding(_ context.Context, userID string, provider domain.Provider, surface domain.Surface) (*domain.UserRouteBinding, error) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	binding, ok := m.userRouteBinds[userRouteBindingKey(userID, provider, surface)]
-	if !ok {
-		return nil, nil
-	}
-	copy := *binding
-	return &copy, nil
-}
-
-func (m *MockStore) SaveUserRouteBinding(_ context.Context, binding *domain.UserRouteBinding) error {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	copy := *binding
-	copy.Surface = domain.NormalizeSurface(string(copy.Surface))
-	m.userRouteBinds[userRouteBindingKey(copy.UserID, copy.Provider, copy.Surface)] = &copy
-	return nil
-}
-
-func (m *MockStore) DeleteUserRouteBindingsByUser(_ context.Context, userID string) error {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	for key, binding := range m.userRouteBinds {
-		if binding.UserID == userID {
-			delete(m.userRouteBinds, key)
-		}
-	}
-	return nil
 }
 
 func (m *MockStore) GetStainlessBinding(_ context.Context, accountID string) (*domain.StainlessBinding, error) {
@@ -426,11 +389,6 @@ func (m *MockStore) DeleteUser(_ context.Context, id string) error {
 		return ErrNotFound
 	}
 	delete(m.users, id)
-	for key, binding := range m.userRouteBinds {
-		if binding.UserID == id {
-			delete(m.userRouteBinds, key)
-		}
-	}
 	return nil
 }
 

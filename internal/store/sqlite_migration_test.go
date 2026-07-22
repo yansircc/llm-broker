@@ -220,7 +220,8 @@ func TestMigrate_LegacyUsersTable(t *testing.T) {
 		);
 		CREATE TABLE session_bindings (
 			session_uuid TEXT PRIMARY KEY,
-			account_id TEXT NOT NULL,
+			provider TEXT NOT NULL,
+			subject TEXT NOT NULL,
 			created_at INTEGER NOT NULL,
 			last_used_at INTEGER NOT NULL,
 			expires_at INTEGER NOT NULL
@@ -376,7 +377,8 @@ func TestNew_AllowsRequestLogColumnOrderDrift(t *testing.T) {
 		);
 		CREATE TABLE session_bindings (
 			session_uuid TEXT PRIMARY KEY,
-			account_id TEXT NOT NULL,
+			provider TEXT NOT NULL,
+			subject TEXT NOT NULL,
 			created_at INTEGER NOT NULL,
 			last_used_at INTEGER NOT NULL,
 			expires_at INTEGER NOT NULL
@@ -518,7 +520,8 @@ func TestMigrate_QuotaBucketsPrunesOrphansAndBackfillsMissing(t *testing.T) {
 		);
 		CREATE TABLE session_bindings (
 			session_uuid TEXT PRIMARY KEY,
-			account_id TEXT NOT NULL,
+			provider TEXT NOT NULL,
+			subject TEXT NOT NULL,
 			created_at INTEGER NOT NULL,
 			last_used_at INTEGER NOT NULL,
 			expires_at INTEGER NOT NULL
@@ -704,14 +707,16 @@ func TestSessionBindings_RoundTripAndPurge(t *testing.T) {
 	now := time.Now().UTC().Truncate(time.Second)
 	active := &domain.SessionBinding{
 		SessionUUID: "sess-active",
-		AccountID:   "acct-1",
+		Provider:    domain.ProviderClaude,
+		Subject:     "subject-1",
 		CreatedAt:   now.Add(-2 * time.Minute),
 		LastUsedAt:  now.Add(-1 * time.Minute),
 		ExpiresAt:   now.Add(10 * time.Minute),
 	}
 	expired := &domain.SessionBinding{
 		SessionUUID: "sess-expired",
-		AccountID:   "acct-1",
+		Provider:    domain.ProviderClaude,
+		Subject:     "subject-1",
 		CreatedAt:   now.Add(-20 * time.Minute),
 		LastUsedAt:  now.Add(-15 * time.Minute),
 		ExpiresAt:   now.Add(-1 * time.Minute),
@@ -728,8 +733,8 @@ func TestSessionBindings_RoundTripAndPurge(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetSessionBinding(active): %v", err)
 	}
-	if got == nil || got.AccountID != active.AccountID {
-		t.Fatalf("GetSessionBinding(active) = %#v, want account %q", got, active.AccountID)
+	if got == nil || got.Provider != active.Provider || got.Subject != active.Subject {
+		t.Fatalf("GetSessionBinding(active) = %#v, want target (%q, %q)", got, active.Provider, active.Subject)
 	}
 
 	gotExpired, err := store.GetSessionBinding(context.Background(), expired.SessionUUID)
@@ -740,12 +745,12 @@ func TestSessionBindings_RoundTripAndPurge(t *testing.T) {
 		t.Fatalf("GetSessionBinding(expired) = %#v, want nil", gotExpired)
 	}
 
-	list, err := store.ListSessionBindingsByAccount(context.Background(), "acct-1")
+	list, err := store.ListSessionBindingsByTarget(context.Background(), domain.ProviderClaude, "subject-1")
 	if err != nil {
-		t.Fatalf("ListSessionBindingsByAccount(): %v", err)
+		t.Fatalf("ListSessionBindingsByTarget(): %v", err)
 	}
 	if len(list) != 1 || list[0].SessionUUID != active.SessionUUID {
-		t.Fatalf("ListSessionBindingsByAccount() = %#v, want only %q", list, active.SessionUUID)
+		t.Fatalf("ListSessionBindingsByTarget() = %#v, want only %q", list, active.SessionUUID)
 	}
 
 	purged, err := store.PurgeExpiredSessionBindings(context.Background(), now)
@@ -783,6 +788,80 @@ func TestSessionBindings_RoundTripAndPurge(t *testing.T) {
 	}
 	if got != nil {
 		t.Fatalf("GetSessionBinding(active) after delete = %#v, want nil", got)
+	}
+}
+
+func TestMigrateSessionBindingTargetAndRemoveUserRouteBindings(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "session-binding-migration.db")
+	if err := Migrate(dbPath); err != nil {
+		t.Fatalf("initial Migrate(): %v", err)
+	}
+
+	db, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		t.Fatalf("open sqlite: %v", err)
+	}
+	now := time.Now().UTC().Unix()
+	if _, err := db.Exec(`INSERT INTO accounts (id, email, provider, status, created_at, subject)
+		VALUES ('legacy-account-row', 'legacy@example.com', 'codex', 'active', ?, 'stable-subject')`, now); err != nil {
+		db.Close()
+		t.Fatalf("seed legacy account: %v", err)
+	}
+	if _, err := db.Exec(`
+		DROP TABLE session_bindings;
+		CREATE TABLE session_bindings (
+			session_uuid TEXT PRIMARY KEY,
+			account_id TEXT NOT NULL,
+			created_at INTEGER NOT NULL,
+			last_used_at INTEGER NOT NULL,
+			expires_at INTEGER NOT NULL
+		);
+		CREATE TABLE user_route_bindings (
+			user_id TEXT NOT NULL,
+			provider TEXT NOT NULL,
+			surface TEXT NOT NULL,
+			account_id TEXT NOT NULL,
+			created_at INTEGER NOT NULL,
+			last_used_at INTEGER NOT NULL,
+			PRIMARY KEY (user_id, provider, surface)
+		)
+	`); err != nil {
+		db.Close()
+		t.Fatalf("create legacy routing schema: %v", err)
+	}
+	if _, err := db.Exec(`INSERT INTO session_bindings (session_uuid, account_id, created_at, last_used_at, expires_at)
+		VALUES ('legacy-session', 'legacy-account-row', ?, ?, ?)`, now, now, now+3600); err != nil {
+		db.Close()
+		t.Fatalf("seed legacy session binding: %v", err)
+	}
+	if _, err := db.Exec(`INSERT INTO user_route_bindings (user_id, provider, surface, account_id, created_at, last_used_at)
+		VALUES ('legacy-user', 'codex', 'native', 'legacy-account-row', ?, ?)`, now, now); err != nil {
+		db.Close()
+		t.Fatalf("seed legacy user route binding: %v", err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatalf("close seeded db: %v", err)
+	}
+
+	if err := Migrate(dbPath); err != nil {
+		t.Fatalf("Migrate() legacy routing schema: %v", err)
+	}
+	store, err := New(dbPath)
+	if err != nil {
+		t.Fatalf("New(): %v", err)
+	}
+	defer store.Close()
+
+	binding, err := store.GetSessionBinding(context.Background(), "legacy-session")
+	if err != nil {
+		t.Fatalf("GetSessionBinding(): %v", err)
+	}
+	if binding == nil || binding.Provider != domain.ProviderCodex || binding.Subject != "stable-subject" {
+		t.Fatalf("migrated binding = %#v, want (codex, stable-subject)", binding)
+	}
+	var userRouteTable string
+	if err := store.db.QueryRow(`SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'user_route_bindings'`).Scan(&userRouteTable); err != sql.ErrNoRows {
+		t.Fatalf("user_route_bindings still exists or lookup failed: name=%q err=%v", userRouteTable, err)
 	}
 }
 

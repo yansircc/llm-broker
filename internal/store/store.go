@@ -31,13 +31,10 @@ type Store interface {
 	SaveQuotaBucket(ctx context.Context, bucket *domain.QuotaBucket) error
 	DeleteQuotaBucket(ctx context.Context, bucketKey string) error
 	GetSessionBinding(ctx context.Context, sessionUUID string) (*domain.SessionBinding, error)
-	ListSessionBindingsByAccount(ctx context.Context, accountID string) ([]domain.SessionBinding, error)
+	ListSessionBindingsByTarget(ctx context.Context, provider domain.Provider, subject string) ([]domain.SessionBinding, error)
 	SaveSessionBinding(ctx context.Context, binding *domain.SessionBinding) error
 	DeleteSessionBinding(ctx context.Context, sessionUUID string) error
 	PurgeExpiredSessionBindings(ctx context.Context, before time.Time) (int64, error)
-	GetUserRouteBinding(ctx context.Context, userID string, provider domain.Provider, surface domain.Surface) (*domain.UserRouteBinding, error)
-	SaveUserRouteBinding(ctx context.Context, binding *domain.UserRouteBinding) error
-	DeleteUserRouteBindingsByUser(ctx context.Context, userID string) error
 	GetStainlessBinding(ctx context.Context, accountID string) (*domain.StainlessBinding, error)
 	SetStainlessBindingNX(ctx context.Context, binding *domain.StainlessBinding) (bool, error)
 	DeleteStainlessBinding(ctx context.Context, accountID string) error

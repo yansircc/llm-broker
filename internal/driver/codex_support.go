@@ -1,6 +1,7 @@
 package driver
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -293,7 +294,23 @@ func parseCodexErrorInfo(body []byte) (string, string) {
 
 func extractCodexErrorMessage(body []byte) string {
 	_, message := parseCodexErrorInfo(body)
-	return message
+	if message != "" {
+		return message
+	}
+	for _, line := range bytes.Split(body, []byte("\n")) {
+		line = bytes.TrimSpace(line)
+		if !bytes.HasPrefix(line, []byte("data:")) {
+			continue
+		}
+		_, message = parseCodexErrorInfo(bytes.TrimSpace(bytes.TrimPrefix(line, []byte("data:"))))
+		if message != "" {
+			return message
+		}
+	}
+	if _, ok := codexCapacityPattern(body); ok {
+		return "Selected model is at capacity. Please try a different model."
+	}
+	return ""
 }
 
 func stringifyCodexErrorCode(code any) string {

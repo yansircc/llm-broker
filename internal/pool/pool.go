@@ -35,8 +35,11 @@ type Pool struct {
 	store          store.Store
 	bus            *events.Bus
 
-	onAuthFailure func(accountID string)
-	drivers       map[domain.Provider]driver.SchedulerDriver
+	onAuthFailure  func(accountID string)
+	drivers        map[domain.Provider]driver.SchedulerDriver
+	routeLoads     map[routeLoadKey]*routeLoad
+	routeSeq       uint64
+	affinityClaims map[string]*affinityClaim
 }
 
 func (p *Pool) SetOnAuthFailure(fn func(accountID string)) {
@@ -49,6 +52,8 @@ func New(s store.Store, bus *events.Bus) (*Pool, error) {
 		cells:          make(map[string]*domain.EgressCell),
 		buckets:        make(map[string]*domain.QuotaBucket),
 		serverErrCount: make(map[string]int),
+		routeLoads:     make(map[routeLoadKey]*routeLoad),
+		affinityClaims: make(map[string]*affinityClaim),
 		store:          s,
 		bus:            bus,
 	}

@@ -113,6 +113,26 @@ func (d *CodexDriver) AutoPriority(state json.RawMessage) int {
 	return best
 }
 
+func codexFamilyPriority(state json.RawMessage, family string) int {
+	var s CodexState
+	if json.Unmarshal(state, &s) != nil {
+		return 50
+	}
+	f := s.family(family)
+	primaryRemain := 100.0
+	if f.PrimaryUtil > 0 {
+		primaryRemain = (1.0 - f.PrimaryUtil) * 100
+	}
+	secondaryRemain := 100.0
+	if f.SecondaryUtil > 0 {
+		secondaryRemain = (1.0 - f.SecondaryUtil) * 100
+	}
+	if secondaryRemain < primaryRemain {
+		primaryRemain = secondaryRemain
+	}
+	return int(primaryRemain)
+}
+
 func (d *CodexDriver) IsStale(state json.RawMessage, now time.Time) bool {
 	var s CodexState
 	if json.Unmarshal(state, &s) != nil {
@@ -251,4 +271,13 @@ func (d *CodexDriver) CanServe(state json.RawMessage, model string, now time.Tim
 		return false
 	}
 	return true
+}
+
+func (d *CodexDriver) AssessCapacity(state json.RawMessage, model string, now time.Time) CapacityAssessment {
+	family := codexModelFamily(model)
+	return CapacityAssessment{
+		Eligible: d.CanServe(state, model, now),
+		Priority: codexFamilyPriority(state, family),
+		Class:    family,
+	}
 }

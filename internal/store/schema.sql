@@ -78,26 +78,12 @@ CREATE TABLE IF NOT EXISTS quota_buckets (
 
 CREATE TABLE IF NOT EXISTS session_bindings (
     session_uuid TEXT PRIMARY KEY,
-    account_id TEXT NOT NULL,
+    provider TEXT NOT NULL,
+    subject TEXT NOT NULL,
     created_at INTEGER NOT NULL,
     last_used_at INTEGER NOT NULL,
     expires_at INTEGER NOT NULL
 );
-
-CREATE INDEX IF NOT EXISTS idx_session_bindings_account ON session_bindings(account_id, last_used_at DESC);
-CREATE INDEX IF NOT EXISTS idx_session_bindings_expires ON session_bindings(expires_at);
-
-CREATE TABLE IF NOT EXISTS user_route_bindings (
-    user_id TEXT NOT NULL,
-    provider TEXT NOT NULL,
-    surface TEXT NOT NULL,
-    account_id TEXT NOT NULL,
-    created_at INTEGER NOT NULL,
-    last_used_at INTEGER NOT NULL,
-    PRIMARY KEY (user_id, provider, surface)
-);
-
-CREATE INDEX IF NOT EXISTS idx_user_route_bindings_account ON user_route_bindings(account_id, last_used_at DESC);
 
 CREATE TABLE IF NOT EXISTS stainless_bindings (
     account_id TEXT PRIMARY KEY,

@@ -29,10 +29,13 @@ func (d *ClaudeDriver) Plan(input *RelayInput) RelayPlan {
 	stream, _ := input.Body["stream"].(bool)
 	sessionUUID := claudeSessionUUID(input.Body)
 	return RelayPlan{
-		IsStream:                 stream,
-		IsCountTokens:            strings.HasSuffix(input.Path, "/count_tokens"),
-		SessionUUID:              sessionUUID,
-		RejectUnavailableSession: sessionUUID != "" && claudeRequiresFreshSession(input.Body),
+		IsStream:      stream,
+		IsCountTokens: strings.HasSuffix(input.Path, "/count_tokens"),
+		Affinity: RouteAffinity{
+			RawKey:     sessionUUID,
+			Kind:       "claude-session",
+			Continuity: AffinityPrefer,
+		},
 	}
 }
 
@@ -353,39 +356,6 @@ func claudeSessionUUID(body map[string]interface{}) string {
 		}
 	}
 	return ""
-}
-
-func claudeRequiresFreshSession(body map[string]interface{}) bool {
-	messages, _ := body["messages"].([]interface{})
-	if len(messages) > 1 {
-		return true
-	}
-	for _, raw := range messages {
-		msg, ok := raw.(map[string]interface{})
-		if !ok {
-			continue
-		}
-		role, _ := msg["role"].(string)
-		if role != "" && role != "user" {
-			return true
-		}
-		content, ok := msg["content"].([]interface{})
-		if !ok {
-			continue
-		}
-		for _, block := range content {
-			part, ok := block.(map[string]interface{})
-			if !ok {
-				continue
-			}
-			kind, _ := part["type"].(string)
-			if kind == "tool_use" || kind == "tool_result" {
-				return true
-			}
-		}
-	}
-	tools, _ := body["tools"].([]interface{})
-	return len(tools) > 0
 }
 
 func (d *ClaudeDriver) ParseJSONUsage(body []byte) *Usage {

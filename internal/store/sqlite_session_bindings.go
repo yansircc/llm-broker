@@ -8,22 +8,24 @@ import (
 	"github.com/yansircc/llm-broker/internal/domain"
 )
 
-const sessionBindingCols = `session_uuid, account_id, created_at, last_used_at, expires_at`
+const sessionBindingCols = `session_uuid, provider, subject, created_at, last_used_at, expires_at`
 
 func scanSessionBinding(scanner interface{ Scan(...any) error }) (*domain.SessionBinding, error) {
 	var (
 		sessionUUID string
-		accountID   string
+		provider    string
+		subject     string
 		createdAt   int64
 		lastUsedAt  int64
 		expiresAt   int64
 	)
-	if err := scanner.Scan(&sessionUUID, &accountID, &createdAt, &lastUsedAt, &expiresAt); err != nil {
+	if err := scanner.Scan(&sessionUUID, &provider, &subject, &createdAt, &lastUsedAt, &expiresAt); err != nil {
 		return nil, err
 	}
 	return &domain.SessionBinding{
 		SessionUUID: sessionUUID,
-		AccountID:   accountID,
+		Provider:    domain.Provider(provider),
+		Subject:     subject,
 		CreatedAt:   time.Unix(createdAt, 0).UTC(),
 		LastUsedAt:  time.Unix(lastUsedAt, 0).UTC(),
 		ExpiresAt:   time.Unix(expiresAt, 0).UTC(),
@@ -43,10 +45,11 @@ func (s *SQLiteStore) GetSessionBinding(ctx context.Context, sessionUUID string)
 	return binding, err
 }
 
-func (s *SQLiteStore) ListSessionBindingsByAccount(ctx context.Context, accountID string) ([]domain.SessionBinding, error) {
+func (s *SQLiteStore) ListSessionBindingsByTarget(ctx context.Context, provider domain.Provider, subject string) ([]domain.SessionBinding, error) {
 	rows, err := s.db.QueryContext(ctx,
-		"SELECT "+sessionBindingCols+" FROM session_bindings WHERE account_id = ? AND expires_at > ? ORDER BY last_used_at DESC, session_uuid",
-		accountID,
+		"SELECT "+sessionBindingCols+" FROM session_bindings WHERE provider = ? AND subject = ? AND expires_at > ? ORDER BY last_used_at DESC, session_uuid",
+		string(provider),
+		subject,
 		time.Now().UTC().Unix(),
 	)
 	if err != nil {
@@ -81,14 +84,15 @@ func (s *SQLiteStore) SaveSessionBinding(ctx context.Context, binding *domain.Se
 
 	_, err := s.db.ExecContext(ctx, `
 		INSERT INTO session_bindings (
-			session_uuid, account_id, created_at, last_used_at, expires_at
-		) VALUES (?, ?, ?, ?, ?)
+			session_uuid, provider, subject, created_at, last_used_at, expires_at
+		) VALUES (?, ?, ?, ?, ?, ?)
 		ON CONFLICT(session_uuid) DO UPDATE SET
-			account_id=excluded.account_id,
+			provider=excluded.provider,
+			subject=excluded.subject,
 			created_at=excluded.created_at,
 			last_used_at=excluded.last_used_at,
 			expires_at=excluded.expires_at
-	`, binding.SessionUUID, binding.AccountID, createdAt.Unix(), lastUsedAt.Unix(), expiresAt.Unix())
+	`, binding.SessionUUID, string(binding.Provider), binding.Subject, createdAt.Unix(), lastUsedAt.Unix(), expiresAt.Unix())
 	return err
 }
 

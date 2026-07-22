@@ -204,78 +204,21 @@ func TestClaudeInterpret_502ReturnsServerError(t *testing.T) {
 	}
 }
 
-func TestClaudeRequiresFreshSession(t *testing.T) {
-	tests := []struct {
-		name string
-		body map[string]interface{}
-		want bool
-	}{
-		{
-			name: "one-shot user text stays portable",
-			body: map[string]interface{}{
-				"messages": []interface{}{
-					map[string]interface{}{
-						"role": "user",
-						"content": []interface{}{
-							map[string]interface{}{"type": "text", "text": "hello"},
-						},
-					},
-				},
-			},
-			want: false,
+func TestClaudePlanTreatsFullHistoryAsPortableSessionAffinity(t *testing.T) {
+	d := NewClaudeDriver(ClaudeConfig{}, NoopStainlessStore{}, 4)
+	plan := d.Plan(&RelayInput{Body: map[string]interface{}{
+		"metadata": map[string]interface{}{
+			"user_id": "user_account__session_123e4567-e89b-12d3-a456-426614174000",
 		},
-		{
-			name: "tools require same session",
-			body: map[string]interface{}{
-				"messages": []interface{}{
-					map[string]interface{}{"role": "user", "content": "hello"},
-				},
-				"tools": []interface{}{
-					map[string]interface{}{"name": "run"},
-				},
-			},
-			want: true,
+		"messages": []interface{}{
+			map[string]interface{}{"role": "user", "content": "hello"},
+			map[string]interface{}{"role": "assistant", "content": "hi"},
 		},
-		{
-			name: "assistant turn requires same session",
-			body: map[string]interface{}{
-				"messages": []interface{}{
-					map[string]interface{}{"role": "assistant", "content": "hello"},
-				},
-			},
-			want: true,
-		},
-		{
-			name: "tool result requires same session",
-			body: map[string]interface{}{
-				"messages": []interface{}{
-					map[string]interface{}{
-						"role": "user",
-						"content": []interface{}{
-							map[string]interface{}{"type": "tool_result", "tool_use_id": "tool-1", "content": "done"},
-						},
-					},
-				},
-			},
-			want: true,
-		},
-		{
-			name: "multi-turn requires same session",
-			body: map[string]interface{}{
-				"messages": []interface{}{
-					map[string]interface{}{"role": "user", "content": "hello"},
-					map[string]interface{}{"role": "user", "content": "follow up"},
-				},
-			},
-			want: true,
-		},
+	}})
+	if plan.Affinity.RawKey != "123e4567-e89b-12d3-a456-426614174000" {
+		t.Fatalf("Plan().Affinity.RawKey = %q", plan.Affinity.RawKey)
 	}
-
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			if got := claudeRequiresFreshSession(tc.body); got != tc.want {
-				t.Fatalf("claudeRequiresFreshSession() = %v, want %v", got, tc.want)
-			}
-		})
+	if plan.Affinity.Continuity != AffinityPrefer {
+		t.Fatalf("Plan().Affinity.Continuity = %q, want prefer", plan.Affinity.Continuity)
 	}
 }

@@ -91,7 +91,10 @@ func (d *exchangeStubDriver) ComputeExhaustedCooldown(json.RawMessage, time.Time
 	return time.Time{}
 }
 func (d *exchangeStubDriver) CanServe(json.RawMessage, string, time.Time) bool { return true }
-func (d *exchangeStubDriver) CalcCost(string, *driver.Usage) float64           { return 0 }
+func (d *exchangeStubDriver) AssessCapacity(json.RawMessage, string, time.Time) driver.CapacityAssessment {
+	return driver.CapacityAssessment{Eligible: true, Priority: 50}
+}
+func (d *exchangeStubDriver) CalcCost(string, *driver.Usage) float64 { return 0 }
 func (d *exchangeStubDriver) GetUtilization(json.RawMessage) []driver.UtilWindow {
 	return nil
 }

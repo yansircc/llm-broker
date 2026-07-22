@@ -88,19 +88,11 @@ var desiredQuotaBucketColumns = []string{
 
 var desiredSessionBindingColumns = []string{
 	"session_uuid",
-	"account_id",
+	"provider",
+	"subject",
 	"created_at",
 	"last_used_at",
 	"expires_at",
-}
-
-var desiredUserRouteBindingColumns = []string{
-	"user_id",
-	"provider",
-	"surface",
-	"account_id",
-	"created_at",
-	"last_used_at",
 }
 
 var desiredStainlessBindingColumns = []string{
@@ -143,6 +135,12 @@ func Migrate(dbPath string) error {
 	if err := s.migrateAccountsTable(context.Background()); err != nil {
 		return err
 	}
+	if err := s.migrateSessionBindingsTable(context.Background()); err != nil {
+		return err
+	}
+	if _, err := s.db.ExecContext(context.Background(), `DROP TABLE IF EXISTS user_route_bindings`); err != nil {
+		return fmt.Errorf("drop user_route_bindings: %w", err)
+	}
 	if err := s.migrateUsersTable(context.Background()); err != nil {
 		return err
 	}
@@ -169,7 +167,6 @@ func (s *SQLiteStore) validateCurrentSchema(ctx context.Context) error {
 		{table: "request_log", want: desiredRequestLogColumns},
 		{table: "quota_buckets", want: desiredQuotaBucketColumns},
 		{table: "session_bindings", want: desiredSessionBindingColumns},
-		{table: "user_route_bindings", want: desiredUserRouteBindingColumns},
 		{table: "stainless_bindings", want: desiredStainlessBindingColumns},
 		{table: "oauth_sessions", want: desiredOAuthSessionColumns},
 		{table: "refresh_locks", want: desiredRefreshLockColumns},
@@ -288,6 +285,78 @@ func (s *SQLiteStore) migrateAccountsTable(ctx context.Context) error {
 	}
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("commit accounts migration: %w", err)
+	}
+	return nil
+}
+
+func (s *SQLiteStore) migrateSessionBindingsTable(ctx context.Context) error {
+	cols, err := s.tableColumns(ctx, "session_bindings")
+	if err != nil {
+		return fmt.Errorf("inspect session_bindings schema: %w", err)
+	}
+	if sameColumns(cols, desiredSessionBindingColumns) {
+		return s.ensureSessionBindingIndexes(ctx)
+	}
+	legacy := []string{"session_uuid", "account_id", "created_at", "last_used_at", "expires_at"}
+	if !sameColumns(cols, legacy) {
+		return fmt.Errorf("session_bindings migration: unsupported schema %v", cols)
+	}
+
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin session_bindings migration: %w", err)
+	}
+	defer tx.Rollback()
+
+	if _, err := tx.ExecContext(ctx, `
+		CREATE TABLE session_bindings_new (
+			session_uuid TEXT PRIMARY KEY,
+			provider TEXT NOT NULL,
+			subject TEXT NOT NULL,
+			created_at INTEGER NOT NULL,
+			last_used_at INTEGER NOT NULL,
+			expires_at INTEGER NOT NULL
+		)
+	`); err != nil {
+		return fmt.Errorf("create session_bindings_new: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, `
+		INSERT INTO session_bindings_new (
+			session_uuid, provider, subject, created_at, last_used_at, expires_at
+		)
+		SELECT
+			sb.session_uuid, a.provider, a.subject,
+			sb.created_at, sb.last_used_at, sb.expires_at
+		FROM session_bindings sb
+		JOIN accounts a ON a.id = sb.account_id
+		WHERE a.subject != ''
+	`); err != nil {
+		return fmt.Errorf("copy session_bindings: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, `DROP TABLE session_bindings`); err != nil {
+		return fmt.Errorf("drop old session_bindings: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, `ALTER TABLE session_bindings_new RENAME TO session_bindings`); err != nil {
+		return fmt.Errorf("rename session_bindings_new: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, `CREATE INDEX idx_session_bindings_target ON session_bindings(provider, subject, last_used_at DESC)`); err != nil {
+		return fmt.Errorf("create session_bindings target index: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, `CREATE INDEX idx_session_bindings_expires ON session_bindings(expires_at)`); err != nil {
+		return fmt.Errorf("create session_bindings expiry index: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit session_bindings migration: %w", err)
+	}
+	return nil
+}
+
+func (s *SQLiteStore) ensureSessionBindingIndexes(ctx context.Context) error {
+	if _, err := s.db.ExecContext(ctx, `CREATE INDEX IF NOT EXISTS idx_session_bindings_target ON session_bindings(provider, subject, last_used_at DESC)`); err != nil {
+		return fmt.Errorf("create session_bindings target index: %w", err)
+	}
+	if _, err := s.db.ExecContext(ctx, `CREATE INDEX IF NOT EXISTS idx_session_bindings_expires ON session_bindings(expires_at)`); err != nil {
+		return fmt.Errorf("create session_bindings expiry index: %w", err)
 	}
 	return nil
 }

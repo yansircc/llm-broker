@@ -23,11 +23,8 @@ func requestBindingSource(prepared *preparedRelayRequest) string {
 	if prepared.keyInfo.BoundAccountID != "" {
 		return "user_bound"
 	}
-	if prepared.sessionBoundAccountID != "" {
-		return "session_bound"
-	}
-	if prepared.userRouteAccountID != "" {
-		return "user_sticky"
+	if prepared.affinityKey != "" {
+		return "session_affinity"
 	}
 	return "none"
 }

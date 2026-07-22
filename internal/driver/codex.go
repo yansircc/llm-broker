@@ -18,6 +18,77 @@ import (
 // Codex-specific ban patterns (separate from Claude).
 var codexBanPattern = regexp.MustCompile(`(?i)(account has been disabled|organization has been disabled)`)
 
+const codexSSEPreflightMaxBytes = 8 * 1024
+
+var codexSSECapacityPatterns = []string{
+	"selected model is at capacity",
+	"model_at_capacity",
+	"server_is_overloaded",
+	"service_unavailable_error",
+}
+
+func codexCapacityPattern(body []byte) (string, bool) {
+	lower := strings.ToLower(string(body))
+	for _, pattern := range codexSSECapacityPatterns {
+		if strings.Contains(lower, pattern) {
+			return pattern, true
+		}
+	}
+	return "", false
+}
+
+func firstCompleteSSEEvent(data []byte) ([]byte, bool) {
+	end := -1
+	separatorLen := 0
+	for _, separator := range [][]byte{[]byte("\n\n"), []byte("\r\n\r\n")} {
+		if idx := bytes.Index(data, separator); idx >= 0 && (end < 0 || idx < end) {
+			end = idx
+			separatorLen = len(separator)
+		}
+	}
+	if end < 0 {
+		return nil, false
+	}
+	return data[:end+separatorLen], true
+}
+
+func codexSSECapacityPattern(event []byte) (string, bool) {
+	pattern, found := codexCapacityPattern(event)
+	if !found {
+		return "", false
+	}
+
+	var eventName string
+	var dataLines [][]byte
+	for _, line := range bytes.Split(event, []byte("\n")) {
+		line = bytes.TrimSpace(line)
+		switch {
+		case bytes.HasPrefix(line, []byte("event:")):
+			eventName = strings.ToLower(strings.TrimSpace(string(bytes.TrimPrefix(line, []byte("event:")))))
+		case bytes.HasPrefix(line, []byte("data:")):
+			dataLines = append(dataLines, bytes.TrimSpace(bytes.TrimPrefix(line, []byte("data:"))))
+		}
+	}
+	if strings.Contains(eventName, "error") || strings.Contains(eventName, "failed") {
+		return pattern, true
+	}
+
+	payload := bytes.Join(dataLines, []byte("\n"))
+	var envelope map[string]any
+	if json.Unmarshal(payload, &envelope) != nil {
+		return "", false
+	}
+	eventType, _ := envelope["type"].(string)
+	eventType = strings.ToLower(eventType)
+	if strings.Contains(eventType, "error") || strings.Contains(eventType, "failed") {
+		return pattern, true
+	}
+	if envelope["error"] != nil {
+		return pattern, true
+	}
+	return "", false
+}
+
 // ---------------------------------------------------------------------------
 // Relay
 // ---------------------------------------------------------------------------
@@ -27,7 +98,48 @@ func (d *CodexDriver) Plan(input *RelayInput) RelayPlan {
 		return RelayPlan{}
 	}
 	stream, _ := input.Body["stream"].(bool)
-	return RelayPlan{IsStream: stream}
+	affinity := codexRouteAffinity(input)
+	return RelayPlan{IsStream: stream, Affinity: affinity}
+}
+
+func codexRouteAffinity(input *RelayInput) RouteAffinity {
+	if input == nil {
+		return RouteAffinity{}
+	}
+
+	continuity := AffinityPrefer
+	if nonEmptyString(input.Body["previous_response_id"]) != "" || codexConversationID(input.Body["conversation"]) != "" {
+		continuity = AffinityRequire
+	}
+
+	if key := nonEmptyString(input.Body["prompt_cache_key"]); key != "" {
+		return RouteAffinity{RawKey: key, Kind: "prompt-cache-key", Continuity: continuity}
+	}
+	if key := codexConversationID(input.Body["conversation"]); key != "" {
+		return RouteAffinity{RawKey: key, Kind: "conversation", Continuity: continuity}
+	}
+	if input.Headers != nil {
+		if key := strings.TrimSpace(input.Headers.Get("session-id")); key != "" {
+			return RouteAffinity{RawKey: key, Kind: "session-id", Continuity: continuity}
+		}
+	}
+	return RouteAffinity{Continuity: continuity}
+}
+
+func nonEmptyString(value any) string {
+	text, _ := value.(string)
+	return strings.TrimSpace(text)
+}
+
+func codexConversationID(value any) string {
+	switch conversation := value.(type) {
+	case string:
+		return strings.TrimSpace(conversation)
+	case map[string]any:
+		return nonEmptyString(conversation["id"])
+	default:
+		return ""
+	}
 }
 
 func (d *CodexDriver) BuildRequest(ctx context.Context, input *RelayInput, acct *domain.Account, token string) (*http.Request, error) {
@@ -184,6 +296,77 @@ func (d *CodexDriver) StreamResponse(ctx context.Context, w http.ResponseWriter,
 	}
 	flusher.Flush()
 	return completed, capturedUsage
+}
+
+type replayReadCloser struct {
+	io.Reader
+	io.Closer
+}
+
+// PreflightStream detects Codex capacity errors embedded in HTTP-200 SSE before
+// relay commits downstream bytes. Accepted prefixes are restored byte-for-byte.
+func (d *CodexDriver) PreflightStream(ctx context.Context, resp *http.Response, _ string, prevState json.RawMessage) (StreamPreflight, error) {
+	if resp == nil || resp.Body == nil || resp.StatusCode != http.StatusOK ||
+		!strings.Contains(strings.ToLower(resp.Header.Get("Content-Type")), "text/event-stream") {
+		return StreamPreflight{}, nil
+	}
+
+	original := resp.Body
+	prefix := make([]byte, 0, codexSSEPreflightMaxBytes)
+	chunk := make([]byte, 1024)
+	capacityResult := func(pattern string) StreamPreflight {
+		body := append([]byte(nil), prefix...)
+		return StreamPreflight{
+			Effect: &Effect{
+				Kind:                 EffectCooldown,
+				Scope:                EffectScopeBucket,
+				CooldownUntil:        time.Now().Add(d.cfg.Pauses.Pause429),
+				UpstreamStatus:       http.StatusTooManyRequests,
+				UpstreamErrorType:    "model_at_capacity",
+				UpstreamErrorMessage: pattern,
+				UpdatedState:         d.captureHeaders(resp.Header, prevState),
+			},
+			ErrorBody: body,
+		}
+	}
+	for len(prefix) < codexSSEPreflightMaxBytes {
+		if err := ctx.Err(); err != nil {
+			_ = original.Close()
+			return StreamPreflight{}, err
+		}
+		remaining := codexSSEPreflightMaxBytes - len(prefix)
+		if remaining < len(chunk) {
+			chunk = chunk[:remaining]
+		}
+		n, err := original.Read(chunk)
+		if n > 0 {
+			prefix = append(prefix, chunk[:n]...)
+			if event, complete := firstCompleteSSEEvent(prefix); complete {
+				if pattern, ok := codexSSECapacityPattern(event); ok {
+					_ = original.Close()
+					return capacityResult(pattern), nil
+				}
+				break
+			}
+		}
+		if err != nil {
+			if err != io.EOF {
+				_ = original.Close()
+				return StreamPreflight{}, err
+			}
+			if pattern, ok := codexSSECapacityPattern(prefix); ok {
+				_ = original.Close()
+				return capacityResult(pattern), nil
+			}
+			break
+		}
+	}
+
+	resp.Body = &replayReadCloser{
+		Reader: io.MultiReader(bytes.NewReader(prefix), original),
+		Closer: original,
+	}
+	return StreamPreflight{}, nil
 }
 
 func (d *CodexDriver) ForwardResponse(w http.ResponseWriter, resp *http.Response) {

@@ -65,10 +65,43 @@ type RelayInput struct {
 
 // RelayPlan captures provider-owned request execution decisions.
 type RelayPlan struct {
-	IsStream                 bool
-	IsCountTokens            bool
-	SessionUUID              string
-	RejectUnavailableSession bool
+	IsStream      bool
+	IsCountTokens bool
+	Affinity      RouteAffinity
+}
+
+// AffinityContinuity declares whether a request can move between upstream
+// identities when its preferred target is unavailable.
+type AffinityContinuity string
+
+const (
+	AffinityPrefer  AffinityContinuity = "prefer"
+	AffinityRequire AffinityContinuity = "require"
+)
+
+// RouteAffinity is the provider-owned description of one continuity scope.
+// RawKey is normalized and hashed by relay before it reaches persistence or
+// logs; provider-specific extraction stays in the driver.
+type RouteAffinity struct {
+	RawKey     string
+	Kind       string
+	Continuity AffinityContinuity
+}
+
+// CapacityAssessment is the provider-neutral scheduler projection derived from
+// opaque provider state for one requested model.
+type CapacityAssessment struct {
+	Eligible bool
+	Priority int
+	Class    string
+}
+
+// StreamPreflight describes a provider-classified failure found before any
+// downstream bytes were committed. A nil Effect means the driver accepted the
+// stream and restored resp.Body so normal streaming can replay buffered bytes.
+type StreamPreflight struct {
+	Effect    *Effect
+	ErrorBody []byte
 }
 
 // Usage holds token counts from a completed request.

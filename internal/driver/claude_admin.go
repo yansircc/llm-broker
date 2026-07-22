@@ -114,6 +114,18 @@ func (d *ClaudeDriver) CanServe(state json.RawMessage, model string, now time.Ti
 	return s.OpusCooldownUntil == 0 || now.Unix() >= s.OpusCooldownUntil
 }
 
+func (d *ClaudeDriver) AssessCapacity(state json.RawMessage, model string, now time.Time) CapacityAssessment {
+	class := "default"
+	if isOpusModel(model) {
+		class = "opus"
+	}
+	return CapacityAssessment{
+		Eligible: d.CanServe(state, model, now),
+		Priority: d.AutoPriority(state),
+		Class:    class,
+	}
+}
+
 func (d *ClaudeDriver) CalcCost(model string, usage *Usage) float64 {
 	if usage == nil {
 		return 0

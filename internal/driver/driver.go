@@ -65,6 +65,12 @@ type RelayDriver interface {
 	CalcCost(model string, usage *Usage) float64
 }
 
+// StreamPreflightDriver classifies provider errors embedded in an HTTP-200
+// stream before relay commits headers or body bytes downstream.
+type StreamPreflightDriver interface {
+	PreflightStream(ctx context.Context, resp *http.Response, model string, state json.RawMessage) (StreamPreflight, error)
+}
+
 type OAuthDriver interface {
 	Provider() domain.Provider
 	Info() ProviderInfo
@@ -93,8 +99,9 @@ type SchedulerDriver interface {
 	Provider() domain.Provider
 	BucketKey(acct *domain.Account) string
 
-	// AutoPriority computes the effective priority for an auto-mode account.
-	AutoPriority(state json.RawMessage) int
+	// AssessCapacity derives eligibility, automatic priority, and an opaque
+	// capacity class from the same requested-model provider state.
+	AssessCapacity(state json.RawMessage, model string, now time.Time) CapacityAssessment
 
 	// IsStale returns true if the account's rate-limit data needs refreshing.
 	IsStale(state json.RawMessage, now time.Time) bool
@@ -102,9 +109,6 @@ type SchedulerDriver interface {
 	// ComputeExhaustedCooldown returns the cooldown-until time if rate limits are exhausted.
 	// Returns zero time if no cooldown needed.
 	ComputeExhaustedCooldown(state json.RawMessage, now time.Time) time.Time
-
-	// CanServe reports whether the provider state allows serving the given model now.
-	CanServe(state json.RawMessage, model string, now time.Time) bool
 }
 
 type ExecutionDriver interface {

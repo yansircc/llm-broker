@@ -29,6 +29,7 @@ const (
 type relayAttemptState struct {
 	exclusions         []pool.Exclusion
 	forbiddenRetries   map[string]int
+	retryAccountID     string
 	lastErr            error
 	lastUpstreamStatus int
 	lastUpstreamBody   []byte
@@ -94,7 +95,7 @@ func (r *Relay) baseRequestLog(prepared *preparedRelayRequest, acct *domain.Acco
 		obs.Path = requestLogPath(prepared)
 		body := requestLogClientBody(prepared)
 		obs.RequestBytes = len(body)
-		obs.SessionUUID = prepared.sessionUUID
+		obs.SessionUUID = prepared.affinityKey
 		obs.BindingSource = requestBindingSource(prepared)
 		obs.ClientHeaders = requestClientHeaders(requestLogClientHeaders(prepared))
 		obs.ClientBodyExcerpt = requestBodyExcerpt(body)
@@ -147,17 +148,6 @@ func newRelayAttemptState() *relayAttemptState {
 	}
 }
 
-func (s *relayAttemptState) boundAccountID(prepared *preparedRelayRequest, attempt int) string {
-	boundID := prepared.keyInfo.BoundAccountID
-	if attempt == 0 && prepared.sessionBoundAccountID != "" && boundID == "" {
-		return prepared.sessionBoundAccountID
-	}
-	if attempt == 0 && prepared.userRouteAccountID != "" && boundID == "" {
-		return prepared.userRouteAccountID
-	}
-	return boundID
-}
-
 func (s *relayAttemptState) exclude(acct *domain.Account, effect driver.Effect) {
 	if effect.Scope == driver.EffectScopeBucket && acct.BucketKey != "" {
 		s.exclusions = append(s.exclusions, pool.ExcludeBucket(acct.BucketKey))
@@ -174,24 +164,35 @@ func (r *Relay) executeRelayAttempt(
 	state *relayAttemptState,
 	attempt int,
 ) relayAttemptOutcome {
-	boundAccountID := state.boundAccountID(prepared, attempt)
-	acct, err := r.pool.PickForSurface(drv, state.exclusions, prepared.input.Model, boundAccountID, prepared.surface)
-	if err != nil && boundAccountID != "" && boundAccountID == prepared.userRouteAccountID {
-		slog.Info("sticky account unavailable, rerouting request",
-			"userId", prepared.keyInfo.ID,
-			"userName", prepared.keyInfo.Name,
-			"provider", drv.Provider(),
-			"surface", prepared.surface,
-			"accountId", boundAccountID,
-			"model", prepared.input.Model,
-			"path", prepared.input.Path,
-		)
-		acct, err = r.pool.PickForSurface(drv, state.exclusions, prepared.input.Model, "", prepared.surface)
+	hardAccountID := prepared.keyInfo.BoundAccountID
+	if state.retryAccountID != "" {
+		hardAccountID = state.retryAccountID
 	}
+	acct, lease, err := r.pool.AcquireRoute(ctx, drv, pool.RouteRequest{
+		Exclusions:    state.exclusions,
+		Model:         prepared.input.Model,
+		Surface:       prepared.surface,
+		HardAccountID: hardAccountID,
+		AffinityKey:   prepared.affinityKey,
+		Continuity:    prepared.affinityContinuity,
+	})
 	if err != nil {
+		if errors.Is(err, pool.ErrAffinityOwnerMissing) || errors.Is(err, pool.ErrAffinityOwnerUnavailable) {
+			slog.Warn("required affinity owner unavailable",
+				"userId", prepared.keyInfo.ID,
+				"provider", drv.Provider(),
+				"surface", prepared.surface,
+				"sessionUUID", prepared.affinityKey,
+				"error", err,
+			)
+			drv.WriteError(w, http.StatusBadRequest, "conversation cannot continue on its original upstream account; start a new conversation")
+			return relayAttemptDone
+		}
 		state.lastErr = err
 		return relayAttemptStop
 	}
+	state.retryAccountID = ""
+	defer lease.Abort()
 
 	accessToken, err := r.tokens.EnsureValidToken(ctx, acct.ID)
 	if err != nil {
@@ -224,7 +225,7 @@ func (r *Relay) executeRelayAttempt(
 				"userName", prepared.keyInfo.Name,
 				"model", prepared.input.Model,
 				"path", prepared.input.Path,
-				"sessionUUID", prepared.sessionUUID,
+				"sessionUUID", prepared.affinityKey,
 				"status", requestErr.StatusCode,
 				"error", requestErr.Message,
 			)
@@ -242,7 +243,7 @@ func (r *Relay) executeRelayAttempt(
 			"userName", prepared.keyInfo.Name,
 			"model", prepared.input.Model,
 			"path", prepared.input.Path,
-			"sessionUUID", prepared.sessionUUID,
+			"sessionUUID", prepared.affinityKey,
 			"error", snapErr,
 		)
 	}
@@ -279,7 +280,7 @@ func (r *Relay) executeRelayAttempt(
 			"userName", prepared.keyInfo.Name,
 			"model", prepared.input.Model,
 			"path", prepared.input.Path,
-			"sessionUUID", prepared.sessionUUID,
+			"sessionUUID", prepared.affinityKey,
 			"clientRetryCount", prepared.input.Headers.Get("X-Stainless-Retry-Count"),
 			"error", err,
 		)
@@ -323,7 +324,7 @@ func (r *Relay) executeRelayAttempt(
 			"userName", prepared.keyInfo.Name,
 			"model", prepared.input.Model,
 			"path", prepared.input.Path,
-			"sessionUUID", prepared.sessionUUID,
+			"sessionUUID", prepared.affinityKey,
 			"clientRetryCount", prepared.input.Headers.Get("X-Stainless-Retry-Count"),
 			"body", truncate(string(errBody), 500),
 		)
@@ -347,6 +348,7 @@ func (r *Relay) executeRelayAttempt(
 		if drv.RetrySameAccount(resp.StatusCode, errBody, state.forbiddenRetries[acct.ID]) {
 			r.logRequestAsync(entry, obs)
 			state.forbiddenRetries[acct.ID]++
+			state.retryAccountID = acct.ID
 			state.lastErr = fmt.Errorf("upstream %d (retry %d)", resp.StatusCode, state.forbiddenRetries[acct.ID])
 			return relayAttemptContinue
 		}
@@ -354,7 +356,6 @@ func (r *Relay) executeRelayAttempt(
 		entry.EffectKind = relayEffectKind(effect.Kind)
 		r.logRequestAsync(entry, obs)
 		r.pool.Observe(acct.ID, effect)
-		r.maybeSetUserRouteBinding(ctx, prepared, drv, acct, effect)
 		state.exclude(acct, effect)
 		state.lastErr = fmt.Errorf("upstream %d", resp.StatusCode)
 		return relayAttemptContinue
@@ -377,7 +378,6 @@ func (r *Relay) executeRelayAttempt(
 		setRequestLogUpstreamResponse(entry, obs, resp, errBody, &effect)
 		r.logRequestAsync(entry, obs)
 		r.pool.Observe(acct.ID, effect)
-		r.maybeSetUserRouteBinding(ctx, prepared, drv, acct, effect)
 
 		slog.Warn("upstream non-retriable error",
 			"status", resp.StatusCode,
@@ -386,7 +386,7 @@ func (r *Relay) executeRelayAttempt(
 			"userName", prepared.keyInfo.Name,
 			"model", prepared.input.Model,
 			"path", prepared.input.Path,
-			"sessionUUID", prepared.sessionUUID,
+			"sessionUUID", prepared.affinityKey,
 			"clientRetryCount", prepared.input.Headers.Get("X-Stainless-Retry-Count"),
 			"body", truncate(string(errBody), 500),
 		)
@@ -395,8 +395,7 @@ func (r *Relay) executeRelayAttempt(
 		return relayAttemptDone
 	}
 
-	r.finishRelaySuccess(ctx, w, drv, prepared, acct, upReq, upstreamReqBody, resp, attemptStartedAt, attempt)
-	return relayAttemptDone
+	return r.finishRelaySuccess(ctx, w, drv, prepared, state, acct, lease, upReq, upstreamReqBody, resp, attemptStartedAt, attempt)
 }
 
 func (r *Relay) finishRelaySuccess(
@@ -404,43 +403,86 @@ func (r *Relay) finishRelaySuccess(
 	w http.ResponseWriter,
 	drv driver.ExecutionDriver,
 	prepared *preparedRelayRequest,
+	state *relayAttemptState,
 	acct *domain.Account,
+	lease *pool.AttemptLease,
 	upReq *http.Request,
 	upstreamReqBody []byte,
 	resp *http.Response,
 	attemptStartedAt time.Time,
 	attempt int,
-) {
+) relayAttemptOutcome {
 	defer resp.Body.Close()
-
-	effect := drv.Interpret(http.StatusOK, resp.Header, nil, prepared.input.Model, json.RawMessage(acct.ProviderStateJSON))
-	r.pool.Observe(acct.ID, effect)
-	r.maybeSetUserRouteBinding(ctx, prepared, drv, acct, effect)
-
-	if prepared.sessionUUID != "" {
-		if err := r.pool.SetSessionBinding(ctx, prepared.sessionUUID, acct.ID, r.cfg.SessionBindingTTL); err != nil {
-			slog.Warn("save session binding failed", "sessionUUID", prepared.sessionUUID, "accountId", acct.ID, "error", err)
-		}
-	}
 
 	var usage *driver.Usage
 	var respBody []byte
+	var effect driver.Effect
 	streamCompleted := true
 	if prepared.input.IsStream {
+		if preflightDriver, ok := drv.(driver.StreamPreflightDriver); ok {
+			preflight, err := preflightDriver.PreflightStream(ctx, resp, prepared.input.Model, json.RawMessage(acct.ProviderStateJSON))
+			if err != nil {
+				state.exclusions = append(state.exclusions, pool.ExcludeAccount(acct.ID))
+				state.lastErr = fmt.Errorf("stream preflight: %w", err)
+				entry, obs := r.baseRequestLog(prepared, acct, attempt)
+				entry.Status = "stream_preflight_error"
+				entry.EffectKind = "transport_error"
+				entry.DurationMs = time.Since(attemptStartedAt).Milliseconds()
+				setRequestLogUpstreamRequest(obs, upReq, upstreamReqBody)
+				r.logRequestAsync(entry, obs)
+				return relayAttemptContinue
+			}
+			if preflight.Effect != nil {
+				effect := *preflight.Effect
+				status := effect.UpstreamStatus
+				if status == 0 {
+					status = http.StatusTooManyRequests
+				}
+				state.lastUpstreamStatus = status
+				state.lastUpstreamBody = preflight.ErrorBody
+				state.lastErr = fmt.Errorf("upstream stream preflight %d", status)
+				entry, obs := r.baseRequestLog(prepared, acct, attempt)
+				entry.Status = fmt.Sprintf("upstream_%d", status)
+				entry.UpstreamStatus = status
+				entry.EffectKind = relayEffectKind(effect.Kind)
+				entry.DurationMs = time.Since(attemptStartedAt).Milliseconds()
+				setRequestLogUpstreamRequest(obs, upReq, upstreamReqBody)
+				setRequestLogUpstreamResponse(entry, obs, resp, preflight.ErrorBody, &effect)
+				obs.RequestMeta = requestlog.MergeMeta(obs.RequestMeta, map[string]any{"stream_preflight": true})
+				r.logRequestAsync(entry, obs)
+				r.pool.Observe(acct.ID, effect)
+				state.exclude(acct, effect)
+				return relayAttemptContinue
+			}
+		}
+
+		effect = drv.Interpret(http.StatusOK, resp.Header, nil, prepared.input.Model, json.RawMessage(acct.ProviderStateJSON))
+		r.pool.Observe(acct.ID, effect)
+		if err := lease.Accept(ctx, r.cfg.SessionBindingTTL); err != nil {
+			state.lastErr = fmt.Errorf("save affinity binding: %w", err)
+			return relayAttemptStop
+		}
 		streamCompleted, usage = drv.StreamResponse(ctx, w, resp)
+		lease.Finish()
 	} else {
 		var err error
 		respBody, err = io.ReadAll(resp.Body)
 		if err != nil {
-			drv.WriteError(w, http.StatusBadGateway, "failed to read upstream response")
-			return
+			state.lastErr = fmt.Errorf("read upstream response: %w", err)
+			return relayAttemptStop
+		}
+		effect = drv.Interpret(http.StatusOK, resp.Header, respBody, prepared.input.Model, json.RawMessage(acct.ProviderStateJSON))
+		r.pool.Observe(acct.ID, effect)
+		if err := lease.Accept(ctx, r.cfg.SessionBindingTTL); err != nil {
+			state.lastErr = fmt.Errorf("save affinity binding: %w", err)
+			return relayAttemptStop
 		}
 		usage = drv.ParseJSONUsage(respBody)
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(resp.StatusCode)
 		w.Write(respBody)
+		lease.Finish()
 	}
-
 	entry, obs := r.baseRequestLog(prepared, acct, attempt)
 	entry.Status = "ok"
 	if prepared.input.IsStream && !streamCompleted {
@@ -466,7 +508,7 @@ func (r *Relay) finishRelaySuccess(
 				"userName", prepared.keyInfo.Name,
 				"model", prepared.input.Model,
 				"path", prepared.input.Path,
-				"sessionUUID", prepared.sessionUUID,
+				"sessionUUID", prepared.affinityKey,
 			)
 		}
 	}
@@ -478,27 +520,7 @@ func (r *Relay) finishRelaySuccess(
 		entry.CostUSD = drv.CalcCost(prepared.input.Model, usage)
 	}
 	r.logRequestAsync(entry, obs)
-}
-
-func (r *Relay) maybeSetUserRouteBinding(ctx context.Context, prepared *preparedRelayRequest, drv driver.ExecutionDriver, acct *domain.Account, effect driver.Effect) {
-	if r == nil || prepared == nil || prepared.keyInfo == nil || acct == nil {
-		return
-	}
-	if prepared.keyInfo.IsAdmin || prepared.keyInfo.BoundAccountID != "" {
-		return
-	}
-	if effect.Kind != driver.EffectSuccess && effect.Kind != driver.EffectReject {
-		return
-	}
-	if err := r.pool.SetUserRouteBinding(ctx, prepared.keyInfo.ID, drv.Provider(), prepared.surface, acct.ID); err != nil {
-		slog.Warn("save user route binding failed",
-			"userId", prepared.keyInfo.ID,
-			"provider", drv.Provider(),
-			"surface", prepared.surface,
-			"accountId", acct.ID,
-			"error", err,
-		)
-	}
+	return relayAttemptDone
 }
 
 func (r *Relay) logRequestAsync(entry *domain.RequestLog, obs *requestlog.LogObservation) {

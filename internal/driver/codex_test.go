@@ -20,6 +20,158 @@ func (f roundTripFunc) RoundTrip(req *http.Request) (*http.Response, error) {
 	return f(req)
 }
 
+type trackedReadCloser struct {
+	io.Reader
+	closed bool
+}
+
+func (r *trackedReadCloser) Close() error {
+	r.closed = true
+	return nil
+}
+
+func TestCodexPlanRouteAffinityPrecedenceAndContinuity(t *testing.T) {
+	d := NewCodexDriver(CodexConfig{})
+	tests := []struct {
+		name           string
+		body           map[string]interface{}
+		sessionID      string
+		wantKey        string
+		wantKind       string
+		wantContinuity AffinityContinuity
+	}{
+		{
+			name: "prompt cache key wins",
+			body: map[string]interface{}{
+				"prompt_cache_key": "cache-key",
+				"conversation":     map[string]interface{}{"id": "conv-id"},
+			},
+			sessionID:      "session-id",
+			wantKey:        "cache-key",
+			wantKind:       "prompt-cache-key",
+			wantContinuity: AffinityRequire,
+		},
+		{
+			name:           "conversation object is normalized",
+			body:           map[string]interface{}{"conversation": map[string]interface{}{"id": " conv-id "}},
+			wantKey:        "conv-id",
+			wantKind:       "conversation",
+			wantContinuity: AffinityRequire,
+		},
+		{
+			name:           "session header is fallback",
+			body:           map[string]interface{}{},
+			sessionID:      " session-id ",
+			wantKey:        "session-id",
+			wantKind:       "session-id",
+			wantContinuity: AffinityPrefer,
+		},
+		{
+			name:           "previous response requires known owner",
+			body:           map[string]interface{}{"previous_response_id": "resp_123"},
+			sessionID:      "session-id",
+			wantKey:        "session-id",
+			wantKind:       "session-id",
+			wantContinuity: AffinityRequire,
+		},
+		{
+			name:           "previous response without stable key remains unresolved",
+			body:           map[string]interface{}{"previous_response_id": "resp_123"},
+			wantContinuity: AffinityRequire,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			headers := make(http.Header)
+			if tt.sessionID != "" {
+				headers.Set("session-id", tt.sessionID)
+			}
+			plan := d.Plan(&RelayInput{Body: tt.body, Headers: headers})
+			if plan.Affinity.RawKey != tt.wantKey || plan.Affinity.Kind != tt.wantKind || plan.Affinity.Continuity != tt.wantContinuity {
+				t.Fatalf("Plan().Affinity = %#v, want key=%q kind=%q continuity=%q", plan.Affinity, tt.wantKey, tt.wantKind, tt.wantContinuity)
+			}
+		})
+	}
+}
+
+func TestCodexPreflightStreamClassifiesCapacityBeforeCommit(t *testing.T) {
+	d := NewCodexDriver(CodexConfig{Pauses: ErrorPauses{Pause429: time.Minute}})
+	body := &trackedReadCloser{Reader: strings.NewReader("event: error\ndata: {\"type\":\"error\",\"error\":{\"type\":\"server_error\",\"message\":\"Selected model is at capacity. Please try a different model.\"}}\n\n")}
+	resp := &http.Response{
+		StatusCode: http.StatusOK,
+		Header:     http.Header{"Content-Type": []string{"text/event-stream"}},
+		Body:       body,
+	}
+
+	result, err := d.PreflightStream(context.Background(), resp, "gpt-5.5", json.RawMessage(`{}`))
+	if err != nil {
+		t.Fatalf("PreflightStream: %v", err)
+	}
+	if result.Effect == nil {
+		t.Fatal("PreflightStream effect = nil, want capacity cooldown")
+	}
+	if result.Effect.Kind != EffectCooldown || result.Effect.Scope != EffectScopeBucket || result.Effect.UpstreamStatus != http.StatusTooManyRequests {
+		t.Fatalf("PreflightStream effect = %#v", *result.Effect)
+	}
+	if len(result.ErrorBody) == 0 {
+		t.Fatal("PreflightStream ErrorBody is empty")
+	}
+	if !body.closed {
+		t.Fatal("capacity stream body was not closed")
+	}
+}
+
+func TestCodexPreflightStreamReplaysAcceptedPrefixByteForByte(t *testing.T) {
+	d := NewCodexDriver(CodexConfig{})
+	want := "event: response.created\r\ndata: {\"type\":\"response.created\"}\r\n\r\nevent: response.completed\ndata: {\"type\":\"response.completed\"}\n\n"
+	resp := &http.Response{
+		StatusCode: http.StatusOK,
+		Header:     http.Header{"Content-Type": []string{"text/event-stream; charset=utf-8"}},
+		Body:       io.NopCloser(strings.NewReader(want)),
+	}
+
+	result, err := d.PreflightStream(context.Background(), resp, "gpt-5.5", nil)
+	if err != nil {
+		t.Fatalf("PreflightStream: %v", err)
+	}
+	if result.Effect != nil {
+		t.Fatalf("PreflightStream effect = %#v, want accepted", result.Effect)
+	}
+	got, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatalf("read replay body: %v", err)
+	}
+	if string(got) != want {
+		t.Fatalf("replayed body = %q, want exact %q", got, want)
+	}
+}
+
+func TestCodexPreflightStreamDoesNotTreatOutputTextAsCapacityEffect(t *testing.T) {
+	d := NewCodexDriver(CodexConfig{})
+	want := "event: response.output_text.delta\ndata: {\"type\":\"response.output_text.delta\",\"delta\":\"Selected model is at capacity\"}\n\n"
+	resp := &http.Response{
+		StatusCode: http.StatusOK,
+		Header:     http.Header{"Content-Type": []string{"text/event-stream"}},
+		Body:       io.NopCloser(strings.NewReader(want)),
+	}
+
+	result, err := d.PreflightStream(context.Background(), resp, "gpt-5.5", nil)
+	if err != nil {
+		t.Fatalf("PreflightStream: %v", err)
+	}
+	if result.Effect != nil {
+		t.Fatalf("output text was misclassified as capacity: %#v", result.Effect)
+	}
+	got, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatalf("read replay body: %v", err)
+	}
+	if string(got) != want {
+		t.Fatalf("replayed body = %q, want %q", got, want)
+	}
+}
+
 func TestCodexBuildRequestUsesSubjectForAccountHeader(t *testing.T) {
 	d := NewCodexDriver(CodexConfig{APIURL: "https://chatgpt.com/backend-api/codex"})
 	input := &RelayInput{

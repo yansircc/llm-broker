@@ -1,14 +1,15 @@
 package relay
 
 import (
-	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
-	"log/slog"
 	"net/http"
+	"strconv"
+	"strings"
 
+	"github.com/google/uuid"
 	"github.com/yansircc/llm-broker/internal/auth"
 	"github.com/yansircc/llm-broker/internal/domain"
 	"github.com/yansircc/llm-broker/internal/driver"
@@ -16,13 +17,12 @@ import (
 )
 
 type preparedRelayRequest struct {
-	keyInfo               *auth.KeyInfo
-	input                 *driver.RelayInput
-	clientObservation     *ClientRequestObservation
-	surface               domain.Surface
-	sessionUUID           string
-	sessionBoundAccountID string
-	userRouteAccountID    string
+	keyInfo            *auth.KeyInfo
+	input              *driver.RelayInput
+	clientObservation  *ClientRequestObservation
+	surface            domain.Surface
+	affinityKey        string
+	affinityContinuity driver.AffinityContinuity
 }
 
 func (r *Relay) prepareRelayRequest(w http.ResponseWriter, req *http.Request, drv driver.ExecutionDriver, surface domain.Surface) (*preparedRelayRequest, bool) {
@@ -46,21 +46,42 @@ func (r *Relay) prepareRelayRequest(w http.ResponseWriter, req *http.Request, dr
 		return nil, true
 	}
 
-	sessionBoundAccountID, ok := r.resolveSessionBoundAccount(req.Context(), w, drv, input.Model, plan, surface)
-	if !ok {
+	affinityKey := routeAffinityKey(keyInfo.ID, drv.Provider(), surface, plan.Affinity)
+	if plan.Affinity.Continuity == driver.AffinityRequire && affinityKey == "" && keyInfo.BoundAccountID == "" {
+		drv.WriteError(w, http.StatusBadRequest, "conversation continuity cannot be resolved; start a new conversation")
 		return nil, true
 	}
-	userRouteAccountID := r.resolveUserRouteAccount(req.Context(), drv, keyInfo, input.Model, surface, sessionBoundAccountID)
 
 	return &preparedRelayRequest{
-		keyInfo:               keyInfo,
-		input:                 input,
-		clientObservation:     clientObservationFromContext(req.Context()),
-		surface:               surface,
-		sessionUUID:           plan.SessionUUID,
-		sessionBoundAccountID: sessionBoundAccountID,
-		userRouteAccountID:    userRouteAccountID,
+		keyInfo:            keyInfo,
+		input:              input,
+		clientObservation:  clientObservationFromContext(req.Context()),
+		surface:            surface,
+		affinityKey:        affinityKey,
+		affinityContinuity: plan.Affinity.Continuity,
 	}, false
+}
+
+func routeAffinityKey(userID string, provider domain.Provider, surface domain.Surface, affinity driver.RouteAffinity) string {
+	rawKey := strings.TrimSpace(affinity.RawKey)
+	if rawKey == "" {
+		return ""
+	}
+	parts := []string{
+		"llm-broker-route-affinity-v1",
+		userID,
+		string(provider),
+		string(domain.NormalizeSurface(string(surface))),
+		affinity.Kind,
+		rawKey,
+	}
+	var namespace strings.Builder
+	for _, part := range parts {
+		namespace.WriteString(strconv.Itoa(len(part)))
+		namespace.WriteByte(':')
+		namespace.WriteString(part)
+	}
+	return uuid.NewSHA1(uuid.NameSpaceURL, []byte(namespace.String())).String()
 }
 
 func (r *Relay) parseRelayInput(w http.ResponseWriter, req *http.Request, drv driver.ExecutionDriver, keyInfo *auth.KeyInfo) (*driver.RelayInput, driver.RelayPlan, bool) {
@@ -106,51 +127,4 @@ func (r *Relay) parseRelayInput(w http.ResponseWriter, req *http.Request, drv dr
 	input.IsCountTokens = plan.IsCountTokens
 
 	return input, plan, true
-}
-
-func (r *Relay) resolveSessionBoundAccount(ctx context.Context, w http.ResponseWriter, drv driver.ExecutionDriver, model string, plan driver.RelayPlan, surface domain.Surface) (string, bool) {
-	if plan.SessionUUID == "" {
-		return "", true
-	}
-
-	boundID, ok, err := r.pool.GetSessionBinding(ctx, plan.SessionUUID)
-	if err != nil {
-		slog.Error("load session binding failed", "sessionUUID", plan.SessionUUID, "error", err)
-		drv.WriteError(w, http.StatusServiceUnavailable, "session state unavailable")
-		return "", false
-	}
-	if !ok {
-		return "", true
-	}
-	if r.pool.IsAvailableForSurface(boundID, drv, model, surface) {
-		if err := r.pool.RenewSessionBinding(ctx, plan.SessionUUID, r.cfg.SessionBindingTTL); err != nil {
-			slog.Warn("renew session binding failed", "sessionUUID", plan.SessionUUID, "accountId", boundID, "error", err)
-		}
-		return boundID, true
-	}
-	if plan.RejectUnavailableSession {
-		slog.Warn("session pollution detected", "sessionUUID", plan.SessionUUID, "boundAccountId", boundID)
-		drv.WriteError(w, http.StatusBadRequest, "bound account unavailable, please start a new session")
-		return "", false
-	}
-	return "", true
-}
-
-func (r *Relay) resolveUserRouteAccount(ctx context.Context, drv driver.ExecutionDriver, keyInfo *auth.KeyInfo, model string, surface domain.Surface, sessionBoundAccountID string) string {
-	if keyInfo == nil || keyInfo.IsAdmin || keyInfo.BoundAccountID != "" || sessionBoundAccountID != "" {
-		return ""
-	}
-
-	accountID, ok, err := r.pool.GetUserRouteBinding(ctx, keyInfo.ID, drv.Provider(), surface)
-	if err != nil {
-		slog.Warn("load user route binding failed", "userId", keyInfo.ID, "provider", drv.Provider(), "surface", surface, "error", err)
-		return ""
-	}
-	if !ok {
-		return ""
-	}
-	if r.pool.ShouldKeepRouteBinding(accountID, drv, model, surface) {
-		return accountID
-	}
-	return ""
 }

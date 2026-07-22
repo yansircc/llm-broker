@@ -2,6 +2,7 @@ package pool
 
 import (
 	"context"
+	"fmt"
 	"time"
 
 	"github.com/yansircc/llm-broker/internal/domain"
@@ -15,62 +16,46 @@ func (p *Pool) GetSessionBinding(ctx context.Context, sessionUUID string) (strin
 	if binding == nil {
 		return "", false, nil
 	}
-	return binding.AccountID, true, nil
+	if err := p.refreshState(ctx); err != nil {
+		return "", false, err
+	}
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+	for _, acct := range p.accounts {
+		if acct.Provider == binding.Provider && acct.Subject == binding.Subject {
+			return acct.ID, true, nil
+		}
+	}
+	return "", false, nil
 }
 
-func (p *Pool) SetSessionBinding(ctx context.Context, sessionUUID, accountID string, ttl time.Duration) error {
+func (p *Pool) SetSessionBinding(ctx context.Context, sessionUUID string, acct *domain.Account, ttl time.Duration) error {
+	if acct == nil || acct.Subject == "" {
+		return fmt.Errorf("session binding target missing provider identity")
+	}
 	now := time.Now().UTC()
 	return p.store.SaveSessionBinding(ctx, &domain.SessionBinding{
 		SessionUUID: sessionUUID,
-		AccountID:   accountID,
+		Provider:    acct.Provider,
+		Subject:     acct.Subject,
 		CreatedAt:   now,
 		LastUsedAt:  now,
 		ExpiresAt:   now.Add(ttl),
 	})
 }
 
-func (p *Pool) RenewSessionBinding(ctx context.Context, sessionUUID string, ttl time.Duration) error {
-	binding, err := p.store.GetSessionBinding(ctx, sessionUUID)
-	if err != nil || binding == nil {
-		return err
-	}
-	now := time.Now().UTC()
-	binding.LastUsedAt = now
-	binding.ExpiresAt = now.Add(ttl)
-	return p.store.SaveSessionBinding(ctx, binding)
-}
-
-func (p *Pool) GetUserRouteBinding(ctx context.Context, userID string, provider domain.Provider, surface domain.Surface) (string, bool, error) {
-	binding, err := p.store.GetUserRouteBinding(ctx, userID, provider, surface)
-	if err != nil {
-		return "", false, err
-	}
-	if binding == nil {
-		return "", false, nil
-	}
-	return binding.AccountID, true, nil
-}
-
-func (p *Pool) SetUserRouteBinding(ctx context.Context, userID string, provider domain.Provider, surface domain.Surface, accountID string) error {
-	now := time.Now().UTC()
-	return p.store.SaveUserRouteBinding(ctx, &domain.UserRouteBinding{
-		UserID:     userID,
-		Provider:   provider,
-		Surface:    surface,
-		AccountID:  accountID,
-		CreatedAt:  now,
-		LastUsedAt: now,
-	})
-}
-
 func (p *Pool) ListSessionBindingsForAccount(ctx context.Context, accountID string) ([]domain.SessionBindingInfo, error) {
-	bindings, err := p.store.ListSessionBindingsByAccount(ctx, accountID)
+	acct := p.Get(accountID)
+	if acct == nil {
+		return nil, fmt.Errorf("account %s not found", accountID)
+	}
+	bindings, err := p.store.ListSessionBindingsByTarget(ctx, acct.Provider, acct.Subject)
 	if err != nil {
 		return nil, err
 	}
 	result := make([]domain.SessionBindingInfo, 0, len(bindings))
 	for _, binding := range bindings {
-		result = append(result, binding.Info())
+		result = append(result, binding.Info(accountID))
 	}
 	return result, nil
 }

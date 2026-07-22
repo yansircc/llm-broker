@@ -70,7 +70,10 @@ func (d *refreshStubDriver) ComputeExhaustedCooldown(json.RawMessage, time.Time)
 	return time.Time{}
 }
 func (d *refreshStubDriver) CanServe(json.RawMessage, string, time.Time) bool { return true }
-func (d *refreshStubDriver) CalcCost(string, *driver.Usage) float64           { return 0 }
+func (d *refreshStubDriver) AssessCapacity(json.RawMessage, string, time.Time) driver.CapacityAssessment {
+	return driver.CapacityAssessment{Eligible: true, Priority: 50}
+}
+func (d *refreshStubDriver) CalcCost(string, *driver.Usage) float64 { return 0 }
 func (d *refreshStubDriver) GetUtilization(json.RawMessage) []driver.UtilWindow {
 	return nil
 }

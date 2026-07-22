@@ -127,6 +127,10 @@ func (d *relayTestDriver) ComputeExhaustedCooldown(_ json.RawMessage, _ time.Tim
 
 func (d *relayTestDriver) CanServe(_ json.RawMessage, _ string, _ time.Time) bool { return true }
 
+func (d *relayTestDriver) AssessCapacity(_ json.RawMessage, _ string, _ time.Time) driver.CapacityAssessment {
+	return driver.CapacityAssessment{Eligible: true, Priority: 50}
+}
+
 type relayTestTokenProvider struct{}
 
 func (relayTestTokenProvider) EnsureValidToken(_ context.Context, _ string) (string, error) {
@@ -136,6 +140,108 @@ func (relayTestTokenProvider) EnsureValidToken(_ context.Context, _ string) (str
 type roundTripFunc func(*http.Request) (*http.Response, error)
 
 func (fn roundTripFunc) RoundTrip(req *http.Request) (*http.Response, error) { return fn(req) }
+
+func TestRelayRetriesCodexHTTP200CapacityBeforeDownstreamCommit(t *testing.T) {
+	mockStore := store.NewMockStore()
+	for _, acct := range []*domain.Account{
+		{
+			ID:        "acct-a",
+			Email:     "a@example.com",
+			Provider:  domain.ProviderCodex,
+			Status:    domain.StatusActive,
+			Subject:   "subject-a",
+			BucketKey: "codex:subject-a",
+			CreatedAt: time.Now().UTC(),
+		},
+		{
+			ID:        "acct-b",
+			Email:     "b@example.com",
+			Provider:  domain.ProviderCodex,
+			Status:    domain.StatusActive,
+			Subject:   "subject-b",
+			BucketKey: "codex:subject-b",
+			CreatedAt: time.Now().UTC(),
+		},
+	} {
+		saveRelayTestAccount(t, mockStore, acct)
+	}
+
+	bus := events.NewBus(16)
+	p, err := pool.New(mockStore, bus)
+	if err != nil {
+		t.Fatalf("pool.New: %v", err)
+	}
+	codexDriver := driver.NewCodexDriver(driver.CodexConfig{
+		APIURL: "https://upstream.test/openai/responses",
+		Pauses: driver.ErrorPauses{Pause429: time.Hour},
+	})
+	capacityStream := "event: error\ndata: {\"type\":\"error\",\"error\":{\"type\":\"server_error\",\"message\":\"Selected model is at capacity. Please try a different model.\"}}\n\n"
+	healthyStream := "event: response.created\ndata: {\"type\":\"response.created\"}\n\nevent: response.completed\ndata: {\"type\":\"response.completed\",\"response\":{\"usage\":{\"input_tokens\":1,\"output_tokens\":1}}}\n\n"
+	upstreamCalls := 0
+	transport := relayTestTransport{client: &http.Client{Transport: roundTripFunc(func(_ *http.Request) (*http.Response, error) {
+		upstreamCalls++
+		body := capacityStream
+		if upstreamCalls == 2 {
+			body = healthyStream
+		}
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     http.Header{"Content-Type": []string{"text/event-stream"}},
+			Body:       io.NopCloser(strings.NewReader(body)),
+		}, nil
+	})}}
+	relaySvc := New(
+		p,
+		relayTestTokenProvider{},
+		mockStore,
+		Config{MaxRetryAccounts: 1, SessionBindingTTL: time.Hour},
+		transport,
+		bus,
+		map[domain.Provider]driver.ExecutionDriver{domain.ProviderCodex: codexDriver},
+	)
+	prepared := &preparedRelayRequest{
+		keyInfo: &auth.KeyInfo{ID: "heavy-user", Name: "heavy-user"},
+		input: &driver.RelayInput{
+			Body:     map[string]interface{}{"model": "gpt-5.5", "stream": true},
+			RawBody:  []byte(`{"model":"gpt-5.5","stream":true}`),
+			Headers:  make(http.Header),
+			Path:     "/openai/responses",
+			Model:    "gpt-5.5",
+			IsStream: true,
+		},
+		surface:            domain.SurfaceNative,
+		affinityKey:        "codex-session",
+		affinityContinuity: driver.AffinityPrefer,
+	}
+	state := newRelayAttemptState()
+	recorder := httptest.NewRecorder()
+
+	if outcome := relaySvc.executeRelayAttempt(context.Background(), recorder, codexDriver, prepared, state, 0); outcome != relayAttemptContinue {
+		t.Fatalf("first outcome = %v, want continue", outcome)
+	}
+	if recorder.Body.Len() != 0 {
+		t.Fatalf("capacity attempt committed downstream bytes: %q", recorder.Body.String())
+	}
+	if outcome := relaySvc.executeRelayAttempt(context.Background(), recorder, codexDriver, prepared, state, 1); outcome != relayAttemptDone {
+		t.Fatalf("second outcome = %v, want done", outcome)
+	}
+	if upstreamCalls != 2 {
+		t.Fatalf("upstream calls = %d, want 2", upstreamCalls)
+	}
+	if recorder.Body.String() != healthyStream {
+		t.Fatalf("downstream body = %q, want only healthy stream %q", recorder.Body.String(), healthyStream)
+	}
+	if acct := p.Get("acct-a"); acct == nil || acct.CooldownUntil == nil {
+		t.Fatalf("first bucket was not cooled down: %#v", acct)
+	}
+	boundID, ok, err := p.GetSessionBinding(context.Background(), "codex-session")
+	if err != nil {
+		t.Fatalf("GetSessionBinding: %v", err)
+	}
+	if !ok || boundID != "acct-b" {
+		t.Fatalf("session binding = (%q, %v), want acct-b", boundID, ok)
+	}
+}
 
 type relayTestTransport struct {
 	client *http.Client
@@ -300,7 +406,7 @@ func TestExecuteRelayAttemptLogsRetriableFailure(t *testing.T) {
 		p,
 		relayTestTokenProvider{},
 		mockStore,
-		Config{MaxRetryAccounts: 1},
+		Config{MaxRetryAccounts: 1, SessionBindingTTL: time.Hour},
 		transport,
 		bus,
 		map[domain.Provider]driver.ExecutionDriver{domain.ProviderClaude: driverStub},
@@ -321,7 +427,7 @@ func TestExecuteRelayAttemptLogsRetriableFailure(t *testing.T) {
 			Path:    "/v1/messages",
 			Model:   "claude-sonnet-4-6",
 		},
-		sessionUUID: "session-123",
+		affinityKey: "session-123",
 	}
 
 	outcome := relaySvc.executeRelayAttempt(
@@ -434,7 +540,7 @@ func TestExecuteRelayAttemptPassesRealStatusToInterpretOnNonRetriableError(t *te
 		p,
 		relayTestTokenProvider{},
 		mockStore,
-		Config{MaxRetryAccounts: 1},
+		Config{MaxRetryAccounts: 1, SessionBindingTTL: time.Hour},
 		transport,
 		bus,
 		map[domain.Provider]driver.ExecutionDriver{domain.ProviderClaude: driverStub},
@@ -538,7 +644,7 @@ func TestExecuteRelayAttemptPassesBodyToInterpretOnNonRetriable400(t *testing.T)
 		p,
 		relayTestTokenProvider{},
 		mockStore,
-		Config{MaxRetryAccounts: 1},
+		Config{MaxRetryAccounts: 1, SessionBindingTTL: time.Hour},
 		transport,
 		bus,
 		map[domain.Provider]driver.ExecutionDriver{domain.ProviderClaude: driverStub},
@@ -635,7 +741,7 @@ func TestExecuteRelayAttemptReturnsDriverValidationError(t *testing.T) {
 		p,
 		relayTestTokenProvider{},
 		mockStore,
-		Config{MaxRetryAccounts: 1},
+		Config{MaxRetryAccounts: 1, SessionBindingTTL: time.Hour},
 		transport,
 		bus,
 		map[domain.Provider]driver.ExecutionDriver{domain.ProviderClaude: driverStub},
@@ -686,7 +792,7 @@ func TestExecuteRelayAttemptReturnsDriverValidationError(t *testing.T) {
 	}
 }
 
-func TestRelayStoresAndReusesUserRouteBinding(t *testing.T) {
+func TestRelayStoresAndReusesSessionAffinity(t *testing.T) {
 	mockStore := store.NewMockStore()
 	accountA := &domain.Account{
 		ID:        "acct-stick-a",
@@ -721,7 +827,7 @@ func TestRelayStoresAndReusesUserRouteBinding(t *testing.T) {
 		p,
 		relayTestTokenProvider{},
 		mockStore,
-		Config{MaxRetryAccounts: 1},
+		Config{MaxRetryAccounts: 1, SessionBindingTTL: time.Hour},
 		transport,
 		bus,
 		map[domain.Provider]driver.ExecutionDriver{domain.ProviderClaude: driverStub},
@@ -735,18 +841,20 @@ func TestRelayStoresAndReusesUserRouteBinding(t *testing.T) {
 			Path:    "/v1/messages",
 			Model:   "claude-sonnet-4-6",
 		},
-		surface: domain.SurfaceNative,
+		surface:            domain.SurfaceNative,
+		affinityKey:        "affinity-stick",
+		affinityContinuity: driver.AffinityPrefer,
 	}
 	if outcome := relaySvc.executeRelayAttempt(context.Background(), httptest.NewRecorder(), driverStub, prepared1, newRelayAttemptState(), 0); outcome != relayAttemptDone {
 		t.Fatalf("first executeRelayAttempt outcome = %v, want %v", outcome, relayAttemptDone)
 	}
 
-	accountID, ok, err := p.GetUserRouteBinding(context.Background(), keyInfo.ID, domain.ProviderClaude, domain.SurfaceNative)
+	accountID, ok, err := p.GetSessionBinding(context.Background(), "affinity-stick")
 	if err != nil {
-		t.Fatalf("GetUserRouteBinding: %v", err)
+		t.Fatalf("GetSessionBinding: %v", err)
 	}
 	if !ok || accountID != accountA.ID {
-		t.Fatalf("sticky binding = (%q, %v), want %q", accountID, ok, accountA.ID)
+		t.Fatalf("affinity binding = (%q, %v), want %q", accountID, ok, accountA.ID)
 	}
 
 	accountB := &domain.Account{
@@ -760,10 +868,6 @@ func TestRelayStoresAndReusesUserRouteBinding(t *testing.T) {
 	}
 	saveRelayTestAccount(t, mockStore, accountB)
 
-	stickyID := relaySvc.resolveUserRouteAccount(context.Background(), driverStub, keyInfo, "claude-sonnet-4-6", domain.SurfaceNative, "")
-	if stickyID != accountA.ID {
-		t.Fatalf("resolveUserRouteAccount() = %q, want %q", stickyID, accountA.ID)
-	}
 	prepared2 := &preparedRelayRequest{
 		keyInfo: keyInfo,
 		input: &driver.RelayInput{
@@ -772,17 +876,16 @@ func TestRelayStoresAndReusesUserRouteBinding(t *testing.T) {
 			Model:   "claude-sonnet-4-6",
 		},
 		surface:            domain.SurfaceNative,
-		userRouteAccountID: stickyID,
+		affinityKey:        "affinity-stick",
+		affinityContinuity: driver.AffinityPrefer,
 	}
 	if outcome := relaySvc.executeRelayAttempt(context.Background(), httptest.NewRecorder(), driverStub, prepared2, newRelayAttemptState(), 0); outcome != relayAttemptDone {
 		t.Fatalf("second executeRelayAttempt outcome = %v, want %v", outcome, relayAttemptDone)
 	}
 
 	logs := waitRequestLogsCount(t, mockStore, 2)
-	// After the first call seeded the user route, the second call should
-	// stick to accountA. The BindingSource field used to be asserted here,
-	// but it now lives in the on-disk observation file (not the slim SQL row).
-	// Verifying both logs target accountA preserves the original intent.
+	// The second request reuses the stable provider identity despite another
+	// eligible account becoming available.
 	for _, entry := range logs {
 		if entry.AccountID != accountA.ID {
 			t.Fatalf("expected all logs to target %q, got %q", accountA.ID, entry.AccountID)
@@ -790,7 +893,7 @@ func TestRelayStoresAndReusesUserRouteBinding(t *testing.T) {
 	}
 }
 
-func TestRelayRebindsUserRouteBindingWhenStickyAccountUnavailable(t *testing.T) {
+func TestRelayRebindsPortableSessionWhenAffinityOwnerUnavailable(t *testing.T) {
 	mockStore := store.NewMockStore()
 	accountA := &domain.Account{
 		ID:        "acct-route-a",
@@ -818,8 +921,8 @@ func TestRelayRebindsUserRouteBindingWhenStickyAccountUnavailable(t *testing.T) 
 	if err != nil {
 		t.Fatalf("pool.New: %v", err)
 	}
-	if err := p.SetUserRouteBinding(context.Background(), "user-route", domain.ProviderClaude, domain.SurfaceNative, accountA.ID); err != nil {
-		t.Fatalf("SetUserRouteBinding: %v", err)
+	if err := p.SetSessionBinding(context.Background(), "affinity-route", accountA, time.Hour); err != nil {
+		t.Fatalf("SetSessionBinding: %v", err)
 	}
 	p.Observe(accountA.ID, driver.Effect{
 		Kind:           driver.EffectCooldown,
@@ -844,16 +947,13 @@ func TestRelayRebindsUserRouteBindingWhenStickyAccountUnavailable(t *testing.T) 
 		p,
 		relayTestTokenProvider{},
 		mockStore,
-		Config{MaxRetryAccounts: 1},
+		Config{MaxRetryAccounts: 1, SessionBindingTTL: time.Hour},
 		transport,
 		bus,
 		map[domain.Provider]driver.ExecutionDriver{domain.ProviderClaude: driverStub},
 	)
 
 	keyInfo := &auth.KeyInfo{ID: "user-route", Name: "mike"}
-	if stickyID := relaySvc.resolveUserRouteAccount(context.Background(), driverStub, keyInfo, "claude-sonnet-4-6", domain.SurfaceNative, ""); stickyID != "" {
-		t.Fatalf("resolveUserRouteAccount() = %q, want empty when sticky account unavailable", stickyID)
-	}
 	prepared := &preparedRelayRequest{
 		keyInfo: keyInfo,
 		input: &driver.RelayInput{
@@ -861,18 +961,20 @@ func TestRelayRebindsUserRouteBindingWhenStickyAccountUnavailable(t *testing.T) 
 			Path:    "/v1/messages",
 			Model:   "claude-sonnet-4-6",
 		},
-		surface: domain.SurfaceNative,
+		surface:            domain.SurfaceNative,
+		affinityKey:        "affinity-route",
+		affinityContinuity: driver.AffinityPrefer,
 	}
 	if outcome := relaySvc.executeRelayAttempt(context.Background(), httptest.NewRecorder(), driverStub, prepared, newRelayAttemptState(), 0); outcome != relayAttemptDone {
 		t.Fatalf("executeRelayAttempt outcome = %v, want %v", outcome, relayAttemptDone)
 	}
 
-	accountID, ok, err := p.GetUserRouteBinding(context.Background(), keyInfo.ID, domain.ProviderClaude, domain.SurfaceNative)
+	accountID, ok, err := p.GetSessionBinding(context.Background(), "affinity-route")
 	if err != nil {
-		t.Fatalf("GetUserRouteBinding: %v", err)
+		t.Fatalf("GetSessionBinding: %v", err)
 	}
 	if !ok || accountID != accountB.ID {
-		t.Fatalf("sticky binding = (%q, %v), want rebound %q", accountID, ok, accountB.ID)
+		t.Fatalf("affinity binding = (%q, %v), want rebound %q", accountID, ok, accountB.ID)
 	}
 	logs := waitRequestLogsCount(t, mockStore, 1)
 	if logs[0].AccountID != accountB.ID {
@@ -880,7 +982,7 @@ func TestRelayRebindsUserRouteBindingWhenStickyAccountUnavailable(t *testing.T) 
 	}
 }
 
-func TestRelayStoresUserRouteBindingOnReject(t *testing.T) {
+func TestRelayDoesNotBindSessionAffinityOnReject(t *testing.T) {
 	mockStore := store.NewMockStore()
 	account := &domain.Account{
 		ID:        "acct-reject-stick",
@@ -940,7 +1042,9 @@ func TestRelayStoresUserRouteBindingOnReject(t *testing.T) {
 			Path:    "/v1/messages",
 			Model:   "claude-sonnet-4-6",
 		},
-		surface: domain.SurfaceNative,
+		surface:            domain.SurfaceNative,
+		affinityKey:        "affinity-reject",
+		affinityContinuity: driver.AffinityPrefer,
 	}
 	recorder := httptest.NewRecorder()
 	if outcome := relaySvc.executeRelayAttempt(context.Background(), recorder, driverStub, prepared, newRelayAttemptState(), 0); outcome != relayAttemptDone {
@@ -950,12 +1054,12 @@ func TestRelayStoresUserRouteBindingOnReject(t *testing.T) {
 		t.Fatalf("response status = %d, want %d", recorder.Code, http.StatusNotFound)
 	}
 
-	accountID, ok, err := p.GetUserRouteBinding(context.Background(), "user-reject-stick", domain.ProviderClaude, domain.SurfaceNative)
+	accountID, ok, err := p.GetSessionBinding(context.Background(), "affinity-reject")
 	if err != nil {
-		t.Fatalf("GetUserRouteBinding: %v", err)
+		t.Fatalf("GetSessionBinding: %v", err)
 	}
-	if !ok || accountID != account.ID {
-		t.Fatalf("sticky binding after reject = (%q, %v), want %q", accountID, ok, account.ID)
+	if ok || accountID != "" {
+		t.Fatalf("affinity binding after reject = (%q, %v), want absent", accountID, ok)
 	}
 }
 

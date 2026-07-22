@@ -8,29 +8,23 @@ import (
 	"github.com/yansircc/llm-broker/internal/auth"
 	"github.com/yansircc/llm-broker/internal/domain"
 	"github.com/yansircc/llm-broker/internal/driver"
+	"github.com/yansircc/llm-broker/internal/pool"
 )
 
 func (r *Relay) handleCountTokens(w http.ResponseWriter, req *http.Request, drv driver.ExecutionDriver, input *driver.RelayInput, keyInfo *auth.KeyInfo, surface domain.Surface) {
 	ctx := req.Context()
 
-	boundAccountID := keyInfo.BoundAccountID
-	if boundAccountID == "" && keyInfo != nil && !keyInfo.IsAdmin {
-		if stickyAccountID, ok, err := r.pool.GetUserRouteBinding(ctx, keyInfo.ID, drv.Provider(), surface); err != nil {
-			slog.Warn("count_tokens: load user route binding failed", "userId", keyInfo.ID, "provider", drv.Provider(), "surface", surface, "error", err)
-		} else if ok && r.pool.IsAvailableForSurface(stickyAccountID, drv, input.Model, surface) {
-			boundAccountID = stickyAccountID
-		}
-	}
-
-	acct, err := r.pool.PickForSurface(drv, nil, input.Model, boundAccountID, surface)
-	if err != nil && boundAccountID != "" && boundAccountID != keyInfo.BoundAccountID {
-		acct, err = r.pool.PickForSurface(drv, nil, input.Model, "", surface)
-	}
+	acct, lease, err := r.pool.AcquireRoute(ctx, drv, pool.RouteRequest{
+		Model:         input.Model,
+		Surface:       surface,
+		HardAccountID: keyInfo.BoundAccountID,
+	})
 	if err != nil {
 		slog.Warn("count_tokens: account selection failed", "error", err)
 		drv.WriteError(w, http.StatusServiceUnavailable, "no available accounts")
 		return
 	}
+	defer lease.Abort()
 
 	accessToken, err := r.tokens.EnsureValidToken(ctx, acct.ID)
 	if err != nil {
@@ -59,5 +53,11 @@ func (r *Relay) handleCountTokens(w http.ResponseWriter, req *http.Request, drv 
 	}
 	defer resp.Body.Close()
 
+	if err := lease.Accept(ctx, 0); err != nil {
+		slog.Error("count_tokens: accept route failed", "error", err, "accountId", acct.ID)
+		drv.WriteError(w, http.StatusServiceUnavailable, "route state unavailable")
+		return
+	}
 	drv.ForwardResponse(w, resp)
+	lease.Finish()
 }

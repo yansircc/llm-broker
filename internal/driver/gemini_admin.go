@@ -89,6 +89,14 @@ func (d *GeminiDriver) CanServe(state json.RawMessage, _ string, now time.Time) 
 		clampFraction(s.DailyRequestsRemainingFraction) > 0
 }
 
+func (d *GeminiDriver) AssessCapacity(state json.RawMessage, model string, now time.Time) CapacityAssessment {
+	return CapacityAssessment{
+		Eligible: d.CanServe(state, model, now),
+		Priority: d.AutoPriority(state),
+		Class:    "default",
+	}
+}
+
 func (d *GeminiDriver) CalcCost(_ string, _ *Usage) float64 { return 0 }
 
 func (d *GeminiDriver) GetUtilization(state json.RawMessage) []UtilWindow {

@@ -51,9 +51,6 @@ func (s *SQLiteStore) DeleteUser(ctx context.Context, id string) error {
 	}
 	defer tx.Rollback()
 
-	if _, err := tx.ExecContext(ctx, "DELETE FROM user_route_bindings WHERE user_id = ?", id); err != nil {
-		return err
-	}
 	result, err := tx.ExecContext(ctx, "DELETE FROM users WHERE id = ?", id)
 	if err != nil {
 		return err
