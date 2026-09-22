@@ -201,3 +201,28 @@ export interface EgressCellView {
 	updated_at: string;
 	accounts: EgressCellAccountRef[];
 }
+
+// GET /admin/spend — cost per (user, model) across the 1d/3d/7d/30d rolling windows.
+export interface SpendCosts {
+	d1: number;
+	d3: number;
+	d7: number;
+	d30: number;
+}
+
+export interface SpendModelRow {
+	model: string;
+	cost: SpendCosts;
+}
+
+export interface SpendUserGroup {
+	user_id: string;
+	user_name: string;
+	models: SpendModelRow[];
+	subtotal: SpendCosts;
+}
+
+export interface SpendData {
+	users: SpendUserGroup[];
+	total: SpendCosts;
+}

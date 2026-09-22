@@ -75,6 +75,7 @@ func (s *Server) registerAdminRoutes(mux *http.ServeMux) {
 
 	mux.Handle("GET /admin/activity", admin(s.handleActivity))
 	mux.Handle("GET /admin/activity/usage", admin(s.handleActivityUsage))
+	mux.Handle("GET /admin/spend", admin(s.handleSpend))
 	mux.Handle("GET /admin/dashboard", admin(s.handleDashboard))
 	mux.Handle("GET /admin/health", admin(s.handleHealth))
 	mux.Handle("DELETE /admin/sessions/binding/{uuid}", admin(s.handleUnbindSession))

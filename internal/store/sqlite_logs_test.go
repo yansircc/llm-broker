@@ -349,3 +349,82 @@ func TestRequestLogBlobDirDisabled(t *testing.T) {
 		t.Fatalf("WriteLogFile(\"\") should be a no-op, got %v", err)
 	}
 }
+
+func TestQueryUserModelCosts(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "spend.db")
+	if err := Migrate(dbPath); err != nil {
+		t.Fatalf("Migrate: %v", err)
+	}
+	store, err := New(dbPath)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	defer store.Close()
+
+	now := time.Now().UTC()
+	hoursAgo := func(h int) time.Time { return now.Add(-time.Duration(h) * time.Hour) }
+
+	for _, entry := range []*domain.RequestLog{
+		// user-1 / opus: one row inside 1d, one only inside 3d+, one only inside 30d.
+		{UserID: "user-1", Provider: "claude", Model: "opus", Status: "ok", CostUSD: 1, CreatedAt: hoursAgo(2)},
+		{UserID: "user-1", Provider: "claude", Model: "opus", Status: "ok", CostUSD: 2, CreatedAt: hoursAgo(48)},
+		{UserID: "user-1", Provider: "claude", Model: "opus", Status: "ok", CostUSD: 4, CreatedAt: hoursAgo(24 * 20)},
+		// A different model for the same user stays a separate row.
+		{UserID: "user-1", Provider: "codex", Model: "gpt-6", Status: "ok", CostUSD: 8, CreatedAt: hoursAgo(2)},
+		// Legacy row written before the provider column existed must still count.
+		{UserID: "user-2", Provider: "", Model: "legacy", Status: "ok", CostUSD: 16, CreatedAt: hoursAgo(2)},
+		// Excluded: failed relay, gemini, outside 30d, and a zero-cost model.
+		{UserID: "user-1", Provider: "claude", Model: "opus", Status: "upstream_429", CostUSD: 99, CreatedAt: hoursAgo(2)},
+		{UserID: "user-1", Provider: "gemini", Model: "gemini-3", Status: "ok", CostUSD: 99, CreatedAt: hoursAgo(2)},
+		{UserID: "user-1", Provider: "claude", Model: "opus", Status: "ok", CostUSD: 99, CreatedAt: hoursAgo(24 * 40)},
+		{UserID: "user-3", Provider: "codex", Model: "free", Status: "ok", CostUSD: 0, CreatedAt: hoursAgo(2)},
+	} {
+		if _, err := store.InsertRequestLog(context.Background(), entry); err != nil {
+			t.Fatalf("InsertRequestLog(%s/%s): %v", entry.UserID, entry.Model, err)
+		}
+	}
+
+	rows, err := store.QueryUserModelCosts(context.Background())
+	if err != nil {
+		t.Fatalf("QueryUserModelCosts: %v", err)
+	}
+
+	got := make(map[string]domain.UserModelCost, len(rows))
+	for _, row := range rows {
+		got[row.UserID+"/"+row.Model] = row
+	}
+	if len(got) != 3 {
+		t.Fatalf("got %d rows (%v), want 3", len(got), got)
+	}
+	for _, key := range []string{"user-1/gemini-3", "user-3/free"} {
+		if _, ok := got[key]; ok {
+			t.Fatalf("row %q should have been excluded", key)
+		}
+	}
+
+	opus := got["user-1/opus"]
+	for _, tc := range []struct {
+		window string
+		got    float64
+		want   float64
+	}{
+		{"1d", opus.Cost1d, 1},
+		{"3d", opus.Cost3d, 3},
+		{"7d", opus.Cost7d, 3},
+		{"30d", opus.Cost30d, 7},
+	} {
+		if tc.got != tc.want {
+			t.Errorf("user-1/opus %s = %v, want %v", tc.window, tc.got, tc.want)
+		}
+	}
+	if legacy := got["user-2/legacy"]; legacy.Cost30d != 16 {
+		t.Errorf("legacy empty-provider row 30d = %v, want 16", legacy.Cost30d)
+	}
+
+	// Rows arrive sorted by 30d spend, descending.
+	for i := 1; i < len(rows); i++ {
+		if rows[i-1].Cost30d < rows[i].Cost30d {
+			t.Fatalf("rows not sorted by 30d desc: %v", rows)
+		}
+	}
+}

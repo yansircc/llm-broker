@@ -81,6 +81,18 @@ type ModelUsageRow struct {
 	CostUSD         float64 `json:"cost_usd"`
 }
 
+// UserModelCost is one (user, model) pair with cost rolled up over the fixed
+// 1d/3d/7d/30d rolling windows. Windows are a product decision, not a
+// parameter, so they are named fields rather than a map.
+type UserModelCost struct {
+	UserID  string  `json:"user_id"`
+	Model   string  `json:"model"`
+	Cost1d  float64 `json:"cost_1d"`
+	Cost3d  float64 `json:"cost_3d"`
+	Cost7d  float64 `json:"cost_7d"`
+	Cost30d float64 `json:"cost_30d"`
+}
+
 // SessionBindingInfo describes an active session binding.
 type SessionBindingInfo struct {
 	SessionUUID string    `json:"session_uuid"`

@@ -12,7 +12,7 @@ if (!TOKEN) { console.error('API_TOKEN is required'); process.exit(1); }
 const domain = new URL(SITE).hostname;
 
 // Pages to visit — detail pages extracted dynamically from dashboard links
-const staticPages = ['/'];
+const staticPages = ['/', '/spend'];
 
 async function run() {
   const browser = await chromium.launch();

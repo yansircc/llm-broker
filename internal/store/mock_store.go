@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"sort"
 	"sync"
 	"time"
 
@@ -626,4 +627,53 @@ func (m *MockStore) QueryUserTotalCostsByIDs(_ context.Context, userIDs []string
 
 func (m *MockStore) QueryModelUsage(_ context.Context, _ string) ([]domain.ModelUsageRow, error) {
 	return nil, nil
+}
+
+// QueryUserModelCosts mirrors the SQLite implementation: ok-only, non-gemini,
+// grouped by (user, model), all-zero groups dropped.
+func (m *MockStore) QueryUserModelCosts(_ context.Context) ([]domain.UserModelCost, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	now := time.Now().UTC()
+	day1 := now.Add(-1 * 24 * time.Hour)
+	day3 := now.Add(-3 * 24 * time.Hour)
+	day7 := now.Add(-7 * 24 * time.Hour)
+	day30 := now.Add(-30 * 24 * time.Hour)
+
+	type key struct{ userID, model string }
+	agg := make(map[key]*domain.UserModelCost)
+	var order []key
+	for _, entry := range m.logs {
+		if entry.Status != "ok" || entry.Provider == "gemini" || entry.CreatedAt.Before(day30) {
+			continue
+		}
+		k := key{entry.UserID, entry.Model}
+		row, ok := agg[k]
+		if !ok {
+			row = &domain.UserModelCost{UserID: entry.UserID, Model: entry.Model}
+			agg[k] = row
+			order = append(order, k)
+		}
+		if !entry.CreatedAt.Before(day1) {
+			row.Cost1d += entry.CostUSD
+		}
+		if !entry.CreatedAt.Before(day3) {
+			row.Cost3d += entry.CostUSD
+		}
+		if !entry.CreatedAt.Before(day7) {
+			row.Cost7d += entry.CostUSD
+		}
+		row.Cost30d += entry.CostUSD
+	}
+
+	result := make([]domain.UserModelCost, 0, len(order))
+	for _, k := range order {
+		if agg[k].Cost30d <= 0 {
+			continue
+		}
+		result = append(result, *agg[k])
+	}
+	sort.Slice(result, func(i, j int) bool { return result[i].Cost30d > result[j].Cost30d })
+	return result, nil
 }

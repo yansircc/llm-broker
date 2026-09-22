@@ -12,6 +12,7 @@
 		{ href: '/accounts', label: 'accounts' },
 		{ href: '/users', label: 'users' },
 		{ href: '/activity', label: 'activity' },
+		{ href: '/spend', label: 'spend' },
 		{ href: '/migrations', label: 'migration' }
 	];
 

@@ -356,3 +356,47 @@ func (s *SQLiteStore) QueryModelUsage(ctx context.Context, userID string) ([]dom
 	}
 	return result, rows.Err()
 }
+
+// QueryUserModelCosts rolls cost_usd up by (user, model) across the fixed
+// 1d/3d/7d/30d rolling windows in a single pass.
+//
+// Gemini is excluded because GeminiDriver.CalcCost always returns 0, so its
+// rows would only ever contribute $0 noise. The filter is written as
+// `provider <> 'gemini'` rather than a claude/codex allowlist on purpose:
+// rows written before the provider column existed were backfilled with an
+// empty provider,
+// and an allowlist would silently drop that history.
+func (s *SQLiteStore) QueryUserModelCosts(ctx context.Context) ([]domain.UserModelCost, error) {
+	now := time.Now().UTC()
+	day1 := now.Add(-1 * 24 * time.Hour).Unix()
+	day3 := now.Add(-3 * 24 * time.Hour).Unix()
+	day7 := now.Add(-7 * 24 * time.Hour).Unix()
+	day30 := now.Add(-30 * 24 * time.Hour).Unix()
+
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT user_id, model,
+			COALESCE(SUM(CASE WHEN created_at >= ? THEN cost_usd ELSE 0 END),0),
+			COALESCE(SUM(CASE WHEN created_at >= ? THEN cost_usd ELSE 0 END),0),
+			COALESCE(SUM(CASE WHEN created_at >= ? THEN cost_usd ELSE 0 END),0),
+			COALESCE(SUM(cost_usd),0)
+		FROM request_log
+		WHERE status = 'ok' AND provider <> 'gemini' AND created_at >= ?
+		GROUP BY user_id, model
+		HAVING SUM(cost_usd) > 0
+		ORDER BY SUM(cost_usd) DESC`,
+		day1, day3, day7, day30)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	result := make([]domain.UserModelCost, 0)
+	for rows.Next() {
+		var c domain.UserModelCost
+		if err := rows.Scan(&c.UserID, &c.Model, &c.Cost1d, &c.Cost3d, &c.Cost7d, &c.Cost30d); err != nil {
+			return nil, err
+		}
+		result = append(result, c)
+	}
+	return result, rows.Err()
+}

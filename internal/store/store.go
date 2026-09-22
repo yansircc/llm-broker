@@ -70,4 +70,5 @@ type Store interface {
 	QueryUserTotalCosts(ctx context.Context) (map[string]float64, error)
 	QueryUserTotalCostsByIDs(ctx context.Context, userIDs []string) (map[string]float64, error)
 	QueryModelUsage(ctx context.Context, userID string) ([]domain.ModelUsageRow, error)
+	QueryUserModelCosts(ctx context.Context) ([]domain.UserModelCost, error)
 }
