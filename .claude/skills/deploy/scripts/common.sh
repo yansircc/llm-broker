@@ -333,7 +333,12 @@ run_nonfatal_smoke_suite() {
     echo "==> smoke testing endpoints..."
 
     local api_token
-    api_token="$(remote_env_value API_TOKEN)"
+    # Must not abort the deploy. This runs AFTER the traffic switch, and the
+    # caller's ERR trap treats any failure past that point as "roll back the
+    # release" -- so a transient ssh blip here would tear down a deploy whose
+    # public /health already passed. An empty token is a supported state: the
+    # authenticated endpoints below are skipped instead.
+    api_token="$(remote_env_value API_TOKEN || true)"
 
     local smoke_fail=0
     smoke_endpoint "GET /health" "$SITE/health" || smoke_fail=1
@@ -346,7 +351,7 @@ run_nonfatal_smoke_suite() {
         smoke_endpoint "GET /admin/users" "$SITE/admin/users" "$api_token" || smoke_fail=1
         smoke_endpoint "GET /admin/health" "$SITE/admin/health" "$api_token" || smoke_fail=1
     else
-        echo "    skipping authenticated endpoints (API_TOKEN not found on remote)"
+        echo "    skipping authenticated endpoints (API_TOKEN unreadable on remote)"
     fi
 
     smoke_endpoint "GET /" "$SITE/" || smoke_fail=1
