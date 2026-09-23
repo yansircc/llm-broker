@@ -97,7 +97,8 @@ func setClaudeRequiredHeaders(h http.Header, accessToken, apiVersion, betaHeader
 	}
 	h.Set("Content-Type", "application/json")
 
-	// Derive UA from bound stainless version for fingerprint consistency.
+	// Derive UA from the live x-stainless-package-version (passthrough, not
+	// pinned) so upstream sees the client's actual current SDK/CLI version.
 	version := defaultClaudeVersion
 	if v := h.Get("x-stainless-package-version"); v != "" {
 		version = v
@@ -627,16 +628,26 @@ func generateShortID() string {
 // Stainless header binding (capture/replay)
 // ---------------------------------------------------------------------------
 
+// boundStainlessKeys are pinned per account for the binding TTL: they
+// describe the machine (os/arch/runtime/lang), and flip-flopping them across
+// requests to the same upstream account would look like account sharing
+// across different machines.
 var boundStainlessKeys = []string{
 	"x-stainless-os",
 	"x-stainless-arch",
 	"x-stainless-runtime",
 	"x-stainless-runtime-version",
 	"x-stainless-lang",
-	"x-stainless-package-version",
 }
 
+// passthroughStainlessKeys are always taken from the live request instead of
+// the pinned binding. x-stainless-package-version tracks the client's SDK
+// version, which legitimately changes when the user upgrades their CLI —
+// pinning it would keep replaying a stale version (and stale User-Agent,
+// see setClaudeRequiredHeaders) to upstream long after the client updated,
+// which can make upstream gate newer models as if the client were outdated.
 var passthroughStainlessKeys = []string{
+	"x-stainless-package-version",
 	"x-stainless-retry-count",
 	"x-stainless-read-timeout",
 }
