@@ -97,13 +97,23 @@ func setClaudeRequiredHeaders(h http.Header, accessToken, apiVersion, betaHeader
 	}
 	h.Set("Content-Type", "application/json")
 
-	// Derive UA from the live x-stainless-package-version (passthrough, not
-	// pinned) so upstream sees the client's actual current SDK/CLI version.
-	version := defaultClaudeVersion
-	if v := h.Get("x-stainless-package-version"); v != "" {
-		version = v
+	// Pass the client's real User-Agent through untouched. It already
+	// carries the genuine Claude Code app version (e.g.
+	// "claude-cli/2.1.280 (external, cli)"), which is a different,
+	// independently-versioned signal from x-stainless-package-version (the
+	// vendored SDK package version, e.g. "0.112.1" — a real 2.1.280 client
+	// sends both, and they do not match numerically). Synthesizing UA from
+	// package-version mislabels the SDK version as the CLI version and
+	// makes upstream think the client is older than it actually is. Only
+	// fall back to a default when the client sent no User-Agent at all
+	// (e.g. non-CLI API callers).
+	if h.Get("User-Agent") == "" {
+		version := defaultClaudeVersion
+		if v := h.Get("x-stainless-package-version"); v != "" {
+			version = v
+		}
+		h.Set("User-Agent", "claude-cli/"+version+" (external, cli)")
 	}
-	h.Set("User-Agent", "claude-cli/"+version+" (external, cli)")
 }
 
 func mergeBetaHeaders(clientBeta, relayBeta string) string {

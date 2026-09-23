@@ -149,6 +149,26 @@ func TestSetClaudeRequiredHeaders_UAFallback(t *testing.T) {
 	}
 }
 
+// A real Claude Code client's User-Agent (CLI app version) and
+// x-stainless-package-version (vendored SDK version) are independent
+// numbers — e.g. Claude Code 2.1.280 legitimately sends
+// x-stainless-package-version 0.112.1. Overwriting the client's real
+// User-Agent with a value derived from package-version mislabels the SDK
+// version as the CLI version and can make upstream reject current models
+// as if the client were outdated. The real User-Agent must pass through
+// untouched whenever the client sent one.
+func TestSetClaudeRequiredHeaders_UAPassesThroughRealClientValue(t *testing.T) {
+	h := make(http.Header)
+	h.Set("User-Agent", "claude-cli/2.1.280 (external, cli)")
+	h.Set("x-stainless-package-version", "0.112.1")
+	setClaudeRequiredHeaders(h, "tok", "2023-06-01", "")
+
+	ua := h.Get("User-Agent")
+	if ua != "claude-cli/2.1.280 (external, cli)" {
+		t.Fatalf("User-Agent = %q, want real client UA preserved despite mismatched package-version", ua)
+	}
+}
+
 // ---------------------------------------------------------------------------
 // Prompt env masking tests (Phase 4)
 // ---------------------------------------------------------------------------
