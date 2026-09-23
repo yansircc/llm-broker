@@ -269,6 +269,59 @@ func TestClaudeBuildRequestRejectsUnsupportedModelsLocally(t *testing.T) {
 	})
 }
 
+// TestClaudeBuildRequestPreservesRealClientUserAgent exercises the full
+// BuildRequest pipeline (transform -> filterClaudeHeaders -> bindStainless
+// -> setClaudeRequiredHeaders) with headers shaped like a genuine, current
+// Claude Code client: User-Agent carrying the CLI app version and a
+// numerically different x-stainless-package-version carrying the vendored
+// SDK version, exactly as real captured Claude Code 2.1.280 traffic does.
+// Regression guard for the bug where the broker reconstructed User-Agent
+// from x-stainless-package-version, silently downgrading an up-to-date
+// client's declared version to upstream and causing it to be rejected for
+// newer models.
+func TestClaudeBuildRequestPreservesRealClientUserAgent(t *testing.T) {
+	d := NewClaudeDriver(ClaudeConfig{
+		APIURL:     "https://claude.example/v1/messages",
+		APIVersion: "2023-06-01",
+		BetaHeader: "claude-code-20250219",
+	}, noopClaudeStainlessBinder{}, 8)
+
+	body := buildClaudeRequestBody(t, "claude-opus-5-5", map[string]interface{}{
+		"max_tokens": 1,
+		"messages": []interface{}{
+			map[string]interface{}{"role": "user", "content": "hello"},
+		},
+	})
+
+	reqHeaders := make(http.Header)
+	reqHeaders.Set("User-Agent", "claude-cli/2.1.280 (external, cli)")
+	reqHeaders.Set("x-stainless-package-version", "0.112.1")
+	reqHeaders.Set("x-stainless-os", "MacOS")
+	reqHeaders.Set("x-stainless-arch", "arm64")
+	reqHeaders.Set("x-stainless-runtime", "node")
+	reqHeaders.Set("x-stainless-runtime-version", "v22.0.0")
+	reqHeaders.Set("x-stainless-lang", "js")
+
+	input := &RelayInput{RawBody: body, Headers: reqHeaders}
+	acct := &domain.Account{
+		ID:       "acct-real-client",
+		Provider: domain.ProviderClaude,
+		Identity: map[string]string{"account_uuid": "org-1"},
+	}
+
+	req, err := d.BuildRequest(context.Background(), input, acct, "tok")
+	if err != nil {
+		t.Fatalf("BuildRequest() error = %v", err)
+	}
+
+	if got := req.Header.Get("User-Agent"); got != "claude-cli/2.1.280 (external, cli)" {
+		t.Fatalf("User-Agent = %q, want real client UA preserved end-to-end", got)
+	}
+	if got := req.Header.Get("x-stainless-package-version"); got != "0.112.1" {
+		t.Fatalf("x-stainless-package-version = %q, want live client value", got)
+	}
+}
+
 func buildClaudeRequestBody(t *testing.T, model string, body map[string]interface{}) []byte {
 	t.Helper()
 	body["model"] = model
