@@ -295,6 +295,7 @@ var compatClaudeModelAliases = map[string]string{
 	"claude-opus-4-5-20251101":   "claude-opus-4-5",
 	"claude-opus-4.6":            "claude-opus-4-6",
 	"claude-opus-4-20250514":     "claude-opus-4",
+	"claude-opus-5.5":            "claude-opus-5-5",
 	"claude-sonnet-4.0":          "claude-sonnet-4",
 	"claude-sonnet-4-0":          "claude-sonnet-4",
 	"claude-sonnet-4.5":          "claude-sonnet-4-5",

@@ -98,7 +98,7 @@ func TestClaudeBuildRequestNormalizesSystemEnvelopeForSonnet(t *testing.T) {
 }
 
 func TestClaudeBuildRequestNormalizesSystemEnvelopeForCurrentOpus(t *testing.T) {
-	for _, model := range []string{"claude-opus-4-8", "claude-opus-5"} {
+	for _, model := range []string{"claude-opus-4-8", "claude-opus-5", "claude-opus-5-5"} {
 		t.Run(model, func(t *testing.T) {
 			body := buildClaudeRequestBody(t, model, map[string]interface{}{
 				"max_tokens": 1,

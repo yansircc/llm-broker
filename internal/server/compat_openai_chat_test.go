@@ -201,6 +201,7 @@ func TestCompatOpenAIChatToClaudeRequest_ModernEnvelopeForGeneration5(t *testing
 	}{
 		{name: "sonnet", model: "anthropic/claude-sonnet-5.0", canonical: "claude-sonnet-5"},
 		{name: "opus", model: "claude/claude-opus-5", canonical: "claude-opus-5"},
+		{name: "opus 5.5", model: "anthropic/claude-opus-5.5", canonical: "claude-opus-5-5"},
 	}
 
 	for _, tt := range tests {
@@ -520,6 +521,9 @@ func TestHandleCompatListModels(t *testing.T) {
 	}
 	if !ids["claude/claude-opus-5"] {
 		t.Fatalf("compat models missing opus 5 model: %#v", ids)
+	}
+	if !ids["claude/claude-opus-5-5"] {
+		t.Fatalf("compat models missing opus 5.5 model: %#v", ids)
 	}
 	if !ids["gemini/gemini-2.5-flash"] {
 		t.Fatalf("compat models missing gemini model: %#v", ids)
