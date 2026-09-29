@@ -49,6 +49,12 @@ func TestClaudeCalcCost(t *testing.T) {
 			want:  0.01265,
 		},
 		{
+			name:  "sonnet 5.5",
+			model: "claude-sonnet-5-5",
+			usage: &Usage{InputTokens: 1000, OutputTokens: 200, CacheReadTokens: 300, CacheCreateTokens: 400},
+			want:  0.00506,
+		},
+		{
 			name:  "fable",
 			model: "claude-fable-5",
 			usage: &Usage{InputTokens: 1000, OutputTokens: 200, CacheReadTokens: 300, CacheCreateTokens: 400},
@@ -124,6 +130,20 @@ func TestClaudeModelsIncludesSonnet5(t *testing.T) {
 		return
 	}
 	t.Fatal("claude-sonnet-5 missing from Claude model catalog")
+}
+
+func TestClaudeModelsIncludesSonnet55(t *testing.T) {
+	d := NewClaudeDriver(ClaudeConfig{}, NoopStainlessStore{}, 4)
+	for _, model := range d.Models() {
+		if model.ID != "claude-sonnet-5-5" {
+			continue
+		}
+		if model.ContextWindow != 1000000 {
+			t.Fatalf("claude-sonnet-5-5 context_window = %d, want 1000000", model.ContextWindow)
+		}
+		return
+	}
+	t.Fatal("claude-sonnet-5-5 missing from Claude model catalog")
 }
 
 func TestClaudeInterpret_400DisabledOrganizationBlocks(t *testing.T) {

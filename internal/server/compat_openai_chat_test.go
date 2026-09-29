@@ -200,6 +200,7 @@ func TestCompatOpenAIChatToClaudeRequest_ModernEnvelopeForGeneration5(t *testing
 		canonical string
 	}{
 		{name: "sonnet", model: "anthropic/claude-sonnet-5.0", canonical: "claude-sonnet-5"},
+		{name: "sonnet 5.5", model: "anthropic/claude-sonnet-5.5", canonical: "claude-sonnet-5-5"},
 		{name: "opus", model: "claude/claude-opus-5", canonical: "claude-opus-5"},
 		{name: "opus 5.5", model: "anthropic/claude-opus-5.5", canonical: "claude-opus-5-5"},
 	}
@@ -255,6 +256,7 @@ func TestResolveCompatModelAliases(t *testing.T) {
 		{"anthropic/claude-haiku-4.5", domain.ProviderClaude, "claude-haiku-4-5", "claude/claude-haiku-4-5"},
 		{"claude-sonnet-4-20250514", domain.ProviderClaude, "claude-sonnet-4-6", "claude/claude-sonnet-4-6"},
 		{"claude-sonnet-5.0", domain.ProviderClaude, "claude-sonnet-5", "claude/claude-sonnet-5"},
+		{"claude-sonnet-5.5", domain.ProviderClaude, "claude-sonnet-5-5", "claude/claude-sonnet-5-5"},
 		{"gemini/gemini-2.5-flash", domain.ProviderGemini, "gemini-2.5-flash", "gemini/gemini-2.5-flash"},
 		{"google/gemini-2.5-pro", domain.ProviderGemini, "gemini-2.5-pro", "gemini/gemini-2.5-pro"},
 		{"gemini-2.5-pro", domain.ProviderGemini, "gemini-2.5-pro", "gemini/gemini-2.5-pro"},
@@ -518,6 +520,9 @@ func TestHandleCompatListModels(t *testing.T) {
 	}
 	if !ids["claude/claude-sonnet-5"] {
 		t.Fatalf("compat models missing sonnet 5 model: %#v", ids)
+	}
+	if !ids["claude/claude-sonnet-5-5"] {
+		t.Fatalf("compat models missing sonnet 5.5 model: %#v", ids)
 	}
 	if !ids["claude/claude-opus-5"] {
 		t.Fatalf("compat models missing opus 5 model: %#v", ids)

@@ -41,6 +41,7 @@ var claudeModelEntries = []claudeModelEntry{
 	{PublicID: "claude-opus-4-5", UpstreamID: "claude-opus-4-5", ContextWindow: 200000, Advertise: true, CodeSystemEnvelope: true, Pricing: claudeOpusPricing},
 	{PublicID: "claude-opus-4-1", UpstreamID: "claude-opus-4-1", ContextWindow: 200000, Advertise: true, CodeSystemEnvelope: true, Pricing: claudeOpusPricing},
 	{PublicID: "claude-opus-4", UpstreamID: "claude-opus-4", ContextWindow: 200000, Advertise: true, CodeSystemEnvelope: true, Pricing: claudeOpusPricing},
+	{PublicID: "claude-sonnet-5-5", UpstreamID: "claude-sonnet-5-5", ContextWindow: 1000000, Advertise: true, CodeSystemEnvelope: true, CompatModernEnvelope: true, Pricing: claudeSonnet5Pricing},
 	{PublicID: "claude-sonnet-5", UpstreamID: "claude-sonnet-5", ContextWindow: 1000000, Advertise: true, CodeSystemEnvelope: true, CompatModernEnvelope: true, Pricing: claudeSonnet5Pricing},
 	{PublicID: "claude-sonnet-4-6", UpstreamID: "claude-sonnet-4-6", ContextWindow: 200000, Advertise: true, CodeSystemEnvelope: true, CompatModernEnvelope: true, Pricing: claudeSonnetPricing},
 	{PublicID: "claude-sonnet-4-5", UpstreamID: "claude-sonnet-4-5", ContextWindow: 200000, Advertise: true, CodeSystemEnvelope: true, Pricing: claudeSonnetPricing},
