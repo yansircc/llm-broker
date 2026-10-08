@@ -614,18 +614,21 @@ func TestCodexModelsIncludesGPT56Family(t *testing.T) {
 	}
 }
 
-func TestCodexModelsIncludesGPT6Astra(t *testing.T) {
+func TestCodexModelsIncludesGPT6Family(t *testing.T) {
 	d := NewCodexDriver(CodexConfig{})
+	models := make(map[string]Model)
 	for _, model := range d.Models() {
-		if model.ID != "gpt-6-astra" {
-			continue
+		models[model.ID] = model
+	}
+	for _, id := range []string{"gpt-6-astra", "gpt-6.1-sol", "gpt-6-sol", "gpt-6-luna"} {
+		model, ok := models[id]
+		if !ok {
+			t.Fatalf("%s missing from codex model catalog", id)
 		}
 		if model.ContextWindow != 1050000 {
-			t.Fatalf("gpt-6-astra context_window = %d, want %d", model.ContextWindow, 1050000)
+			t.Fatalf("%s context_window = %d, want %d", id, model.ContextWindow, 1050000)
 		}
-		return
 	}
-	t.Fatal("gpt-6-astra missing from codex model catalog")
 }
 
 func TestCodexModelsIncludesGPT55(t *testing.T) {
@@ -688,11 +691,42 @@ func TestCodexCalcCostGPT56Pricing(t *testing.T) {
 	}
 }
 
-func TestCodexCalcCostGPT6AstraPricing(t *testing.T) {
+func TestCodexCalcCostGPT6Pricing(t *testing.T) {
 	d := NewCodexDriver(CodexConfig{})
 	usage := &Usage{InputTokens: 1000, OutputTokens: 10, CacheReadTokens: 300, CacheCreateTokens: 200}
-	if got, want := d.CalcCost("gpt-6-astra", usage), 0.0166; math.Abs(got-want) > 1e-12 {
-		t.Fatalf("CalcCost(%q) = %.12f, want %.12f", "gpt-6-astra", got, want)
+	for _, tc := range []struct {
+		model string
+		want  float64
+	}{
+		{"gpt-6-astra", 0.0083},
+		{"gpt-6.1-sol", 0.00163},
+		{"gpt-6-sol", 0.00166},
+		{"gpt-6-luna", 0.000083},
+	} {
+		if got := d.CalcCost(tc.model, usage); math.Abs(got-tc.want) > 1e-12 {
+			t.Fatalf("CalcCost(%q) = %.12f, want %.12f", tc.model, got, tc.want)
+		}
+	}
+}
+
+func TestCodexCalcCostGPT6PromptTiers(t *testing.T) {
+	d := NewCodexDriver(CodexConfig{})
+	for _, tc := range []struct {
+		name  string
+		usage *Usage
+		want  float64
+	}{
+		{"threshold inclusive", &Usage{InputTokens: 272000, OutputTokens: 100}, 0.545},
+		{"above threshold", &Usage{InputTokens: 272001, OutputTokens: 100}, 1.089504},
+		{"cached input already included", &Usage{InputTokens: 272000, CacheReadTokens: 100000, CacheCreateTokens: 100000, OutputTokens: 100}, 0.405},
+		{"cached input above threshold", &Usage{InputTokens: 272001, CacheReadTokens: 100000, CacheCreateTokens: 100000, OutputTokens: 100}, 0.809504},
+		{"output does not select prompt tier", &Usage{InputTokens: 1, OutputTokens: 272001}, 2.720012},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := d.CalcCost("gpt-6.1-sol", tc.usage); math.Abs(got-tc.want) > 1e-12 {
+				t.Fatalf("CalcCost() = %.12f, want %.12f", got, tc.want)
+			}
+		})
 	}
 }
 

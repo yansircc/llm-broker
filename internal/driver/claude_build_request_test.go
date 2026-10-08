@@ -164,24 +164,28 @@ func TestClaudeBuildRequestNormalizesSystemEnvelopeForSonnet5(t *testing.T) {
 	}
 }
 
-func TestClaudeBuildRequestNormalizesSystemEnvelopeForSonnet55(t *testing.T) {
-	body := buildClaudeRequestBody(t, "claude-sonnet-5-5", map[string]interface{}{
-		"max_tokens": 1,
-		"messages": []interface{}{
-			map[string]interface{}{"role": "user", "content": "hello"},
-		},
-	})
-	got := buildClaudeUpstreamBody(t, body, false)
+func TestClaudeBuildRequestNormalizesSystemEnvelopeForCurrentModels(t *testing.T) {
+	for _, model := range []string{"claude-sonnet-5-5", "claude-haiku-5-5", "claude-fable-5-1"} {
+		t.Run(model, func(t *testing.T) {
+			body := buildClaudeRequestBody(t, model, map[string]interface{}{
+				"max_tokens": 1,
+				"messages": []interface{}{
+					map[string]interface{}{"role": "user", "content": "hello"},
+				},
+			})
+			got := buildClaudeUpstreamBody(t, body, false)
 
-	if got["model"] != "claude-sonnet-5-5" {
-		t.Fatalf("model = %#v, want claude-sonnet-5-5", got["model"])
-	}
-	system := mustSystemBlocks(t, got["system"])
-	if len(system) != 1 {
-		t.Fatalf("len(system) = %d, want 1", len(system))
-	}
-	if text, _ := system[0]["text"].(string); text != claudeCodeSystemBlockText {
-		t.Fatalf("system[0].text = %q", text)
+			if got["model"] != model {
+				t.Fatalf("model = %#v, want %s", got["model"], model)
+			}
+			system := mustSystemBlocks(t, got["system"])
+			if len(system) != 1 {
+				t.Fatalf("len(system) = %d, want 1", len(system))
+			}
+			if text, _ := system[0]["text"].(string); text != claudeCodeSystemBlockText {
+				t.Fatalf("system[0].text = %q", text)
+			}
+		})
 	}
 }
 

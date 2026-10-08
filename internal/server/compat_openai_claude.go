@@ -49,6 +49,7 @@ func compatOpenAIChatToClaudeRequest(req *compatOpenAIChatRequest) (*compatClaud
 	claudeReq.Stream = &upstreamStream
 	if modernEnvelope {
 		claudeReq.Temperature = nil
+		claudeReq.TopP = nil
 		claudeReq.OutputConfig = &compatClaudeOutputConfig{Effort: "medium"}
 		claudeReq.Thinking = &compatClaudeThinking{Type: "adaptive"}
 	}

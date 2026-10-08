@@ -201,6 +201,8 @@ func TestCompatOpenAIChatToClaudeRequest_ModernEnvelopeForGeneration5(t *testing
 	}{
 		{name: "sonnet", model: "anthropic/claude-sonnet-5.0", canonical: "claude-sonnet-5"},
 		{name: "sonnet 5.5", model: "anthropic/claude-sonnet-5.5", canonical: "claude-sonnet-5-5"},
+		{name: "haiku 5.5", model: "anthropic/claude-haiku-5.5", canonical: "claude-haiku-5-5"},
+		{name: "fable 5.1", model: "anthropic/claude-fable-5.1", canonical: "claude-fable-5-1"},
 		{name: "opus", model: "claude/claude-opus-5", canonical: "claude-opus-5"},
 		{name: "opus 5.5", model: "anthropic/claude-opus-5.5", canonical: "claude-opus-5-5"},
 	}
@@ -208,9 +210,11 @@ func TestCompatOpenAIChatToClaudeRequest_ModernEnvelopeForGeneration5(t *testing
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			temperature := 0.2
+			topP := 0.9
 			req := &compatOpenAIChatRequest{
 				Model:       tt.model,
 				Temperature: &temperature,
+				TopP:        &topP,
 				Messages: []compatMessage{
 					{Role: "user", Content: json.RawMessage(`"hello"`)},
 				},
@@ -228,6 +232,9 @@ func TestCompatOpenAIChatToClaudeRequest_ModernEnvelopeForGeneration5(t *testing
 			}
 			if got.Temperature != nil {
 				t.Fatalf("temperature = %#v, want nil when thinking is enabled", got.Temperature)
+			}
+			if got.TopP != nil {
+				t.Fatalf("top_p = %#v, want nil when thinking is enabled", got.TopP)
 			}
 			if got.OutputConfig == nil || got.OutputConfig.Effort != "medium" {
 				t.Fatalf("output_config = %#v", got.OutputConfig)
@@ -254,6 +261,10 @@ func TestResolveCompatModelAliases(t *testing.T) {
 		{"anthropic/claude-opus-4.6", domain.ProviderClaude, "claude-opus-4-6", "claude/claude-opus-4-6"},
 		{"claude-opus-4-1-20250805", domain.ProviderClaude, "claude-opus-4-1", "claude/claude-opus-4-1"},
 		{"anthropic/claude-haiku-4.5", domain.ProviderClaude, "claude-haiku-4-5", "claude/claude-haiku-4-5"},
+		{"claude/claude-haiku-5-5", domain.ProviderClaude, "claude-haiku-5-5", "claude/claude-haiku-5-5"},
+		{"anthropic/claude-haiku-5.5", domain.ProviderClaude, "claude-haiku-5-5", "claude/claude-haiku-5-5"},
+		{"claude-haiku-5.5", domain.ProviderClaude, "claude-haiku-5-5", "claude/claude-haiku-5-5"},
+		{"claude-fable-5.1", domain.ProviderClaude, "claude-fable-5-1", "claude/claude-fable-5-1"},
 		{"claude-sonnet-4-20250514", domain.ProviderClaude, "claude-sonnet-4-6", "claude/claude-sonnet-4-6"},
 		{"claude-sonnet-5.0", domain.ProviderClaude, "claude-sonnet-5", "claude/claude-sonnet-5"},
 		{"claude-sonnet-5.5", domain.ProviderClaude, "claude-sonnet-5-5", "claude/claude-sonnet-5-5"},
@@ -518,11 +529,17 @@ func TestHandleCompatListModels(t *testing.T) {
 	if !ids["claude/claude-fable-5"] {
 		t.Fatalf("compat models missing fable model: %#v", ids)
 	}
+	if !ids["claude/claude-fable-5-1"] {
+		t.Fatalf("compat models missing fable 5.1 model: %#v", ids)
+	}
 	if !ids["claude/claude-sonnet-5"] {
 		t.Fatalf("compat models missing sonnet 5 model: %#v", ids)
 	}
 	if !ids["claude/claude-sonnet-5-5"] {
 		t.Fatalf("compat models missing sonnet 5.5 model: %#v", ids)
+	}
+	if !ids["claude/claude-haiku-5-5"] {
+		t.Fatalf("compat models missing haiku 5.5 model: %#v", ids)
 	}
 	if !ids["claude/claude-opus-5"] {
 		t.Fatalf("compat models missing opus 5 model: %#v", ids)

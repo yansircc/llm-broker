@@ -13,6 +13,7 @@ import (
 	"github.com/yansircc/llm-broker/internal/auth"
 	"github.com/yansircc/llm-broker/internal/config"
 	"github.com/yansircc/llm-broker/internal/domain"
+	"github.com/yansircc/llm-broker/internal/driver"
 	relaypkg "github.com/yansircc/llm-broker/internal/relay"
 	"github.com/yansircc/llm-broker/internal/requestid"
 )
@@ -285,36 +286,6 @@ func compatClaudeUpstreamHeaders(model string) http.Header {
 	return headers
 }
 
-var compatClaudeModelAliases = map[string]string{
-	"claude-haiku-4.5":           "claude-haiku-4-5",
-	"claude-opus-4.0":            "claude-opus-4",
-	"claude-opus-4-0":            "claude-opus-4",
-	"claude-opus-4.1":            "claude-opus-4-1",
-	"claude-opus-4-1-20250805":   "claude-opus-4-1",
-	"claude-opus-4.5":            "claude-opus-4-5",
-	"claude-opus-4-5-20251101":   "claude-opus-4-5",
-	"claude-opus-4.6":            "claude-opus-4-6",
-	"claude-opus-4-20250514":     "claude-opus-4",
-	"claude-opus-5.5":            "claude-opus-5-5",
-	"claude-sonnet-4.0":          "claude-sonnet-4",
-	"claude-sonnet-4-0":          "claude-sonnet-4",
-	"claude-sonnet-4.5":          "claude-sonnet-4-5",
-	"claude-sonnet-4-5-20250929": "claude-sonnet-4-5",
-	"claude-sonnet-4.6":          "claude-sonnet-4-6",
-	"claude-sonnet-4-20250514":   "claude-sonnet-4-6",
-	"claude-sonnet-5.0":          "claude-sonnet-5",
-	"claude-sonnet-5-0":          "claude-sonnet-5",
-	"claude-sonnet-5.5":          "claude-sonnet-5-5",
-}
-
-func compatCanonicalClaudeModel(model string) string {
-	trimmed := strings.ToLower(strings.TrimSpace(model))
-	if canonical, ok := compatClaudeModelAliases[trimmed]; ok {
-		return canonical
-	}
-	return trimmed
-}
-
 func resolveCompatModel(model string) (domain.Provider, string, string, error) {
 	trimmed := strings.TrimSpace(model)
 	if trimmed == "" {
@@ -330,7 +301,7 @@ func resolveCompatModel(model string) (domain.Provider, string, string, error) {
 
 	switch {
 	case providerPrefix == "claude" || providerPrefix == "anthropic" || (providerPrefix == "" && strings.HasPrefix(baseModel, "claude-")):
-		baseModel = compatCanonicalClaudeModel(baseModel)
+		baseModel = driver.ClaudeCompatCanonicalModel(baseModel)
 		if !strings.HasPrefix(baseModel, "claude-") {
 			return "", "", "", errCompat("model must be a claude model, e.g. claude/claude-sonnet-4-5")
 		}

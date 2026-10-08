@@ -134,8 +134,7 @@ func (d *ClaudeDriver) CalcCost(model string, usage *Usage) float64 {
 	if entry, ok := claudeModelEntryForID(model); ok {
 		pricing = entry.Pricing
 	}
-	return (float64(usage.InputTokens)*pricing.Input + float64(usage.OutputTokens)*pricing.Output +
-		float64(usage.CacheReadTokens)*pricing.CacheRead + float64(usage.CacheCreateTokens)*pricing.CacheCreate) / 1_000_000
+	return pricing.cost(usage)
 }
 
 func (d *ClaudeDriver) GetUtilization(state json.RawMessage) []UtilWindow {

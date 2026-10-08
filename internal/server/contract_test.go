@@ -1035,10 +1035,11 @@ func TestHandleListModels_IncludesCodexGPT55(t *testing.T) {
 	t.Fatalf("native models missing codex gpt-5.5: %#v", body.Data)
 }
 
-func TestHandleListModels_IncludesCurrentCodexModels(t *testing.T) {
+func TestHandleListModels_IncludesCurrentModels(t *testing.T) {
 	srv := newTestServer(t)
 	srv.catalogDrivers = map[domain.Provider]driver.Descriptor{
-		domain.ProviderCodex: driver.NewCodexDriver(driver.CodexConfig{}),
+		domain.ProviderCodex:  driver.NewCodexDriver(driver.CodexConfig{}),
+		domain.ProviderClaude: driver.NewClaudeDriver(driver.ClaudeConfig{}, driver.NoopStainlessStore{}, 4),
 	}
 
 	w := httptest.NewRecorder()
@@ -1061,7 +1062,7 @@ func TestHandleListModels_IncludesCurrentCodexModels(t *testing.T) {
 	if body.Object != "list" {
 		t.Fatalf("object = %q", body.Object)
 	}
-	want := map[string]bool{"gpt-5.6-sol": false, "gpt-6-astra": false}
+	want := map[string]bool{"gpt-5.6-sol": false, "gpt-6-astra": false, "gpt-6.1-sol": false, "gpt-6-sol": false, "gpt-6-luna": false, "claude-fable-5-1": false, "claude-sonnet-5-5": false, "claude-haiku-5-5": false}
 	for _, model := range body.Data {
 		if _, ok := want[model.ID]; ok {
 			want[model.ID] = true
@@ -1069,7 +1070,7 @@ func TestHandleListModels_IncludesCurrentCodexModels(t *testing.T) {
 	}
 	for model, found := range want {
 		if !found {
-			t.Fatalf("native models missing codex %s: %#v", model, body.Data)
+			t.Fatalf("native models missing %s: %#v", model, body.Data)
 		}
 	}
 }

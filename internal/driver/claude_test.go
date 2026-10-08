@@ -19,6 +19,42 @@ func TestClaudeCalcCost(t *testing.T) {
 		want  float64
 	}{
 		{
+			name:  "haiku 5.5",
+			model: "claude-haiku-5-5",
+			usage: &Usage{InputTokens: 1000, OutputTokens: 200, CacheReadTokens: 300, CacheCreateTokens: 400},
+			want:  0.000253,
+		},
+		{
+			name:  "haiku 5.5 threshold inclusive",
+			model: "claude-haiku-5-5",
+			usage: &Usage{InputTokens: 100000},
+			want:  0.01,
+		},
+		{
+			name:  "haiku 5.5 above threshold",
+			model: "claude-haiku-5-5",
+			usage: &Usage{InputTokens: 100001, OutputTokens: 200},
+			want:  0.0505005,
+		},
+		{
+			name:  "haiku 5.5 cached prompt at threshold",
+			model: "claude-haiku-5-5",
+			usage: &Usage{InputTokens: 1, CacheReadTokens: 99999},
+			want:  0.00100009,
+		},
+		{
+			name:  "haiku 5.5 cached prompt above threshold",
+			model: "claude-haiku-5-5",
+			usage: &Usage{InputTokens: 1, CacheReadTokens: 99999, CacheCreateTokens: 1},
+			want:  0.005001075,
+		},
+		{
+			name:  "haiku 5.5 output does not select prompt tier",
+			model: "claude-haiku-5-5",
+			usage: &Usage{InputTokens: 1, OutputTokens: 100001},
+			want:  0.0500006,
+		},
+		{
 			name:  "haiku",
 			model: "claude-haiku-4-5-20251001",
 			usage: &Usage{InputTokens: 1923, OutputTokens: 214},
@@ -46,13 +82,19 @@ func TestClaudeCalcCost(t *testing.T) {
 			name:  "opus 5.5",
 			model: "claude-opus-5-5",
 			usage: &Usage{InputTokens: 1000, OutputTokens: 200, CacheReadTokens: 300, CacheCreateTokens: 400},
-			want:  0.01265,
+			want:  0.01006,
 		},
 		{
 			name:  "sonnet 5.5",
 			model: "claude-sonnet-5-5",
 			usage: &Usage{InputTokens: 1000, OutputTokens: 200, CacheReadTokens: 300, CacheCreateTokens: 400},
-			want:  0.00506,
+			want:  0.00503,
+		},
+		{
+			name:  "fable 5.1",
+			model: "claude-fable-5-1",
+			usage: &Usage{InputTokens: 1000, OutputTokens: 200, CacheReadTokens: 300, CacheCreateTokens: 400},
+			want:  0.025075,
 		},
 		{
 			name:  "fable",
@@ -83,14 +125,14 @@ func TestClaudeCalcCost(t *testing.T) {
 	}
 }
 
-func TestClaudeModelsIncludeCurrentOpus(t *testing.T) {
+func TestClaudeModelsIncludeCurrentModels(t *testing.T) {
 	d := NewClaudeDriver(ClaudeConfig{}, NoopStainlessStore{}, 4)
 	models := make(map[string]Model, len(d.Models()))
 	for _, model := range d.Models() {
 		models[model.ID] = model
 	}
 
-	for _, id := range []string{"claude-opus-4-8", "claude-opus-5", "claude-opus-5-5"} {
+	for _, id := range []string{"claude-opus-4-8", "claude-opus-5", "claude-opus-5-5", "claude-fable-5-1", "claude-sonnet-5-5", "claude-haiku-5-5"} {
 		model, ok := models[id]
 		if !ok {
 			t.Fatalf("%s missing from Claude model catalog", id)
@@ -144,6 +186,19 @@ func TestClaudeModelsIncludesSonnet55(t *testing.T) {
 		return
 	}
 	t.Fatal("claude-sonnet-5-5 missing from Claude model catalog")
+}
+
+func TestClaudeModelsIncludesHaiku55(t *testing.T) {
+	d := NewClaudeDriver(ClaudeConfig{}, NoopStainlessStore{}, 4)
+	for _, model := range d.Models() {
+		if model.ID == "claude-haiku-5-5" {
+			if model.ContextWindow != 1000000 {
+				t.Fatalf("context_window = %d, want 1000000", model.ContextWindow)
+			}
+			return
+		}
+	}
+	t.Fatal("claude-haiku-5-5 missing from Claude model catalog")
 }
 
 func TestClaudeInterpret_400DisabledOrganizationBlocks(t *testing.T) {

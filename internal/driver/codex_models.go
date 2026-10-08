@@ -15,10 +15,21 @@ type codexModelPricing struct {
 	Output      float64
 	CacheRead   float64
 	CacheCreate float64
+	PromptTiers []codexPromptPriceTier // Ordered by increasing AboveTokens.
+}
+
+type codexPromptPriceTier struct {
+	AboveTokens      int
+	InputMultiplier  float64
+	OutputMultiplier float64
 }
 
 var (
-	codexGPT6AstraPricing  = codexModelPricing{Input: 20, Output: 100, CacheRead: 2, CacheCreate: 25}
+	codexGPT6PromptTiers   = []codexPromptPriceTier{{AboveTokens: 272000, InputMultiplier: 2, OutputMultiplier: 1.5}}
+	codexGPT6AstraPricing  = codexModelPricing{Input: 10, Output: 50, CacheRead: 1, CacheCreate: 12.50, PromptTiers: codexGPT6PromptTiers}
+	codexGPT61SolPricing   = codexModelPricing{Input: 2, Output: 10, CacheRead: 0.10, CacheCreate: 2.50, PromptTiers: codexGPT6PromptTiers}
+	codexGPT6SolPricing    = codexModelPricing{Input: 2, Output: 10, CacheRead: 0.20, CacheCreate: 2.50, PromptTiers: codexGPT6PromptTiers}
+	codexGPT6LunaPricing   = codexModelPricing{Input: 0.10, Output: 0.50, CacheRead: 0.01, CacheCreate: 0.125, PromptTiers: codexGPT6PromptTiers}
 	codexGPT56SolPricing   = codexModelPricing{Input: 10, Output: 60, CacheRead: 1.00, CacheCreate: 12.50}
 	codexGPT56TerraPricing = codexModelPricing{Input: 5, Output: 30, CacheRead: 0.50, CacheCreate: 6.25}
 	codexGPT56LunaPricing  = codexModelPricing{Input: 2, Output: 12, CacheRead: 0.20, CacheCreate: 2.50}
@@ -30,6 +41,9 @@ var (
 
 var codexModelEntries = []codexModelEntry{
 	{PublicID: "gpt-5.6-sol", ContextWindow: 1050000, Advertise: true, Pricing: codexGPT56SolPricing},
+	{PublicID: "gpt-6.1-sol", ContextWindow: 1050000, Advertise: true, Pricing: codexGPT61SolPricing},
+	{PublicID: "gpt-6-sol", ContextWindow: 1050000, Advertise: true, Pricing: codexGPT6SolPricing},
+	{PublicID: "gpt-6-luna", ContextWindow: 1050000, Advertise: true, Pricing: codexGPT6LunaPricing},
 	{PublicID: "gpt-5.6-terra", ContextWindow: 1050000, Advertise: true, Pricing: codexGPT56TerraPricing},
 	{PublicID: "gpt-5.6-luna", ContextWindow: 400000, Advertise: true, Pricing: codexGPT56LunaPricing},
 	{PublicID: "gpt-6-astra", ContextWindow: 1050000, Advertise: true, Pricing: codexGPT6AstraPricing},
@@ -116,6 +130,12 @@ func (p codexModelPricing) cost(usage *Usage) float64 {
 	if uncachedInput < 0 {
 		uncachedInput = 0
 	}
-	return (float64(uncachedInput)*p.Input + float64(usage.OutputTokens)*p.Output +
-		float64(usage.CacheReadTokens)*p.CacheRead + float64(usage.CacheCreateTokens)*p.CacheCreate) / 1_000_000
+	inputMultiplier, outputMultiplier := 1.0, 1.0
+	for _, tier := range p.PromptTiers {
+		if usage.InputTokens > tier.AboveTokens {
+			inputMultiplier, outputMultiplier = tier.InputMultiplier, tier.OutputMultiplier
+		}
+	}
+	return (inputMultiplier*(float64(uncachedInput)*p.Input+float64(usage.CacheReadTokens)*p.CacheRead+
+		float64(usage.CacheCreateTokens)*p.CacheCreate) + outputMultiplier*float64(usage.OutputTokens)*p.Output) / 1_000_000
 }
