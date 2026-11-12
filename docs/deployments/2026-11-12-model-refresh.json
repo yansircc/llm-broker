@@ -1,0 +1,115 @@
+{
+  "release_commit": "015be38156abe248f27d163af6c52f791be2ab85",
+  "environment": "https://ccc.210k.cc",
+  "strategy": "bluegreen",
+  "active_slot": "green",
+  "rollback_snapshot": "20261112T035457Z-bluegreen-deploy",
+  "verification": [
+    {
+      "path": "/v1/models",
+      "http_status": 200,
+      "expected_models_present": [
+        "claude-fable-5-2",
+        "gpt-6.1-terra"
+      ],
+      "outcome": "pass"
+    },
+    {
+      "path": "/compat/v1/models",
+      "http_status": 200,
+      "expected_models_present": [
+        "claude/claude-fable-5-2"
+      ],
+      "outcome": "pass"
+    },
+    {
+      "name": "fable52-native",
+      "path": "/v1/messages",
+      "request_id": "release-015be38-fable52-native",
+      "http_status": 200,
+      "model": "claude-fable-5-2",
+      "outcome": "pass",
+      "answer": "OK",
+      "duration_ms": 3515
+    },
+    {
+      "name": "fable52-compat",
+      "path": "/compat/v1/chat/completions",
+      "request_id": "release-015be38-fable52-compat",
+      "http_status": 200,
+      "model": "claude/claude-fable-5-2",
+      "outcome": "pass",
+      "answer": "OK",
+      "duration_ms": 1994
+    },
+    {
+      "name": "terra61-responses",
+      "path": "/openai/v1/responses",
+      "request_id": "release-015be38-terra61-responses",
+      "http_status": 200,
+      "model": "gpt-6.1-terra",
+      "outcome": "pass",
+      "answer": "OK",
+      "duration_ms": 1916
+    }
+  ],
+  "verified_at_utc": "2026-11-12T04:00:19Z",
+  "deploy_command": "SKIP_FRONTEND=1 bash .agents/skills/deploy/scripts/deploy.sh",
+  "rollback_command": "bash .agents/skills/deploy/scripts/restore.sh 20261112T035457Z-bluegreen-deploy",
+  "added_models": [
+    "claude-fable-5-2",
+    "gpt-6.1-terra"
+  ],
+  "deferred_model": "GPT-6.2: add after public release",
+  "artifact": {
+    "sha256": "1ee2cde42b92eec03c68043c12129b20e566dc5b63dc22c010dda067aeb77d44",
+    "go_version": "go1.26.2",
+    "os": "linux",
+    "arch": "amd64",
+    "cgo_enabled": false,
+    "embedded_vcs_revision": "015be38156abe248f27d163af6c52f791be2ab85",
+    "embedded_vcs_modified": false,
+    "frontend_tree": "27c9fc383a73d7a60ed9743e9ec7848fd9f67d8a",
+    "remote_binary": "/usr/local/bin/llm-broker-green",
+    "remote_process_pid": 684992,
+    "remote_file_sha256_matches": true,
+    "remote_process_exe_sha256_matches": true
+  },
+  "service": {
+    "active": "llm-broker-green",
+    "active_state": "active",
+    "previous": "llm-broker-blue",
+    "previous_state": "inactive",
+    "public_upstream_port": 3002
+  },
+  "validation": {
+    "go_test": "pass: go test ./...",
+    "go_vet": "pass: go vet ./...",
+    "frontend_build": "pass: npm run build",
+    "github_ci": {
+      "outcome": "pass",
+      "commit": "015be38156abe248f27d163af6c52f791be2ab85",
+      "url": "https://github.com/yansircc/llm-broker/actions/runs/43151275964"
+    },
+    "deployment_http_smoke": "pass: all 13 endpoint checks",
+    "database_invariants": {
+      "outcome": "pass",
+      "accounts": 6,
+      "quota_buckets": 6,
+      "distinct_bucket_keys": 6,
+      "empty_subjects": 0
+    },
+    "browser_smoke": {
+      "outcome": "pass",
+      "command": "web/smoke.mjs via playwright-core with channel=chrome",
+      "pages": [
+        "/status",
+        "/dashboard",
+        "/spend"
+      ],
+      "javascript_errors": 0,
+      "browser_closed": true,
+      "initial_attempt": "Default Playwright bundled browser missing; reran successfully with installed Chrome."
+    }
+  }
+}
