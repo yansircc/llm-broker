@@ -1062,7 +1062,7 @@ func TestHandleListModels_IncludesCurrentModels(t *testing.T) {
 	if body.Object != "list" {
 		t.Fatalf("object = %q", body.Object)
 	}
-	want := map[string]bool{"gpt-5.6-sol": false, "gpt-6-astra": false, "gpt-6.1-sol": false, "gpt-6-sol": false, "gpt-6-luna": false, "claude-fable-5-1": false, "claude-sonnet-5-5": false, "claude-haiku-5-5": false}
+	want := map[string]bool{"gpt-5.6-sol": false, "gpt-6-astra": false, "gpt-6.1-sol": false, "gpt-6.1-terra": false, "gpt-6-sol": false, "gpt-6-luna": false, "claude-fable-5-1": false, "claude-fable-5-2": false, "claude-sonnet-5-5": false, "claude-haiku-5-5": false}
 	for _, model := range body.Data {
 		if _, ok := want[model.ID]; ok {
 			want[model.ID] = true

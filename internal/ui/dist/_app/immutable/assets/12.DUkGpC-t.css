@@ -1,0 +1,1 @@
+tbody.svelte-1xd49a3{counter-reset:account}tbody.svelte-1xd49a3 tr:where(.svelte-1xd49a3){counter-increment:account}.account-number.svelte-1xd49a3:before{content:"账号 " counter(account)}.table-wrap.svelte-1xd49a3{overflow-x:auto}.limit.svelte-1xd49a3{display:inline-flex;gap:.5ch;margin-right:14px}

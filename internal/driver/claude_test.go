@@ -91,6 +91,12 @@ func TestClaudeCalcCost(t *testing.T) {
 			want:  0.00503,
 		},
 		{
+			name:  "fable 5.2",
+			model: "claude-fable-5-2",
+			usage: &Usage{InputTokens: 1000, OutputTokens: 200, CacheReadTokens: 300, CacheCreateTokens: 400},
+			want:  0.02006,
+		},
+		{
 			name:  "fable 5.1",
 			model: "claude-fable-5-1",
 			usage: &Usage{InputTokens: 1000, OutputTokens: 200, CacheReadTokens: 300, CacheCreateTokens: 400},
@@ -132,7 +138,7 @@ func TestClaudeModelsIncludeCurrentModels(t *testing.T) {
 		models[model.ID] = model
 	}
 
-	for _, id := range []string{"claude-opus-4-8", "claude-opus-5", "claude-opus-5-5", "claude-fable-5-1", "claude-sonnet-5-5", "claude-haiku-5-5"} {
+	for _, id := range []string{"claude-opus-4-8", "claude-opus-5", "claude-opus-5-5", "claude-fable-5-1", "claude-fable-5-2", "claude-sonnet-5-5", "claude-haiku-5-5"} {
 		model, ok := models[id]
 		if !ok {
 			t.Fatalf("%s missing from Claude model catalog", id)

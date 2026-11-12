@@ -6,6 +6,7 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -165,7 +166,7 @@ func TestClaudeBuildRequestNormalizesSystemEnvelopeForSonnet5(t *testing.T) {
 }
 
 func TestClaudeBuildRequestNormalizesSystemEnvelopeForCurrentModels(t *testing.T) {
-	for _, model := range []string{"claude-sonnet-5-5", "claude-haiku-5-5", "claude-fable-5-1"} {
+	for _, model := range []string{"claude-sonnet-5-5", "claude-haiku-5-5", "claude-fable-5-1", "claude-fable-5-2"} {
 		t.Run(model, func(t *testing.T) {
 			body := buildClaudeRequestBody(t, model, map[string]interface{}{
 				"max_tokens": 1,
@@ -186,6 +187,44 @@ func TestClaudeBuildRequestNormalizesSystemEnvelopeForCurrentModels(t *testing.T
 				t.Fatalf("system[0].text = %q", text)
 			}
 		})
+	}
+}
+
+func TestClaudeBuildRequestFable52PreservesThinkingAndHistory(t *testing.T) {
+	// Fable 5.2 binds preserved thinking to the preceding system, tools,
+	// and messages. Rebuilding a request must not change that prefix.
+	raw := []byte(`{"model":"claude-fable-5-2","max_tokens":1024,
+		"thinking":{"type":"adaptive","block_binding":{"prefix_mismatch_behavior":"error"}},
+		"output_config":{"effort":"xhigh"},"speed":"fast",
+		"tools":[{"name":"lookup","description":"Look up a record","input_schema":{"type":"object"}}],
+		"messages":[{"role":"user","content":"hello"},
+			{"role":"assistant","content":[{"type":"redacted_thinking","data":"opaque-signed-block"},{"type":"text","text":"hi"}]},
+			{"role":"user","content":"continue"}]}`)
+	var original map[string]interface{}
+	if err := json.Unmarshal(raw, &original); err != nil {
+		t.Fatal(err)
+	}
+	first := buildClaudeUpstreamBody(t, raw, false)
+	for _, key := range []string{"thinking", "output_config", "speed", "tools", "messages"} {
+		if !reflect.DeepEqual(first[key], original[key]) {
+			t.Fatalf("%s changed: got %#v, want %#v", key, first[key], original[key])
+		}
+	}
+	original["messages"] = append(original["messages"].([]interface{}), map[string]interface{}{
+		"role": "assistant", "content": "continued",
+	})
+	nextRaw, err := json.Marshal(original)
+	if err != nil {
+		t.Fatal(err)
+	}
+	next := buildClaudeUpstreamBody(t, nextRaw, false)
+	for _, key := range []string{"system", "tools"} {
+		if !reflect.DeepEqual(first[key], next[key]) {
+			t.Fatalf("%s prefix changed between turns", key)
+		}
+	}
+	if !reflect.DeepEqual(first["messages"], next["messages"].([]interface{})[:3]) {
+		t.Fatal("message prefix changed between turns")
 	}
 }
 

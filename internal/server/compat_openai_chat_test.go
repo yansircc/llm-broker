@@ -203,6 +203,7 @@ func TestCompatOpenAIChatToClaudeRequest_ModernEnvelopeForGeneration5(t *testing
 		{name: "sonnet 5.5", model: "anthropic/claude-sonnet-5.5", canonical: "claude-sonnet-5-5"},
 		{name: "haiku 5.5", model: "anthropic/claude-haiku-5.5", canonical: "claude-haiku-5-5"},
 		{name: "fable 5.1", model: "anthropic/claude-fable-5.1", canonical: "claude-fable-5-1"},
+		{name: "fable 5.2", model: "anthropic/claude-fable-5.2", canonical: "claude-fable-5-2"},
 		{name: "opus", model: "claude/claude-opus-5", canonical: "claude-opus-5"},
 		{name: "opus 5.5", model: "anthropic/claude-opus-5.5", canonical: "claude-opus-5-5"},
 	}
@@ -265,6 +266,7 @@ func TestResolveCompatModelAliases(t *testing.T) {
 		{"anthropic/claude-haiku-5.5", domain.ProviderClaude, "claude-haiku-5-5", "claude/claude-haiku-5-5"},
 		{"claude-haiku-5.5", domain.ProviderClaude, "claude-haiku-5-5", "claude/claude-haiku-5-5"},
 		{"claude-fable-5.1", domain.ProviderClaude, "claude-fable-5-1", "claude/claude-fable-5-1"},
+		{"claude-fable-5.2", domain.ProviderClaude, "claude-fable-5-2", "claude/claude-fable-5-2"},
 		{"claude-sonnet-4-20250514", domain.ProviderClaude, "claude-sonnet-4-6", "claude/claude-sonnet-4-6"},
 		{"claude-sonnet-5.0", domain.ProviderClaude, "claude-sonnet-5", "claude/claude-sonnet-5"},
 		{"claude-sonnet-5.5", domain.ProviderClaude, "claude-sonnet-5-5", "claude/claude-sonnet-5-5"},
@@ -531,6 +533,9 @@ func TestHandleCompatListModels(t *testing.T) {
 	}
 	if !ids["claude/claude-fable-5-1"] {
 		t.Fatalf("compat models missing fable 5.1 model: %#v", ids)
+	}
+	if !ids["claude/claude-fable-5-2"] {
+		t.Fatalf("compat models missing fable 5.2 model: %#v", ids)
 	}
 	if !ids["claude/claude-sonnet-5"] {
 		t.Fatalf("compat models missing sonnet 5 model: %#v", ids)

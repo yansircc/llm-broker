@@ -304,6 +304,28 @@ func TestCodexBuildRequestPassesGPT6AstraFields(t *testing.T) {
 	}
 }
 
+func TestCodexBuildRequestPassesGPT61TerraFields(t *testing.T) {
+	d := NewCodexDriver(CodexConfig{APIURL: "https://chatgpt.com/backend-api/codex"})
+	for _, effort := range []string{"none", "low", "medium", "high", "xhigh", "max"} {
+		t.Run(effort, func(t *testing.T) {
+			raw := `{"model":"gpt-6.1-terra","reasoning":{"effort":"` + effort + `"},"service_tier":"fast","stream":true,"store":false,"input":[{"role":"user","content":[{"type":"input_image","image_url":"https://example.com/photo.png"}]}]}`
+			req, err := d.BuildRequest(context.Background(), &RelayInput{
+				RawBody: []byte(raw), Headers: make(http.Header),
+			}, &domain.Account{Subject: "acct-1"}, "tok")
+			if err != nil {
+				t.Fatal(err)
+			}
+			got, err := io.ReadAll(req.Body)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if string(got) != raw {
+				t.Fatalf("request body changed: %s", got)
+			}
+		})
+	}
+}
+
 func TestCodexProbeRequiresSubject(t *testing.T) {
 	d := NewCodexDriver(CodexConfig{APIURL: "https://chatgpt.com/backend-api/codex"})
 	acct := &domain.Account{Provider: domain.ProviderCodex}
@@ -620,7 +642,7 @@ func TestCodexModelsIncludesGPT6Family(t *testing.T) {
 	for _, model := range d.Models() {
 		models[model.ID] = model
 	}
-	for _, id := range []string{"gpt-6-astra", "gpt-6.1-sol", "gpt-6-sol", "gpt-6-luna"} {
+	for _, id := range []string{"gpt-6-astra", "gpt-6.1-sol", "gpt-6.1-terra", "gpt-6-sol", "gpt-6-luna"} {
 		model, ok := models[id]
 		if !ok {
 			t.Fatalf("%s missing from codex model catalog", id)
@@ -700,6 +722,7 @@ func TestCodexCalcCostGPT6Pricing(t *testing.T) {
 	}{
 		{"gpt-6-astra", 0.0083},
 		{"gpt-6.1-sol", 0.00163},
+		{"gpt-6.1-terra", 0.000815},
 		{"gpt-6-sol", 0.00166},
 		{"gpt-6-luna", 0.000083},
 	} {
@@ -725,6 +748,9 @@ func TestCodexCalcCostGPT6PromptTiers(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			if got := d.CalcCost("gpt-6.1-sol", tc.usage); math.Abs(got-tc.want) > 1e-12 {
 				t.Fatalf("CalcCost() = %.12f, want %.12f", got, tc.want)
+			}
+			if got := d.CalcCost("gpt-6.1-terra", tc.usage); math.Abs(got-tc.want/2) > 1e-12 {
+				t.Fatalf("Terra CalcCost() = %.12f, want %.12f", got, tc.want/2)
 			}
 		})
 	}

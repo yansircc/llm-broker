@@ -32,6 +32,7 @@ type claudePromptPriceTier struct {
 var (
 	claudeFablePricing    = claudeModelPricing{Input: 10, Output: 50, CacheRead: 1.00, CacheCreate: 12.50}
 	claudeFable51Pricing  = claudeModelPricing{Input: 10, Output: 50, CacheRead: 0.25, CacheCreate: 12.50}
+	claudeFable52Pricing  = claudeModelPricing{Input: 8, Output: 40, CacheRead: 0.20, CacheCreate: 10}
 	claudeOpusPricing     = claudeModelPricing{Input: 5, Output: 25, CacheRead: 0.50, CacheCreate: 6.25}
 	claudeOpus55Pricing   = claudeModelPricing{Input: 4, Output: 20, CacheRead: 0.20, CacheCreate: 5}
 	claudeSonnetPricing   = claudeModelPricing{Input: 3, Output: 15, CacheRead: 0.30, CacheCreate: 3.75}
@@ -46,6 +47,7 @@ var (
 
 var claudeModelEntries = []claudeModelEntry{
 	{PublicID: "claude-fable-5-1", UpstreamID: "claude-fable-5-1", ContextWindow: 1000000, Advertise: true, CodeSystemEnvelope: true, CompatModernEnvelope: true, Pricing: claudeFable51Pricing},
+	{PublicID: "claude-fable-5-2", UpstreamID: "claude-fable-5-2", ContextWindow: 1000000, Advertise: true, CodeSystemEnvelope: true, CompatModernEnvelope: true, Pricing: claudeFable52Pricing},
 	{PublicID: "claude-fable-5", UpstreamID: "claude-fable-5", ContextWindow: 1000000, Advertise: true, CodeSystemEnvelope: true, Pricing: claudeFablePricing},
 	{PublicID: "claude-opus-5-5", UpstreamID: "claude-opus-5-5", ContextWindow: 1000000, Advertise: true, CodeSystemEnvelope: true, CompatModernEnvelope: true, Pricing: claudeOpus55Pricing},
 	{PublicID: "claude-opus-5", UpstreamID: "claude-opus-5", ContextWindow: 1000000, Advertise: true, CodeSystemEnvelope: true, CompatModernEnvelope: true, Pricing: claudeOpusPricing},
@@ -152,6 +154,7 @@ func (p claudeModelPricing) cost(usage *Usage) float64 {
 }
 
 var claudeCompatModelAliases = map[string]string{
+	"claude-fable-5.2":           "claude-fable-5-2",
 	"claude-fable-5.1":           "claude-fable-5-1",
 	"claude-haiku-5.5":           "claude-haiku-5-5",
 	"claude-haiku-4.5":           "claude-haiku-4-5",
