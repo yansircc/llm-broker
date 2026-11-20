@@ -366,7 +366,9 @@ run_nonfatal_smoke_suite() {
         echo "    all endpoints OK"
     fi
 
-    if [[ -d "$REPO_ROOT/web/node_modules/playwright-core" ]]; then
+    if [[ "${SKIP_BROWSER_SMOKE:-}" == "1" ]]; then
+        echo "    browser smoke delegated to the release operator"
+    elif [[ -d "$REPO_ROOT/web/node_modules/playwright-core" ]]; then
         echo ""
         echo "==> browser smoke test..."
         if ! SITE="$SITE" API_TOKEN="$api_token" node "$REPO_ROOT/web/smoke.mjs"; then
