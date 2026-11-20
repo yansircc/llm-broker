@@ -23,6 +23,11 @@ func normalizeCodexRequestBody(rawBody []byte) ([]byte, error) {
 	if err := json.Unmarshal(rawBody, &body); err != nil {
 		return nil, fmt.Errorf("decode codex request body: %w", err)
 	}
+	var model string
+	_ = json.Unmarshal(body["model"], &model)
+	if err := validateCodexModel(model); err != nil {
+		return nil, err
+	}
 
 	changed := false
 	for _, field := range codexUnsupportedRequestFields {

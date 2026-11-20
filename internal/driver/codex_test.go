@@ -202,22 +202,22 @@ func TestCodexBuildRequestNormalizesUnsupportedResponsesFields(t *testing.T) {
 	}{
 		{
 			name:          "unchanged when unsupported fields are absent",
-			rawBody:       `{ "model": "gpt-5.5", "stream": true, "store": false }`,
+			rawBody:       `{ "model": "gpt-6.2-sol", "stream": true, "store": false }`,
 			wantExactBody: true,
 		},
 		{
 			name:            "removes max output tokens",
-			rawBody:         `{"model":"gpt-5.5","max_output_tokens":16384,"stream":true}`,
+			rawBody:         `{"model":"gpt-6.2-sol","max_output_tokens":16384,"stream":true}`,
 			wantInputFields: []string{"max_output_tokens"},
 		},
 		{
 			name:            "removes prompt cache retention",
-			rawBody:         `{"model":"gpt-5.5","prompt_cache_retention":"24h","store":false}`,
+			rawBody:         `{"model":"gpt-6.2-sol","prompt_cache_retention":"24h","store":false}`,
 			wantInputFields: []string{"prompt_cache_retention"},
 		},
 		{
 			name:            "removes both and preserves unrelated values",
-			rawBody:         `{"model":"gpt-5.5","max_output_tokens":16384,"prompt_cache_retention":"24h","metadata":{"large":9007199254740993},"input":[{"role":"user","content":"hi"}]}`,
+			rawBody:         `{"model":"gpt-6.2-sol","max_output_tokens":16384,"prompt_cache_retention":"24h","metadata":{"large":9007199254740993},"input":[{"role":"user","content":"hi"}]}`,
 			wantInputFields: []string{"max_output_tokens", "prompt_cache_retention"},
 		},
 	}
@@ -257,8 +257,8 @@ func TestCodexBuildRequestNormalizesUnsupportedResponsesFields(t *testing.T) {
 					t.Errorf("request body still contains %q", field)
 				}
 			}
-			if gotModel := string(got["model"]); gotModel != `"gpt-5.5"` {
-				t.Errorf("model = %s, want gpt-5.5", gotModel)
+			if gotModel := string(got["model"]); gotModel != `"gpt-6.2-sol"` {
+				t.Errorf("model = %s, want gpt-6.2-sol", gotModel)
 			}
 			if strings.Contains(tt.name, "preserves unrelated") && !bytes.Contains(gotBody, []byte("9007199254740993")) {
 				t.Errorf("request body lost exact unrelated numeric value: %s", gotBody)
@@ -651,21 +651,6 @@ func TestCodexModelsIncludesGPT6Family(t *testing.T) {
 			t.Fatalf("%s context_window = %d, want %d", id, model.ContextWindow, 1050000)
 		}
 	}
-}
-
-func TestCodexModelsIncludesGPT55(t *testing.T) {
-	d := NewCodexDriver(CodexConfig{})
-	models := d.Models()
-	for _, model := range models {
-		if model.ID != "gpt-5.5" {
-			continue
-		}
-		if model.ContextWindow != 400000 {
-			t.Fatalf("gpt-5.5 context_window = %d, want %d", model.ContextWindow, 400000)
-		}
-		return
-	}
-	t.Fatal("gpt-5.5 missing from codex model catalog")
 }
 
 func TestCodexProbeModelDefaultsToGPT56Sol(t *testing.T) {

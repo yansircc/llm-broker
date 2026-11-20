@@ -141,6 +141,34 @@ type roundTripFunc func(*http.Request) (*http.Response, error)
 
 func (fn roundTripFunc) RoundTrip(req *http.Request) (*http.Response, error) { return fn(req) }
 
+func TestRetiredModelsRejectWithoutAccountOrTokenAccess(t *testing.T) {
+	drivers := map[domain.Provider]driver.ExecutionDriver{
+		domain.ProviderCodex:  driver.NewCodexDriver(driver.CodexConfig{}),
+		domain.ProviderClaude: driver.NewClaudeDriver(driver.ClaudeConfig{}, driver.NoopStainlessStore{}, 4),
+	}
+	// No pool, token provider or transport: rejection must precede all three.
+	r := New(nil, nil, nil, Config{MaxRequestBodyMB: 1}, nil, nil, drivers)
+	for _, tc := range []struct {
+		provider domain.Provider
+		path     string
+		model    string
+	}{
+		{domain.ProviderCodex, "/openai/responses", "gpt-5.5"},
+		{domain.ProviderCodex, "/openai/v1/responses", "gpt-5.4-mini"},
+		{domain.ProviderClaude, "/v1/messages", "claude-opus-4-1"},
+		{domain.ProviderClaude, "/v1/messages/count_tokens", "claude-sonnet-4-20250514"},
+	} {
+		body, _ := json.Marshal(map[string]any{"model": tc.model})
+		req := httptest.NewRequest(http.MethodPost, tc.path, strings.NewReader(string(body)))
+		req = req.WithContext(context.WithValue(req.Context(), auth.KeyInfoKey, &auth.KeyInfo{ID: "retirement-test"}))
+		w := httptest.NewRecorder()
+		r.HandleProvider(tc.provider)(w, req)
+		if w.Code != http.StatusBadRequest || !strings.Contains(w.Body.String(), "retired") {
+			t.Fatalf("%s: status=%d body=%s", tc.model, w.Code, w.Body.String())
+		}
+	}
+}
+
 func TestRelayRetriesCodexHTTP200CapacityBeforeDownstreamCommit(t *testing.T) {
 	mockStore := store.NewMockStore()
 	for _, acct := range []*domain.Account{
@@ -202,11 +230,11 @@ func TestRelayRetriesCodexHTTP200CapacityBeforeDownstreamCommit(t *testing.T) {
 	prepared := &preparedRelayRequest{
 		keyInfo: &auth.KeyInfo{ID: "heavy-user", Name: "heavy-user"},
 		input: &driver.RelayInput{
-			Body:     map[string]interface{}{"model": "gpt-5.5", "stream": true},
-			RawBody:  []byte(`{"model":"gpt-5.5","stream":true}`),
+			Body:     map[string]interface{}{"model": "gpt-6.2-sol", "stream": true},
+			RawBody:  []byte(`{"model":"gpt-6.2-sol","stream":true}`),
 			Headers:  make(http.Header),
 			Path:     "/openai/responses",
-			Model:    "gpt-5.5",
+			Model:    "gpt-6.2-sol",
 			IsStream: true,
 		},
 		surface:            domain.SurfaceNative,

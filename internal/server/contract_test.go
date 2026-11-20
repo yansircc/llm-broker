@@ -1001,10 +1001,11 @@ func TestNativeRoute_RejectsCompatOnlyUser(t *testing.T) {
 	}
 }
 
-func TestHandleListModels_IncludesCodexGPT55(t *testing.T) {
+func TestHandleListModels_ExcludesRetiredModels(t *testing.T) {
 	srv := newTestServer(t)
 	srv.catalogDrivers = map[domain.Provider]driver.Descriptor{
-		domain.ProviderCodex: driver.NewCodexDriver(driver.CodexConfig{}),
+		domain.ProviderCodex:  driver.NewCodexDriver(driver.CodexConfig{}),
+		domain.ProviderClaude: driver.NewClaudeDriver(driver.ClaudeConfig{}, driver.NoopStainlessStore{}, 4),
 	}
 
 	w := httptest.NewRecorder()
@@ -1028,11 +1029,11 @@ func TestHandleListModels_IncludesCodexGPT55(t *testing.T) {
 		t.Fatalf("object = %q", body.Object)
 	}
 	for _, model := range body.Data {
-		if model.ID == "gpt-5.5" {
-			return
+		switch model.ID {
+		case "gpt-5.5", "gpt-5.4", "gpt-5.4-mini", "gpt-5.3-codex", "gpt-5.3-codex-spark", "gpt-5.2", "claude-opus-4", "claude-opus-4-1", "claude-sonnet-4":
+			t.Errorf("retired model advertised: %s", model.ID)
 		}
 	}
-	t.Fatalf("native models missing codex gpt-5.5: %#v", body.Data)
 }
 
 func TestHandleListModels_IncludesCurrentModels(t *testing.T) {

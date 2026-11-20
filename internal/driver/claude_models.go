@@ -7,10 +7,12 @@ import (
 )
 
 type claudeModelEntry struct {
-	PublicID             string
-	UpstreamID           string
-	ContextWindow        int
-	Advertise            bool
+	PublicID      string
+	UpstreamID    string
+	ContextWindow int
+	Advertise     bool
+	// ReplacedBy retires selection while retaining historical pricing metadata.
+	ReplacedBy           string
 	CodeSystemEnvelope   bool
 	CompatModernEnvelope bool
 	Pricing              claudeModelPricing
@@ -55,13 +57,14 @@ var claudeModelEntries = []claudeModelEntry{
 	{PublicID: "claude-opus-4-7", UpstreamID: "claude-opus-4-7", ContextWindow: 200000, Advertise: true, CodeSystemEnvelope: true, Pricing: claudeOpusPricing},
 	{PublicID: "claude-opus-4-6", UpstreamID: "claude-opus-4-6", ContextWindow: 200000, Advertise: true, CodeSystemEnvelope: true, CompatModernEnvelope: true, Pricing: claudeOpusPricing},
 	{PublicID: "claude-opus-4-5", UpstreamID: "claude-opus-4-5", ContextWindow: 200000, Advertise: true, CodeSystemEnvelope: true, Pricing: claudeOpusPricing},
-	{PublicID: "claude-opus-4-1", UpstreamID: "claude-opus-4-1", ContextWindow: 200000, Advertise: true, CodeSystemEnvelope: true, Pricing: claudeOpusPricing},
-	{PublicID: "claude-opus-4", UpstreamID: "claude-opus-4", ContextWindow: 200000, Advertise: true, CodeSystemEnvelope: true, Pricing: claudeOpusPricing},
+	// https://platform.claude.com/docs/en/about-claude/model-deprecations
+	{PublicID: "claude-opus-4-1", UpstreamID: "claude-opus-4-1-20250805", ContextWindow: 200000, ReplacedBy: "claude-opus-4-8", Pricing: claudeOpusPricing},
+	{PublicID: "claude-opus-4", UpstreamID: "claude-opus-4-20250514", ContextWindow: 200000, ReplacedBy: "claude-opus-4-8", Pricing: claudeOpusPricing},
 	{PublicID: "claude-sonnet-5-5", UpstreamID: "claude-sonnet-5-5", ContextWindow: 1000000, Advertise: true, CodeSystemEnvelope: true, CompatModernEnvelope: true, Pricing: claudeSonnet55Pricing},
 	{PublicID: "claude-sonnet-5", UpstreamID: "claude-sonnet-5", ContextWindow: 1000000, Advertise: true, CodeSystemEnvelope: true, CompatModernEnvelope: true, Pricing: claudeSonnet5Pricing},
 	{PublicID: "claude-sonnet-4-6", UpstreamID: "claude-sonnet-4-6", ContextWindow: 200000, Advertise: true, CodeSystemEnvelope: true, CompatModernEnvelope: true, Pricing: claudeSonnetPricing},
 	{PublicID: "claude-sonnet-4-5", UpstreamID: "claude-sonnet-4-5", ContextWindow: 200000, Advertise: true, CodeSystemEnvelope: true, Pricing: claudeSonnetPricing},
-	{PublicID: "claude-sonnet-4", UpstreamID: "claude-sonnet-4", ContextWindow: 200000, Advertise: true, CodeSystemEnvelope: true, Pricing: claudeSonnetPricing},
+	{PublicID: "claude-sonnet-4", UpstreamID: "claude-sonnet-4-20250514", ContextWindow: 200000, ReplacedBy: "claude-sonnet-5-5", Pricing: claudeSonnetPricing},
 	{PublicID: "claude-haiku-5-5", UpstreamID: "claude-haiku-5-5", ContextWindow: 1000000, Advertise: true, CodeSystemEnvelope: true, CompatModernEnvelope: true, Pricing: claudeHaiku55Pricing},
 	{PublicID: "claude-haiku-4-5-20251001", UpstreamID: "claude-haiku-4-5-20251001", ContextWindow: 200000, Advertise: true, Pricing: claudeHaikuPricing},
 	{PublicID: "claude-haiku-4-5", UpstreamID: "claude-haiku-4-5-20251001", ContextWindow: 200000, Advertise: true, Pricing: claudeHaikuPricing},
@@ -71,7 +74,7 @@ var claudeModelEntries = []claudeModelEntry{
 func claudeSupportedModels() []Model {
 	models := make([]Model, 0, len(claudeModelEntries))
 	for _, entry := range claudeModelEntries {
-		if !entry.Advertise {
+		if !entry.Advertise || entry.ReplacedBy != "" {
 			continue
 		}
 		models = append(models, Model{
@@ -102,6 +105,9 @@ func normalizeClaudeModelID(model string) (string, error) {
 	}
 
 	lower := strings.ToLower(trimmed)
+	if err := validateClaudeModelRetirement(lower); err != nil {
+		return "", err
+	}
 	if entry, ok := claudeModelEntryForID(lower); ok {
 		return entry.UpstreamID, nil
 	}
@@ -116,6 +122,13 @@ func normalizeClaudeModelID(model string) (string, error) {
 	default:
 		return "", NewRequestValidationError(http.StatusBadRequest, fmt.Sprintf("unsupported Claude model %q", trimmed))
 	}
+}
+
+func validateClaudeModelRetirement(model string) error {
+	if entry, ok := claudeModelEntryForID(ClaudeCompatCanonicalModel(model)); ok && entry.ReplacedBy != "" {
+		return NewRequestValidationError(http.StatusBadRequest, fmt.Sprintf("model %q is retired on this Claude relay; use %q", model, entry.ReplacedBy))
+	}
+	return nil
 }
 
 func normalizeClaudeModelField(body map[string]interface{}) error {
@@ -172,7 +185,7 @@ var claudeCompatModelAliases = map[string]string{
 	"claude-sonnet-4.5":          "claude-sonnet-4-5",
 	"claude-sonnet-4-5-20250929": "claude-sonnet-4-5",
 	"claude-sonnet-4.6":          "claude-sonnet-4-6",
-	"claude-sonnet-4-20250514":   "claude-sonnet-4-6",
+	"claude-sonnet-4-20250514":   "claude-sonnet-4",
 	"claude-sonnet-5.0":          "claude-sonnet-5",
 	"claude-sonnet-5-0":          "claude-sonnet-5",
 	"claude-sonnet-5.5":          "claude-sonnet-5-5",

@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"regexp"
 	"strings"
@@ -419,8 +420,13 @@ func (d *CodexDriver) WriteUpstreamError(w http.ResponseWriter, statusCode int, 
 // Provider-specific hooks
 // ---------------------------------------------------------------------------
 
-func (d *CodexDriver) InterceptRequest(_ http.ResponseWriter, _ map[string]interface{}, _ string) bool {
-	return false // Codex has no warmup interception
+func (d *CodexDriver) InterceptRequest(w http.ResponseWriter, _ map[string]interface{}, model string) bool {
+	if err := validateCodexModel(model); err != nil {
+		slog.Warn("retired model rejected", "provider", d.Provider(), "model", model, "status", http.StatusBadRequest)
+		d.WriteError(w, http.StatusBadRequest, err.Error())
+		return true
+	}
+	return false
 }
 
 func (d *CodexDriver) ParseJSONUsage(body []byte) *Usage {

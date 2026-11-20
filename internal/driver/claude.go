@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"regexp"
 	"strings"
@@ -341,6 +342,11 @@ func (d *ClaudeDriver) WriteUpstreamError(w http.ResponseWriter, statusCode int,
 // ---------------------------------------------------------------------------
 
 func (d *ClaudeDriver) InterceptRequest(w http.ResponseWriter, body map[string]interface{}, model string) bool {
+	if err := validateClaudeModelRetirement(model); err != nil {
+		slog.Warn("retired model rejected", "provider", d.Provider(), "model", model, "status", http.StatusBadRequest)
+		d.WriteError(w, http.StatusBadRequest, err.Error())
+		return true
+	}
 	if !isWarmupRequest(body) {
 		return false
 	}

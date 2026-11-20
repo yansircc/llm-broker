@@ -21,7 +21,11 @@ func (d *CodexDriver) Probe(ctx context.Context, acct *domain.Account, token str
 
 	if model == "" {
 		model = d.probeModel()
-	} else if _, ok := codexModelEntryForID(model); !ok {
+	}
+	if err := validateCodexModel(model); err != nil {
+		return ProbeResult{}, err
+	}
+	if _, ok := codexModelEntryForID(model); !ok {
 		return ProbeResult{}, NewRequestValidationError(400, "unknown probe model")
 	}
 

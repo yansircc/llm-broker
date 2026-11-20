@@ -16,6 +16,9 @@ func (d *ClaudeDriver) Probe(ctx context.Context, acct *domain.Account, token st
 	if model == "" {
 		model = "claude-haiku-4-5-20251001"
 	}
+	if _, err := normalizeClaudeModelID(model); err != nil {
+		return ProbeResult{}, err
+	}
 	entry, ok := claudeModelEntryForID(model)
 	if !ok {
 		return ProbeResult{}, NewRequestValidationError(400, "unknown probe model")

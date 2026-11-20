@@ -156,6 +156,20 @@ ChatGPT Codex upstream does not accept `max_output_tokens` or
 Consequently, client-supplied output limits are not enforced and prompt-cache
 retention remains upstream-managed on this surface.
 
+Retired models are omitted from model catalogs and rejected locally with HTTP
+400 and a suggested replacement. The broker never silently substitutes a model.
+Historical pricing metadata remains available. This applies to GPT-5.5,
+GPT-5.4, GPT-5.4 mini, GPT-5.3-Codex, GPT-5.3-Codex-Spark, and GPT-5.2
+on this ChatGPT-authenticated Codex relay, plus Claude Opus 4, Opus 4.1, and
+Sonnet 4 (including their supported date/compatibility aliases).
+
+Retirement sources checked November 20, 2026:
+[Codex lifecycle](https://learn.chatgpt.com/docs/models#deprecated-codex-models)
+and [Claude lifecycle](https://platform.claude.com/docs/en/about-claude/model-deprecations).
+Claude Sonnet 4.5 remains selectable until its retirement on November 30, 2026;
+this release does not schedule its removal automatically. GPT-5.2 and
+GPT-5.3-Codex are deprecated by OpenAI and retired locally by this policy.
+
 ### 6. Verify a key
 
 Use a copy-paste-safe shell form:

@@ -169,7 +169,7 @@ func TestCompatOpenAIChatToClaudeRequest_ModernEnvelope(t *testing.T) {
 
 func TestCompatOpenAIChatToClaudeRequest_ModernEnvelopeAlias(t *testing.T) {
 	req := &compatOpenAIChatRequest{
-		Model: "claude/claude-sonnet-4-20250514",
+		Model: "claude/claude-sonnet-4.6",
 		Messages: []compatMessage{
 			{Role: "user", Content: json.RawMessage(`"hello"`)},
 		},
@@ -267,7 +267,7 @@ func TestResolveCompatModelAliases(t *testing.T) {
 		{"claude-haiku-5.5", domain.ProviderClaude, "claude-haiku-5-5", "claude/claude-haiku-5-5"},
 		{"claude-fable-5.1", domain.ProviderClaude, "claude-fable-5-1", "claude/claude-fable-5-1"},
 		{"claude-fable-5.2", domain.ProviderClaude, "claude-fable-5-2", "claude/claude-fable-5-2"},
-		{"claude-sonnet-4-20250514", domain.ProviderClaude, "claude-sonnet-4-6", "claude/claude-sonnet-4-6"},
+		{"claude-sonnet-4-20250514", domain.ProviderClaude, "claude-sonnet-4", "claude/claude-sonnet-4"},
 		{"claude-sonnet-5.0", domain.ProviderClaude, "claude-sonnet-5", "claude/claude-sonnet-5"},
 		{"claude-sonnet-5.5", domain.ProviderClaude, "claude-sonnet-5-5", "claude/claude-sonnet-5-5"},
 		{"gemini/gemini-2.5-flash", domain.ProviderGemini, "gemini-2.5-flash", "gemini/gemini-2.5-flash"},
@@ -554,6 +554,28 @@ func TestHandleCompatListModels(t *testing.T) {
 	}
 	if !ids["gemini/gemini-2.5-flash"] {
 		t.Fatalf("compat models missing gemini model: %#v", ids)
+	}
+	for _, id := range []string{"claude/claude-opus-4", "claude/claude-opus-4-1", "claude/claude-sonnet-4"} {
+		if ids[id] {
+			t.Errorf("retired compat model advertised: %s", id)
+		}
+	}
+}
+
+func TestHandleCompatOpenAIChatCompletions_RetiredAliasesRejectLocally(t *testing.T) {
+	srv := newCompatTestServer(t, &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+		t.Fatal("retired model reached upstream")
+		return nil, nil
+	})})
+	for _, model := range []string{"claude/claude-sonnet-4-20250514", "anthropic/claude-opus-4.1", "claude-opus-4-20250514"} {
+		body, _ := json.Marshal(map[string]any{"model": model, "messages": []map[string]string{{"role": "user", "content": "hello"}}})
+		req := httptest.NewRequest(http.MethodPost, "/compat/v1/chat/completions", strings.NewReader(string(body)))
+		req = req.WithContext(context.WithValue(req.Context(), auth.KeyInfoKey, &auth.KeyInfo{ID: "user-1", Name: "test"}))
+		w := httptest.NewRecorder()
+		srv.handleCompatOpenAIChatCompletions(w, req)
+		if w.Code != http.StatusBadRequest || !strings.Contains(w.Body.String(), "retired") {
+			t.Fatalf("%s: status=%d body=%s", model, w.Code, w.Body.String())
+		}
 	}
 }
 

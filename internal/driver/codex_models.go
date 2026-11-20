@@ -1,13 +1,20 @@
 package driver
 
-import "strings"
+import (
+	"fmt"
+	"net/http"
+	"regexp"
+	"strings"
+)
 
 type codexModelEntry struct {
 	PublicID      string
 	ContextWindow int
 	Advertise     bool
-	Family        string
-	Pricing       codexModelPricing
+	// ReplacedBy retires selection while retaining historical pricing and family metadata.
+	ReplacedBy string
+	Family     string
+	Pricing    codexModelPricing
 }
 
 type codexModelPricing struct {
@@ -54,13 +61,15 @@ var codexModelEntries = []codexModelEntry{
 	{PublicID: "gpt-5.6-luna", ContextWindow: 400000, Advertise: true, Pricing: codexGPT56LunaPricing},
 	{PublicID: "gpt-6-astra", ContextWindow: 1050000, Advertise: true, Pricing: codexGPT6AstraPricing},
 	{PublicID: "gpt-5.6", ContextWindow: 1050000, Advertise: false, Pricing: codexGPT56SolPricing},
-	{PublicID: "gpt-5.5", ContextWindow: 400000, Advertise: true, Pricing: codexGPT55Pricing},
-	{PublicID: "gpt-5.4", ContextWindow: 1050000, Advertise: true, Pricing: codexGPT54Pricing},
-	{PublicID: "gpt-5.4-mini", ContextWindow: 1050000, Advertise: true, Pricing: codexGPT54MiniPricing},
-	{PublicID: "gpt-5.3-codex", ContextWindow: 400000, Advertise: true, Pricing: codexDefaultPricing},
-	{PublicID: "gpt-5.3-codex-spark", ContextWindow: 128000, Advertise: true, Family: "bengalfox", Pricing: codexDefaultPricing},
+	// Retired/deprecated in ChatGPT-authenticated Codex, not necessarily in the API.
+	// https://learn.chatgpt.com/docs/models#deprecated-codex-models
+	{PublicID: "gpt-5.5", ContextWindow: 400000, ReplacedBy: "gpt-6.1-sol", Pricing: codexGPT55Pricing},
+	{PublicID: "gpt-5.4", ContextWindow: 1050000, ReplacedBy: "gpt-6-sol", Pricing: codexGPT54Pricing},
+	{PublicID: "gpt-5.4-mini", ContextWindow: 1050000, ReplacedBy: "gpt-6-luna", Pricing: codexGPT54MiniPricing},
+	{PublicID: "gpt-5.3-codex", ContextWindow: 400000, ReplacedBy: "gpt-6.1-sol", Pricing: codexDefaultPricing},
+	{PublicID: "gpt-5.3-codex-spark", ContextWindow: 128000, ReplacedBy: "gpt-6-luna", Family: "bengalfox", Pricing: codexDefaultPricing},
 	{PublicID: "gpt-5.2-codex", ContextWindow: 400000, Advertise: true, Pricing: codexDefaultPricing},
-	{PublicID: "gpt-5.2", ContextWindow: 400000, Advertise: true, Pricing: codexDefaultPricing},
+	{PublicID: "gpt-5.2", ContextWindow: 400000, ReplacedBy: "gpt-6.1-sol", Pricing: codexDefaultPricing},
 	{PublicID: "gpt-5.1-codex-max", ContextWindow: 400000, Advertise: true, Pricing: codexDefaultPricing},
 	{PublicID: "gpt-5.1-codex", ContextWindow: 400000, Advertise: true, Pricing: codexDefaultPricing},
 	{PublicID: "gpt-5.1-codex-mini", ContextWindow: 400000, Advertise: true, Pricing: codexDefaultPricing},
@@ -74,7 +83,7 @@ var codexModelEntries = []codexModelEntry{
 func codexSupportedModels() []Model {
 	models := make([]Model, 0, len(codexModelEntries))
 	for _, entry := range codexModelEntries {
-		if !entry.Advertise {
+		if !entry.Advertise || entry.ReplacedBy != "" {
 			continue
 		}
 		models = append(models, Model{
@@ -88,14 +97,24 @@ func codexSupportedModels() []Model {
 	return models
 }
 
+var codexModelDateSuffix = regexp.MustCompile(`-\d{4}-\d{2}-\d{2}$`)
+
 func codexModelEntryForID(model string) (codexModelEntry, bool) {
 	normalized := strings.ToLower(strings.TrimSpace(model))
+	base := codexModelDateSuffix.ReplaceAllString(normalized, "")
 	for _, entry := range codexModelEntries {
-		if normalized == entry.PublicID {
+		if normalized == entry.PublicID || base == entry.PublicID {
 			return entry, true
 		}
 	}
 	return codexModelEntry{}, false
+}
+
+func validateCodexModel(model string) error {
+	if entry, ok := codexModelEntryForID(model); ok && entry.ReplacedBy != "" {
+		return NewRequestValidationError(http.StatusBadRequest, fmt.Sprintf("model %q is retired on this ChatGPT-authenticated Codex relay; use %q", model, entry.ReplacedBy))
+	}
+	return nil
 }
 
 func codexPricingForModel(model string) codexModelPricing {
