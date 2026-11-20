@@ -7,7 +7,6 @@ import (
 	"io"
 	"math"
 	"net/http"
-	"strings"
 	"time"
 
 	"github.com/yansircc/llm-broker/internal/domain"
@@ -23,13 +22,17 @@ func (d *ClaudeDriver) Probe(ctx context.Context, acct *domain.Account, token st
 	}
 	model = entry.UpstreamID
 	payload, _ := json.Marshal(map[string]any{"model": model, "max_tokens": 1, "messages": []map[string]string{{"role": "user", "content": "hi"}}})
-	body := string(payload)
-	req, err := http.NewRequestWithContext(ctx, "POST", d.cfg.APIURL, strings.NewReader(body))
+	// Probes must use the same OAuth envelope and beta URL as real inference;
+	// a simplified request can receive a generic rejection without quota headers.
+	req, err := d.BuildRequest(ctx, &RelayInput{
+		RawBody: payload,
+		Headers: make(http.Header),
+		Model:   model,
+		UserID:  "admin-probe",
+	}, acct, token)
 	if err != nil {
-		return ProbeResult{}, err
+		return ProbeResult{}, fmt.Errorf("build probe request: %w", err)
 	}
-	req.Header.Set("Content-Type", "application/json")
-	setClaudeRequiredHeaders(req.Header, token, d.cfg.APIVersion, d.cfg.BetaHeader)
 	resp, err := client.Do(req)
 	if err != nil {
 		return ProbeResult{}, err

@@ -179,11 +179,8 @@ func (p *Pool) StoreTokens(accountID, accessTokenEnc, refreshTokenEnc string, ex
 	acct.LastRefreshAt = &now
 	acct.Status = domain.StatusActive
 	acct.ErrorMessage = ""
-	if bucket := p.ensureBucketLocked(acct); bucket != nil && bucket.CooldownUntil != nil {
-		bucket.CooldownUntil = nil
-		bucket.UpdatedAt = now
-		p.persistBucketLocked(bucket)
-	}
+	// Fresh credentials prove authentication, not renewed quota. A successful
+	// inference/probe or expiry is the authority for quota recovery.
 	p.persistLocked(acct)
 	return nil
 }

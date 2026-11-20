@@ -875,8 +875,8 @@ func TestObserve_StatusTransitions(t *testing.T) {
 	})
 }
 
-// Test 6: StoreTokens restores account
-func TestStoreTokens_RestoresAccount(t *testing.T) {
+// Test 6: fresh credentials restore authentication without proving quota recovery.
+func TestStoreTokens_RestoresAuthenticationPreservesQuota(t *testing.T) {
 	acct := activeAccount("a", "a@x")
 	acct.Status = domain.StatusError
 	future := time.Now().Add(1 * time.Hour)
@@ -892,8 +892,8 @@ func TestStoreTokens_RestoresAccount(t *testing.T) {
 	if a.Status != domain.StatusActive {
 		t.Fatalf("expected active, got %s", a.Status)
 	}
-	if a.CooldownUntil != nil {
-		t.Fatal("cooldownUntil should be cleared")
+	if !sameTime(a.CooldownUntil, &future) {
+		t.Fatal("credential refresh must preserve the quota cooldown")
 	}
 	if a.ErrorMessage != "" {
 		t.Fatal("errorMessage should be cleared")

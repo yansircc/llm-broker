@@ -67,7 +67,9 @@ availability, not ordinary-model eligibility.
 
 No body retains the driver's default probe. Unknown options/models return 400
 before token I/O. The probe has a 30-second context timeout. Claude uses a
-one-output-token request. Gemini's existing quota probe rejects model selection.
+one-output-token request through the same request builder and beta URL as normal
+inference. Refreshing credentials preserves all quota cooldowns; authentication
+freshness does not prove quota recovery. Gemini's existing quota probe rejects model selection.
 
 Semantic events and error observation files include quota key/scope, retry time,
 and upstream request ID. These are diagnostics, never scheduling authority.

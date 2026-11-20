@@ -178,6 +178,9 @@ func TestClaudeProbeSelectedModelAndScope(t *testing.T) {
 		var input struct{ Model string }
 		_ = json.NewDecoder(r.Body).Decode(&input)
 		requested = input.Model
+		if r.URL.Query().Get("beta") != "true" {
+			t.Error("probe omitted the OAuth beta URL")
+		}
 		w.Header().Set("Content-Type", "application/json")
 		fmt.Fprint(w, `{"content":[{"type":"text","text":"hi"}]}`)
 	}))

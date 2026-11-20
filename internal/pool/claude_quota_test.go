@@ -109,3 +109,19 @@ func TestClaudeQuotaConcurrentObservationsPersistAcrossReopen(t *testing.T) {
 		t.Fatalf("restriction not persisted: %+v", a)
 	}
 }
+
+func TestTokenRefreshPreservesQuotaRestriction(t *testing.T) {
+	p := newTestPool(t, activeAccount("a", "a@example.test"))
+	d := driver.NewClaudeDriver(driver.ClaudeConfig{}, driver.NoopStainlessStore{}, 4)
+	p.SetDrivers(map[domain.Provider]driver.SchedulerDriver{domain.ProviderClaude: d})
+	p.Observe("a", fableRejection(d))
+	p.Observe("a", driver.Effect{Kind: driver.EffectCooldown, Scope: driver.EffectScopeBucket, CooldownUntil: time.Now().Add(time.Hour)})
+	before := p.Get("a")
+	if err := p.StoreTokens("a", "enc-access", "enc-refresh", time.Now().Add(2*time.Hour).Unix()); err != nil {
+		t.Fatal(err)
+	}
+	after := p.Get("a")
+	if !sameTime(before.CooldownUntil, after.CooldownUntil) || before.ProviderStateJSON != after.ProviderStateJSON {
+		t.Fatal("credential refresh changed quota state")
+	}
+}
