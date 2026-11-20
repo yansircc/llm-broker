@@ -63,6 +63,9 @@
 		if (ev.upstream_status) facts.push({ label: 'status', value: String(ev.upstream_status) });
 		if (ev.upstream_error_type) facts.push({ label: 'error_type', value: ev.upstream_error_type });
 		if (ev.upstream_error_message) facts.push({ label: 'error', value: ev.upstream_error_message });
+		if (ev.quota_key) facts.push({ label: 'quota', value: `${ev.quota_key} (${ev.quota_scope})` });
+		if (ev.retry_at) facts.push({ label: 'retry', value: fmtDate(ev.retry_at) });
+		if (ev.request_id) facts.push({ label: 'request', value: ev.request_id });
 		if (ev.cooldown_until) facts.push({ label: 'cooldown', value: fmtDate(ev.cooldown_until) });
 		return facts;
 	}

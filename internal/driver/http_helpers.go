@@ -9,16 +9,16 @@ import (
 )
 
 func parseRetryAfter(value string) time.Duration {
-	if value == "" {
-		return 0
-	}
-	if secs, err := strconv.Atoi(strings.TrimSpace(value)); err == nil && secs > 0 {
+	return parseRetryAfterAt(value, time.Now())
+}
+
+func parseRetryAfterAt(value string, now time.Time) time.Duration {
+	value = strings.TrimSpace(value)
+	if secs, err := strconv.ParseInt(value, 10, 64); err == nil && secs > 0 && secs <= int64(time.Duration(1<<63-1)/time.Second) {
 		return time.Duration(secs) * time.Second
 	}
-	if ts, err := time.Parse(time.RFC1123, strings.TrimSpace(value)); err == nil {
-		if d := time.Until(ts); d > 0 {
-			return d
-		}
+	if ts, err := http.ParseTime(value); err == nil && ts.After(now) {
+		return ts.Sub(now)
 	}
 	return 0
 }

@@ -60,7 +60,7 @@ func (d *refreshStubDriver) ExchangeCode(context.Context, *http.Client, string, 
 func (d *refreshStubDriver) RefreshToken(context.Context, *http.Client, string) (*driver.TokenResponse, error) {
 	return d.resp, d.err
 }
-func (d *refreshStubDriver) Probe(context.Context, *domain.Account, string, *http.Client) (driver.ProbeResult, error) {
+func (d *refreshStubDriver) Probe(context.Context, *domain.Account, string, *http.Client, string) (driver.ProbeResult, error) {
 	return driver.ProbeResult{}, nil
 }
 func (d *refreshStubDriver) DescribeAccount(*domain.Account) []driver.AccountField { return nil }

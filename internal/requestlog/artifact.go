@@ -24,6 +24,9 @@ type LogObservation struct {
 	UpstreamURL          string
 	UpstreamRequestID    string
 	UpstreamErrorMessage string
+	QuotaKey             string
+	QuotaScope           string
+	QuotaRetryAt         int64
 	RequestBytes         int
 	AttemptCount         int
 
@@ -258,6 +261,14 @@ func buildLogPayload(entry *domain.RequestLog, obs *LogObservation) ([]byte, err
 		facts := payload["facts"].(map[string]any)
 		for k, v := range extra {
 			facts[k] = v
+		}
+	}
+	if obs.QuotaKey != "" {
+		facts := payload["facts"].(map[string]any)
+		facts["quota_key"] = obs.QuotaKey
+		facts["quota_scope"] = obs.QuotaScope
+		if obs.QuotaRetryAt > 0 {
+			facts["quota_retry_at"] = obs.QuotaRetryAt
 		}
 	}
 	if client := compactMap(map[string]any{

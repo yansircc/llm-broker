@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"math"
 	"net/http"
 	"strings"
 	"time"
@@ -12,8 +13,17 @@ import (
 	"github.com/yansircc/llm-broker/internal/domain"
 )
 
-func (d *ClaudeDriver) Probe(ctx context.Context, acct *domain.Account, token string, client *http.Client) (ProbeResult, error) {
-	body := `{"model":"claude-haiku-4-5-20251001","max_tokens":1,"messages":[{"role":"user","content":"hi"}]}`
+func (d *ClaudeDriver) Probe(ctx context.Context, acct *domain.Account, token string, client *http.Client, model string) (ProbeResult, error) {
+	if model == "" {
+		model = "claude-haiku-4-5-20251001"
+	}
+	entry, ok := claudeModelEntryForID(model)
+	if !ok {
+		return ProbeResult{}, NewRequestValidationError(400, "unknown probe model")
+	}
+	model = entry.UpstreamID
+	payload, _ := json.Marshal(map[string]any{"model": model, "max_tokens": 1, "messages": []map[string]string{{"role": "user", "content": "hi"}}})
+	body := string(payload)
 	req, err := http.NewRequestWithContext(ctx, "POST", d.cfg.APIURL, strings.NewReader(body))
 	if err != nil {
 		return ProbeResult{}, err
@@ -32,13 +42,13 @@ func (d *ClaudeDriver) Probe(ctx context.Context, acct *domain.Account, token st
 	}
 
 	result := ProbeResult{
-		Effect:  d.Interpret(resp.StatusCode, resp.Header, bodyBytes, "", json.RawMessage(acct.ProviderStateJSON)),
+		Effect:  d.Interpret(resp.StatusCode, resp.Header, bodyBytes, model, json.RawMessage(acct.ProviderStateJSON)),
 		Observe: true,
 	}
 	if resp.StatusCode >= http.StatusBadRequest {
 		return result, fmt.Errorf("upstream returned %d", resp.StatusCode)
 	}
-	result.ClearCooldown = true
+	result.ClearCooldown = !isFableModel(model)
 	return result, nil
 }
 
@@ -57,19 +67,26 @@ func (d *ClaudeDriver) AutoPriority(state json.RawMessage) int {
 	if json.Unmarshal(state, &s) != nil {
 		return 50
 	}
-	fiveRemain := 100.0
-	if s.FiveHourUtil > 0 {
-		fiveRemain = (1.0 - s.FiveHourUtil) * 100
+	return claudePriority(s, "", time.Now())
+}
+
+func claudePriority(s ClaudeState, model string, now time.Time) int {
+	priority := 100
+	keys := []string{"5h", "7d"}
+	if isFableModel(model) {
+		keys = append(keys, "7d_oi")
 	}
-	sevenRemain := 100.0
-	if s.SevenDayUtil > 0 {
-		sevenRemain = (1.0 - s.SevenDayUtil) * 100
+	for _, key := range keys {
+		q := s.quota(key)
+		if q.Util == nil || (quotaReset(q) > 0 && quotaReset(q) <= now.Unix()) {
+			continue
+		}
+		remain := int((1 - *q.Util) * 100)
+		if remain < priority {
+			priority = remain
+		}
 	}
-	pri := fiveRemain
-	if sevenRemain < pri {
-		pri = sevenRemain
-	}
-	return int(pri)
+	return max(0, priority)
 }
 
 func (d *ClaudeDriver) IsStale(state json.RawMessage, now time.Time) bool {
@@ -77,11 +94,15 @@ func (d *ClaudeDriver) IsStale(state json.RawMessage, now time.Time) bool {
 	if json.Unmarshal(state, &s) != nil {
 		return false
 	}
-	nowUnix := now.Unix()
-	return (s.FiveHourReset > 0 && s.FiveHourReset < nowUnix) ||
-		(s.SevenDayReset > 0 && s.SevenDayReset < nowUnix) ||
-		(s.FiveHourUtil > 0 && s.FiveHourReset == 0) ||
-		(s.SevenDayUtil > 0 && s.SevenDayReset == 0)
+	// The default health probe cannot refresh a model-specific quota. Fable
+	// expiration is checked at scheduling time, avoiding perpetual Haiku probes.
+	for _, key := range []string{"5h", "7d"} {
+		q := s.quota(key)
+		if (quotaReset(q) > 0 && quotaReset(q) <= now.Unix()) || (q.Util != nil && *q.Util > 0 && quotaReset(q) == 0) {
+			return true
+		}
+	}
+	return false
 }
 
 func (d *ClaudeDriver) ComputeExhaustedCooldown(state json.RawMessage, now time.Time) time.Time {
@@ -89,29 +110,28 @@ func (d *ClaudeDriver) ComputeExhaustedCooldown(state json.RawMessage, now time.
 	if json.Unmarshal(state, &s) != nil {
 		return time.Time{}
 	}
-	nowUnix := now.Unix()
-	var cooldownUntil int64
-	if s.FiveHourUtil >= 0.99 && s.FiveHourReset > nowUnix {
-		cooldownUntil = s.FiveHourReset
+	var until int64
+	for _, key := range []string{"5h", "7d"} {
+		q := s.quota(key)
+		if quotaBlocked(q, overageAllowed(s), now) && quotaReset(q) > until {
+			until = quotaReset(q)
+		}
 	}
-	if s.SevenDayUtil >= 0.99 && s.SevenDayReset > nowUnix && s.SevenDayReset > cooldownUntil {
-		cooldownUntil = s.SevenDayReset
-	}
-	if cooldownUntil > 0 {
-		return time.Unix(cooldownUntil, 0).UTC()
+	if until > now.Unix() {
+		return time.Unix(until, 0).UTC()
 	}
 	return time.Time{}
 }
 
 func (d *ClaudeDriver) CanServe(state json.RawMessage, model string, now time.Time) bool {
-	if !isOpusModel(model) {
-		return true
-	}
 	var s ClaudeState
 	if json.Unmarshal(state, &s) != nil {
 		return true
 	}
-	return s.OpusCooldownUntil == 0 || now.Unix() >= s.OpusCooldownUntil
+	if isFableModel(model) {
+		return !quotaBlocked(s.quota("7d_oi"), overageAllowed(s), now)
+	}
+	return !isOpusModel(model) || s.OpusCooldownUntil <= now.Unix()
 }
 
 func (d *ClaudeDriver) AssessCapacity(state json.RawMessage, model string, now time.Time) CapacityAssessment {
@@ -119,11 +139,12 @@ func (d *ClaudeDriver) AssessCapacity(state json.RawMessage, model string, now t
 	if isOpusModel(model) {
 		class = "opus"
 	}
-	return CapacityAssessment{
-		Eligible: d.CanServe(state, model, now),
-		Priority: d.AutoPriority(state),
-		Class:    class,
+	if isFableModel(model) {
+		class = "fable"
 	}
+	var s ClaudeState
+	_ = json.Unmarshal(state, &s)
+	return CapacityAssessment{Eligible: d.CanServe(state, model, now), Priority: claudePriority(s, model, now), Class: class}
 }
 
 func (d *ClaudeDriver) CalcCost(model string, usage *Usage) float64 {
@@ -142,20 +163,39 @@ func (d *ClaudeDriver) GetUtilization(state json.RawMessage) []UtilWindow {
 	if json.Unmarshal(state, &s) != nil {
 		return nil
 	}
-	var windows []UtilWindow
-	if s.FiveHourUtil > 0 || s.FiveHourReset > 0 {
-		windows = append(windows, UtilWindow{
-			Label: "5h",
-			Pct:   int(s.FiveHourUtil * 100),
-			Reset: s.FiveHourReset,
-		})
-	}
-	if s.SevenDayUtil > 0 || s.SevenDayReset > 0 {
-		windows = append(windows, UtilWindow{
-			Label: "7d",
-			Pct:   int(s.SevenDayUtil * 100),
-			Reset: s.SevenDayReset,
-		})
+	now := time.Now()
+	windows := make([]UtilWindow, 0, 4)
+	for _, entry := range []struct{ key, label, scope string }{{"5h", "5h", "account"}, {"7d", "7d", "account"}, {"7d_oi", "Fable 7d", "model"}, {"overage", "usage credits", "billing"}} {
+		q := s.quota(entry.key)
+		if q.Util == nil && quotaReset(q) == 0 && q.Status == "" && q.ObservedAt == 0 {
+			continue
+		}
+		status := q.Status
+		if status == "" {
+			status = "unknown"
+		}
+		if (quotaReset(q) > 0 && quotaReset(q) <= now.Unix()) || (q.RetryUntil > 0 && q.RetryUntil <= now.Unix()) {
+			status = "stale"
+		}
+		reason := q.Reason
+		if entry.key == "overage" && reason == "out_of_credits" {
+			reason = "usage credits exhausted"
+		}
+		if entry.key == "7d_oi" && quotaBlocked(q, overageAllowed(s), now) {
+			status = "rejected"
+			reason = "Fable only: weekly quota exhausted"
+		}
+		if entry.key == "7d_oi" && q.Status == "rejected" && !quotaBlocked(q, overageAllowed(s), now) && overageAllowed(s) && status != "stale" {
+			status = "usage_credits"
+			reason = "subscription limit reached; usage credits available"
+		}
+		w := UtilWindow{Key: entry.key, Label: entry.label, Scope: entry.scope, Reset: quotaReset(q), Status: status, Reason: reason, ObservedAt: q.ObservedAt / int64(time.Second), Unknown: q.Util == nil || status == "stale"}
+		if q.Util != nil {
+			raw := *q.Util * 100
+			w.RawPct = &raw
+			w.Pct = int(math.Max(0, math.Min(100, raw)))
+		}
+		windows = append(windows, w)
 	}
 	return windows
 }

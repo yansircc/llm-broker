@@ -90,14 +90,12 @@ func (d *ClaudeDriver) BuildRequest(ctx context.Context, input *RelayInput, acct
 }
 
 func (d *ClaudeDriver) Interpret(statusCode int, headers http.Header, body []byte, model string, prevState json.RawMessage) Effect {
-	state := d.captureState(headers, prevState)
-	if state.OpusCooldownUntil > 0 && state.OpusCooldownUntil <= time.Now().Unix() {
-		state.OpusCooldownUntil = 0
-	}
+	now := time.Now()
+	observation := captureClaudeObservation(headers, now)
 	upstreamErrorType, upstreamErrorMessage := parseClaudeErrorInfo(body)
 	switch statusCode {
 	case http.StatusOK:
-		return Effect{Kind: EffectSuccess, Scope: EffectScopeBucket, UpdatedState: mustMarshalJSON(state)}
+		return Effect{Kind: EffectSuccess, Scope: EffectScopeBucket, UpdatedState: mustMarshalJSON(observation)}
 
 	case 529:
 		return Effect{
@@ -107,33 +105,44 @@ func (d *ClaudeDriver) Interpret(statusCode int, headers http.Header, body []byt
 			UpstreamStatus:       529,
 			UpstreamErrorType:    upstreamErrorType,
 			UpstreamErrorMessage: upstreamErrorMessage,
-			UpdatedState:         mustMarshalJSON(state),
+			UpdatedState:         mustMarshalJSON(observation),
 		}
 
 	case 429:
-		until := time.Now().Add(d.cfg.Pauses.Pause429)
-		if retryAfter := parseRetryAfter(headers.Get("Retry-After")); retryAfter > 0 {
-			until = time.Now().Add(retryAfter)
-		} else if resetStr := headers.Get("anthropic-ratelimit-unified-reset"); resetStr != "" {
-			if resetTime, err := time.Parse(time.RFC3339, resetStr); err == nil {
-				until = resetTime
+		until := d.retryUntil(headers, now)
+		key, scope, reason := "unknown", "account", "limit scope unknown"
+		sharedRejected := false
+		for _, k := range []string{"5h", "7d"} {
+			if observation.Windows[k].Status == "rejected" {
+				sharedRejected = true
+				key = k
+				reason = "shared quota exhausted"
 			}
 		}
-		if isOpusModel(model) {
-			if resetStr := headers.Get("anthropic-ratelimit-unified-reset"); resetStr != "" {
-				if resetTime, err := time.Parse(time.RFC3339, resetStr); err == nil {
-					state.OpusCooldownUntil = resetTime.Unix()
-				}
-			}
+		if !sharedRejected && isFableModel(model) && observation.Windows["7d_oi"].Status == "rejected" && headers.Get("anthropic-ratelimit-unified-representative-claim") == "seven_day_overage_included" {
+			key, scope, reason = "7d_oi", "model", "Fable weekly quota exhausted"
+			q := observation.Windows[key]
+			q.RetryUntil = until.Unix()
+			q.Reason = reason
+			observation.Windows[key] = q
+		}
+		publicUntil := until
+		if scope == "model" {
+			publicUntil = time.Time{}
 		}
 		return Effect{
 			Kind:                 EffectCooldown,
 			Scope:                EffectScopeBucket,
-			CooldownUntil:        until,
+			CooldownUntil:        publicUntil,
+			RequestID:            headers.Get("request-id"),
+			QuotaKey:             key,
+			QuotaScope:           scope,
+			RetryAt:              until,
+			ErrorMessage:         reason,
 			UpstreamStatus:       429,
 			UpstreamErrorType:    upstreamErrorType,
 			UpstreamErrorMessage: upstreamErrorMessage,
-			UpdatedState:         mustMarshalJSON(state),
+			UpdatedState:         mustMarshalJSON(observation),
 		}
 
 	case 403:
@@ -146,7 +155,7 @@ func (d *ClaudeDriver) Interpret(statusCode int, headers http.Header, body []byt
 				UpstreamStatus:       403,
 				UpstreamErrorType:    upstreamErrorType,
 				UpstreamErrorMessage: upstreamErrorMessage,
-				UpdatedState:         mustMarshalJSON(state),
+				UpdatedState:         mustMarshalJSON(observation),
 			}
 		}
 		return Effect{
@@ -155,7 +164,7 @@ func (d *ClaudeDriver) Interpret(statusCode int, headers http.Header, body []byt
 			UpstreamStatus:       403,
 			UpstreamErrorType:    upstreamErrorType,
 			UpstreamErrorMessage: upstreamErrorMessage,
-			UpdatedState:         mustMarshalJSON(state),
+			UpdatedState:         mustMarshalJSON(observation),
 		}
 
 	case 400:
@@ -168,7 +177,7 @@ func (d *ClaudeDriver) Interpret(statusCode int, headers http.Header, body []byt
 				UpstreamStatus:       400,
 				UpstreamErrorType:    upstreamErrorType,
 				UpstreamErrorMessage: upstreamErrorMessage,
-				UpdatedState:         mustMarshalJSON(state),
+				UpdatedState:         mustMarshalJSON(observation),
 			}
 		}
 		return Effect{
@@ -177,7 +186,7 @@ func (d *ClaudeDriver) Interpret(statusCode int, headers http.Header, body []byt
 			UpstreamStatus:       400,
 			UpstreamErrorType:    upstreamErrorType,
 			UpstreamErrorMessage: upstreamErrorMessage,
-			UpdatedState:         mustMarshalJSON(state),
+			UpdatedState:         mustMarshalJSON(observation),
 		}
 
 	case 401:
@@ -188,7 +197,7 @@ func (d *ClaudeDriver) Interpret(statusCode int, headers http.Header, body []byt
 			UpstreamStatus:       401,
 			UpstreamErrorType:    upstreamErrorType,
 			UpstreamErrorMessage: upstreamErrorMessage,
-			UpdatedState:         mustMarshalJSON(state),
+			UpdatedState:         mustMarshalJSON(observation),
 		}
 
 	case 500:
@@ -198,7 +207,7 @@ func (d *ClaudeDriver) Interpret(statusCode int, headers http.Header, body []byt
 			UpstreamStatus:       500,
 			UpstreamErrorType:    upstreamErrorType,
 			UpstreamErrorMessage: upstreamErrorMessage,
-			UpdatedState:         mustMarshalJSON(state),
+			UpdatedState:         mustMarshalJSON(observation),
 		}
 	}
 
@@ -209,7 +218,7 @@ func (d *ClaudeDriver) Interpret(statusCode int, headers http.Header, body []byt
 			UpstreamStatus:       statusCode,
 			UpstreamErrorType:    upstreamErrorType,
 			UpstreamErrorMessage: upstreamErrorMessage,
-			UpdatedState:         mustMarshalJSON(state),
+			UpdatedState:         mustMarshalJSON(observation),
 		}
 	}
 	if statusCode >= 400 && statusCode <= 499 {
@@ -219,11 +228,11 @@ func (d *ClaudeDriver) Interpret(statusCode int, headers http.Header, body []byt
 			UpstreamStatus:       statusCode,
 			UpstreamErrorType:    upstreamErrorType,
 			UpstreamErrorMessage: upstreamErrorMessage,
-			UpdatedState:         mustMarshalJSON(state),
+			UpdatedState:         mustMarshalJSON(observation),
 		}
 	}
 
-	return Effect{Kind: EffectSuccess, Scope: EffectScopeBucket, UpdatedState: mustMarshalJSON(state)}
+	return Effect{Kind: EffectSuccess, Scope: EffectScopeBucket, UpdatedState: mustMarshalJSON(observation)}
 }
 
 func (d *ClaudeDriver) StreamResponse(ctx context.Context, w http.ResponseWriter, resp *http.Response) (bool, *Usage) {

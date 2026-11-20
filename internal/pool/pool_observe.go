@@ -180,11 +180,20 @@ func (p *Pool) SetDrivers(drivers map[domain.Provider]driver.SchedulerDriver) {
 	}
 }
 
-func (p *Pool) Observe(accountID string, effect driver.Effect) {
+func (p *Pool) Observe(accountID string, effect driver.Effect) { p.observe(accountID, effect, nil) }
+
+// ObserveProbe clears a public cooldown only if the probe's starting snapshot
+// still matches. Clearing and applying its observation share the same lock.
+func (p *Pool) ObserveProbe(accountID string, effect driver.Effect, expected *domain.Account) {
+	p.observe(accountID, effect, expected)
+}
+
+func (p *Pool) observe(accountID string, effect driver.Effect, expected *domain.Account) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	if err := p.reloadStateLocked(context.Background()); err != nil {
 		slog.Warn("pool refresh failed", "op", "observe", "accountId", accountID, "error", err)
+		expected = nil // A failed refresh cannot authorize clearing a cooldown.
 	}
 
 	acct, ok := p.accounts[accountID]
@@ -193,6 +202,15 @@ func (p *Pool) Observe(accountID string, effect driver.Effect) {
 	}
 
 	bucket := p.ensureBucketLocked(acct)
+	if expected != nil && effect.Kind == driver.EffectSuccess && bucket != nil &&
+		expected.Subject == acct.Subject && expected.Status == acct.Status &&
+		expected.BucketKey == bucket.BucketKey && expected.ProviderStateJSON == bucket.StateJSON &&
+		sameTime(expected.CooldownUntil, bucket.CooldownUntil) && bucket.CooldownUntil != nil {
+		bucket.CooldownUntil = nil
+		bucket.UpdatedAt = time.Now().UTC()
+		p.persistBucketLocked(bucket)
+		p.bus.Publish(events.Event{Type: events.EventRecover, AccountID: acct.ID, BucketKey: bucket.BucketKey, Message: "successful probe cleared unchanged cooldown"})
+	}
 	persisted := make(map[string]*domain.Account)
 	markPersist := func(a *domain.Account) {
 		if a != nil {
@@ -262,6 +280,7 @@ func (p *Pool) Observe(accountID string, effect driver.Effect) {
 		}
 		pendingEvent = &events.Event{
 			Type: cooldownEventType(effect.UpstreamStatus), AccountID: acct.ID,
+			RequestID: effect.RequestID, QuotaKey: effect.QuotaKey, QuotaScope: effect.QuotaScope, RetryAt: optionalTime(effect.RetryAt),
 			CooldownUntil:        cooldownPtr(result),
 			UpstreamStatus:       effect.UpstreamStatus,
 			UpstreamErrorType:    effect.UpstreamErrorType,
@@ -332,7 +351,11 @@ func (p *Pool) Observe(accountID string, effect driver.Effect) {
 	}
 
 	if len(effect.UpdatedState) > 0 {
-		stateJSON := string(effect.UpdatedState)
+		state := effect.UpdatedState
+		if drv, ok := p.drivers[acct.Provider]; ok {
+			state = drv.MergeState(json.RawMessage(p.bucketStateLocked(acct)), state)
+		}
+		stateJSON := string(state)
 		members := p.bucketAccountsLocked(acct)
 		if bucket != nil {
 			bucket.StateJSON = stateJSON
@@ -357,4 +380,11 @@ func (p *Pool) Observe(accountID string, effect driver.Effect) {
 	for _, target := range persisted {
 		p.persistLocked(target)
 	}
+}
+
+func optionalTime(t time.Time) *time.Time {
+	if t.IsZero() {
+		return nil
+	}
+	return &t
 }

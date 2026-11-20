@@ -3,9 +3,10 @@
 	import { goto } from '$app/navigation';
 	import { base } from '$app/paths';
 	import { api } from '$lib/api';
-	import type { EgressCellSummary, EgressCellView } from '$lib/admin-types';
-	import { timeAgo, fmtDate, dotClass, remainClass, remainTime } from '$lib/format';
+	import type { EgressCellSummary, EgressCellView, UtilWindow } from '$lib/admin-types';
+	import { timeAgo, fmtDate, dotClass } from '$lib/format';
 	import Countdown from '$lib/components/Countdown.svelte';
+	import QuotaWindow from '$lib/components/QuotaWindow.svelte';
 	import PriorityEditor from '$lib/components/PriorityEditor.svelte';
 	import ConfirmAction from '$lib/components/ConfirmAction.svelte';
 
@@ -28,7 +29,7 @@
 		cooldown_until: string | null;
 		cell_id?: string;
 		cell?: EgressCellSummary | null;
-		windows: { label: string; pct: number; reset?: number }[];
+		windows: UtilWindow[];
 		stainless: Record<string, string> | null;
 		sessions: { session_uuid: string; account_id: string; created_at: string; last_used_at: string; expires_at: string }[];
 	}
@@ -359,9 +360,7 @@
 					{#if acct.status === 'blocked' || acct.status === 'disabled'}
 						<span class="muted">&ndash;</span>
 					{:else}
-						{@const remain = 100 - window.pct}
-						<span class={remainClass(remain)}>{remain}%</span>
-						<span class="muted">{remainTime(window.reset ?? null)}</span>
+						<QuotaWindow {window} />
 					{/if}
 				</dd>
 			{/each}

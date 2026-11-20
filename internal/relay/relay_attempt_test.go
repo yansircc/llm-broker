@@ -1236,3 +1236,7 @@ func TestExecuteRelayAttemptLogsCompatTraceEnvelope(t *testing.T) {
 		t.Fatalf("UpstreamErrorType = %q, want invalid_request_error", logs[0].UpstreamErrorType)
 	}
 }
+
+func (d *relayTestDriver) MergeState(current, observation json.RawMessage) json.RawMessage {
+	return observation
+}

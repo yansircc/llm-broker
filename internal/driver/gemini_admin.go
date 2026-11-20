@@ -10,7 +10,10 @@ import (
 	"github.com/yansircc/llm-broker/internal/domain"
 )
 
-func (d *GeminiDriver) Probe(ctx context.Context, acct *domain.Account, token string, client *http.Client) (ProbeResult, error) {
+func (d *GeminiDriver) Probe(ctx context.Context, acct *domain.Account, token string, client *http.Client, model string) (ProbeResult, error) {
+	if model != "" {
+		return ProbeResult{}, NewRequestValidationError(400, "model-specific probing is not supported")
+	}
 	state := parseGeminiState(json.RawMessage(acct.ProviderStateJSON))
 	now := time.Now()
 

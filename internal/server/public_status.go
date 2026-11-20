@@ -10,7 +10,12 @@ import (
 
 type publicStatusLimit struct {
 	Name         string `json:"name"`
-	RemainingPct int    `json:"remaining_pct"`
+	Key          string `json:"key"`
+	Scope        string `json:"scope,omitempty"`
+	Status       string `json:"status,omitempty"`
+	Reason       string `json:"reason,omitempty"`
+	ObservedAt   int64  `json:"observed_at,omitempty"`
+	RemainingPct *int   `json:"remaining_pct"`
 	ResetAt      int64  `json:"reset_at,omitempty"`
 }
 
@@ -47,9 +52,15 @@ func (s *Server) handlePublicStatus(w http.ResponseWriter, r *http.Request) {
 		projection := s.projectAccount(account)
 		limits := make([]publicStatusLimit, 0, len(projection.windows))
 		for _, window := range projection.windows {
+			var remaining *int
+			if window.Pct != nil {
+				n := max(0, min(100, 100-*window.Pct))
+				remaining = &n
+			}
 			limits = append(limits, publicStatusLimit{
+				Key: window.Key, Scope: window.Scope, Status: window.Status, Reason: window.Reason, ObservedAt: window.ObservedAt,
 				Name:         window.Label,
-				RemainingPct: 100 - window.Pct,
+				RemainingPct: remaining,
 				ResetAt:      window.Reset,
 			})
 		}

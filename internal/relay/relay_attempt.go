@@ -140,6 +140,11 @@ func setRequestLogUpstreamResponse(entry *domain.RequestLog, obs *requestlog.Log
 		entry.UpstreamErrorType = effect.UpstreamErrorType
 	}
 	obs.UpstreamErrorMessage = effect.UpstreamErrorMessage
+	obs.QuotaKey = effect.QuotaKey
+	obs.QuotaScope = effect.QuotaScope
+	if !effect.RetryAt.IsZero() {
+		obs.QuotaRetryAt = effect.RetryAt.Unix()
+	}
 }
 
 func newRelayAttemptState() *relayAttemptState {
@@ -340,6 +345,8 @@ func (r *Relay) executeRelayAttempt(
 		setRequestLogUpstreamResponse(entry, obs, resp, errBody, &effect)
 
 		if drv.ParseNonRetriable(resp.StatusCode, errBody) {
+			entry.EffectKind = relayEffectKind(effect.Kind)
+			r.pool.Observe(acct.ID, effect)
 			r.logRequestAsync(entry, obs)
 			drv.WriteUpstreamError(w, resp.StatusCode, errBody, prepared.input.IsStream)
 			return relayAttemptDone

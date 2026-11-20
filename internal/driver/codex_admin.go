@@ -14,9 +14,15 @@ import (
 	"github.com/yansircc/llm-broker/internal/domain"
 )
 
-func (d *CodexDriver) Probe(ctx context.Context, acct *domain.Account, token string, client *http.Client) (ProbeResult, error) {
+func (d *CodexDriver) Probe(ctx context.Context, acct *domain.Account, token string, client *http.Client, model string) (ProbeResult, error) {
 	if acct.Subject == "" {
 		return ProbeResult{}, fmt.Errorf("codex account missing subject")
+	}
+
+	if model == "" {
+		model = d.probeModel()
+	} else if _, ok := codexModelEntryForID(model); !ok {
+		return ProbeResult{}, NewRequestValidationError(400, "unknown probe model")
 	}
 
 	// Probe with the live observed model (or the catalog's primary as fallback)
@@ -24,7 +30,7 @@ func (d *CodexDriver) Probe(ctx context.Context, acct *domain.Account, token str
 	// silently 400s once the provider drops it ("model is not supported"), which
 	// starves the rate-limit refresh loop and leaves accounts stuck on stale
 	// utilization.
-	body := fmt.Sprintf(`{"model":%q,"instructions":"Reply with OK only.","input":[{"role":"user","content":"test"}],"stream":true,"store":false}`, d.probeModel())
+	body := fmt.Sprintf(`{"model":%q,"instructions":"Reply with OK only.","input":[{"role":"user","content":"test"}],"stream":true,"store":false}`, model)
 	req, err := http.NewRequestWithContext(ctx, "POST", d.cfg.APIURL, strings.NewReader(body))
 	if err != nil {
 		return ProbeResult{}, err

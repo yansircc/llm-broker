@@ -91,10 +91,10 @@ func TestPublicStatusRouteReturnsMinimalProviderProjection(t *testing.T) {
 	if got := response["claude"][0]; got.Status != "active" || got.CooldownUntil != claudeCooldown.Unix() {
 		t.Fatalf("first claude account = %#v, want older active account with cooldown", got)
 	}
-	if got := response["claude"][0].Limits; len(got) != 1 || got[0].Name != "5h" || got[0].RemainingPct != 75 || got[0].ResetAt != claudeReset {
+	if got := response["claude"][0].Limits; len(got) != 1 || got[0].Name != "5h" || *got[0].RemainingPct != 75 || got[0].ResetAt != claudeReset {
 		t.Fatalf("claude limits = %#v", got)
 	}
-	if got := response["codex"][0].Limits; len(got) != 2 || got[0].Name != "primary" || got[0].RemainingPct != 50 || got[1].Name != "secondary" || got[1].RemainingPct != 75 {
+	if got := response["codex"][0].Limits; len(got) != 2 || got[0].Name != "primary" || *got[0].RemainingPct != 50 || got[1].Name != "secondary" || *got[1].RemainingPct != 75 {
 		t.Fatalf("codex limits = %#v", got)
 	}
 

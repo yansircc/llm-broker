@@ -51,7 +51,7 @@ func (p *Pool) ClearCooldown(accountID string) {
 }
 
 func (p *Pool) applyBucketCooldown(bucket *domain.QuotaBucket, proposed time.Time) CooldownResult {
-	if bucket == nil {
+	if bucket == nil || proposed.IsZero() {
 		return CooldownResult{}
 	}
 	if bucket.CooldownUntil != nil && bucket.CooldownUntil.After(proposed) {

@@ -242,7 +242,9 @@ func pruneBlobDir(dir string, cutoff time.Time) (int, error) {
 	return removed, nil
 }
 
-func (s *Server) probeAccount(ctx context.Context, acct *domain.Account) (driver.ProbeResult, error) {
+func (s *Server) probeAccount(ctx context.Context, acct *domain.Account, model string) (driver.ProbeResult, error) {
+	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
 	accessToken, err := s.tokens.EnsureValidToken(ctx, acct.ID)
 	if err != nil {
 		return driver.ProbeResult{}, fmt.Errorf("token unavailable: %w", err)
@@ -253,15 +255,16 @@ func (s *Server) probeAccount(ctx context.Context, acct *domain.Account) (driver
 		return driver.ProbeResult{}, fmt.Errorf("unknown provider")
 	}
 
-	result, err := drv.Probe(ctx, acct, accessToken, s.transportPool.ClientForAccount(acct))
+	result, err := drv.Probe(ctx, acct, accessToken, s.transportPool.ClientForAccount(acct), model)
 	if err != nil && !result.Observe && acct.CellID != "" && s.cfg.CellErrorPause > 0 && neterr.IsTransport(err) {
 		s.pool.CooldownCell(acct.CellID, time.Now().Add(s.cfg.CellErrorPause), fmt.Sprintf("probe transport error on account %s: %v", acct.Email, err))
 	}
 	if result.Observe {
-		s.pool.Observe(acct.ID, result.Effect)
-	}
-	if result.ClearCooldown {
-		s.pool.ClearCooldown(acct.ID)
+		if result.ClearCooldown && err == nil {
+			s.pool.ObserveProbe(acct.ID, result.Effect, acct)
+		} else {
+			s.pool.Observe(acct.ID, result.Effect)
+		}
 	}
 	return result, err
 }

@@ -49,8 +49,15 @@ func toWindowResponses(windows []driver.UtilWindow) []UtilizationWindowResponse 
 	for _, window := range windows {
 		w := UtilizationWindowResponse{
 			Label: window.Label,
-			Pct:   window.Pct,
+			Key:   window.Key, Scope: window.Scope, Status: window.Status, Reason: window.Reason, ObservedAt: window.ObservedAt, RawPct: window.RawPct,
 			Reset: window.Reset,
+		}
+		if w.Key == "" {
+			w.Key = window.Label
+		}
+		if !window.Unknown {
+			pct := window.Pct
+			w.Pct = &pct
 		}
 		if window.SubLabel != "" {
 			w.SubLabel = window.SubLabel

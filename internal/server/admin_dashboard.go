@@ -75,7 +75,8 @@ func (s *Server) dashboardEvents(limit int) []DashboardEvent {
 	for i := len(recentEvents) - 1; i >= 0; i-- {
 		event := recentEvents[i]
 		views = append(views, DashboardEvent{
-			Type:                 string(event.Type),
+			Type:      string(event.Type),
+			RequestID: event.RequestID, QuotaKey: event.QuotaKey, QuotaScope: event.QuotaScope, RetryAt: event.RetryAt,
 			AccountID:            event.AccountID,
 			UserID:               event.UserID,
 			BucketKey:            event.BucketKey,

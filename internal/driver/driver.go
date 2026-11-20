@@ -96,6 +96,9 @@ type RefreshDriver interface {
 }
 
 type SchedulerDriver interface {
+	// MergeState reduces a provider observation against the latest persisted state.
+	MergeState(current, observation json.RawMessage) json.RawMessage
+
 	Provider() domain.Provider
 	BucketKey(acct *domain.Account) string
 
@@ -121,7 +124,7 @@ type AdminDriver interface {
 	Info() ProviderInfo
 
 	// Probe performs a minimal health check and returns the resulting account effect.
-	Probe(ctx context.Context, acct *domain.Account, token string, client *http.Client) (ProbeResult, error)
+	Probe(ctx context.Context, acct *domain.Account, token string, client *http.Client, model string) (ProbeResult, error)
 
 	// DescribeAccount returns provider-specific fields suitable for admin display.
 	DescribeAccount(acct *domain.Account) []AccountField

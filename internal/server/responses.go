@@ -46,8 +46,15 @@ type HealthInfo struct {
 }
 
 type UtilizationWindowResponse struct {
+	Key        string   `json:"key"`
+	Scope      string   `json:"scope,omitempty"`
+	Status     string   `json:"status,omitempty"`
+	Reason     string   `json:"reason,omitempty"`
+	ObservedAt int64    `json:"observed_at,omitempty"`
+	RawPct     *float64 `json:"raw_pct,omitempty"`
+
 	Label    string `json:"label"`
-	Pct      int    `json:"pct"`
+	Pct      *int   `json:"pct"`
 	Reset    int64  `json:"reset,omitempty"`
 	SubLabel string `json:"sub_label,omitempty"`
 	SubPct   *int   `json:"sub_pct,omitempty"`
@@ -94,6 +101,11 @@ type DashboardUser struct {
 }
 
 type DashboardEvent struct {
+	RequestID  string     `json:"request_id,omitempty"`
+	QuotaKey   string     `json:"quota_key,omitempty"`
+	QuotaScope string     `json:"quota_scope,omitempty"`
+	RetryAt    *time.Time `json:"retry_at,omitempty"`
+
 	Type                 string     `json:"type"`
 	AccountID            string     `json:"account_id,omitempty"`
 	UserID               string     `json:"user_id,omitempty"`

@@ -2,8 +2,9 @@
 	import { base } from '$app/paths';
 	import { api } from '$lib/api';
 	import type { AccountListItem } from '$lib/admin-types';
-	import { remainClass, remainTime, timeAgo, dotClass } from '$lib/format';
+	import { timeAgo, dotClass } from '$lib/format';
 	import Countdown from '$lib/components/Countdown.svelte';
+	import QuotaWindow from '$lib/components/QuotaWindow.svelte';
 	import { addAccountPath, type ProviderOption } from '$lib/providers';
 
 	interface AccountGroup {
@@ -13,7 +14,7 @@
 		window_labels: string[];
 	}
 
-	type SortKey = 'email' | 'status' | 'cell' | 'weight' | 'cooldown' | 'last_used' | `window:${number}`;
+	type SortKey = 'email' | 'status' | 'cell' | 'weight' | 'cooldown' | 'last_used' | `window:${string}`;
 	type SortDirection = 'asc' | 'desc';
 
 	interface SortState {
@@ -51,8 +52,14 @@
 		}
 	}
 
-	function windowAt(account: AccountListItem, index: number) {
-		return account.windows[index] ?? null;
+	function windowAt(account: AccountListItem, key: string) {
+		return account.windows.find((window) => (window.key || window.label) === key) ?? null;
+	}
+
+	function windowLabel(group: AccountGroup, key: string): string {
+		const window = group.accounts.flatMap((account) => account.windows).find((item) => (item.key || item.label) === key);
+		if (!window) return key;
+		return window.sub_label ? `${window.label} codex/spark` : window.label;
 	}
 
 	function defaultSortState(): SortState {
@@ -95,14 +102,8 @@
 		return sortStateFor(provider).dir === 'asc' ? 'ascending' : 'descending';
 	}
 
-	function windowSortKey(index: number): SortKey {
-		return `window:${index}`;
-	}
-
-	function parseWindowSortIndex(key: SortKey): number | null {
-		if (!key.startsWith('window:')) return null;
-		const index = Number.parseInt(key.slice('window:'.length), 10);
-		return Number.isFinite(index) ? index : null;
+	function windowSortKey(key: string): SortKey {
+		return `window:${key}`;
 	}
 
 	function timestamp(value: string | null | undefined): number | null {
@@ -130,13 +131,13 @@
 		}
 	}
 
-	function windowRemain(account: AccountListItem, index: number): number | null {
+	function windowRemain(account: AccountListItem, key: string): number | null {
 		if (account.status === 'blocked' || account.status === 'disabled') {
 			return null;
 		}
-		const window = windowAt(account, index);
+		const window = windowAt(account, key);
 		if (!window) return null;
-		return 100 - window.pct;
+		return window.pct == null || window.status === 'stale' ? null : Math.max(0, 100 - window.pct);
 	}
 
 	function compareNumbers(left: number, right: number, dir: SortDirection): number {
@@ -179,9 +180,8 @@
 			case 'last_used':
 				return compareNullableNumbers(timestamp(left.last_used_at), timestamp(right.last_used_at), sort.dir);
 			default: {
-				const index = parseWindowSortIndex(sort.key);
-				if (index == null) return 0;
-				return compareNullableNumbers(windowRemain(left, index), windowRemain(right, index), sort.dir);
+				const key = sort.key.slice('window:'.length);
+				return compareNullableNumbers(windowRemain(left, key), windowRemain(right, key), sort.dir);
 			}
 		}
 	}
@@ -213,14 +213,12 @@
 				groups.set(account.provider, group);
 			}
 			group.accounts.push(account);
-			account.windows.forEach((window, index) => {
-				if (!group!.window_labels[index]) {
-					let lbl = window.label;
-					if (window.sub_label) lbl += ` codex/spark`;
-					group!.window_labels[index] = lbl;
-				}
+			account.windows.forEach((window) => {
+				const key = window.key || window.label;
+				if (!group!.window_labels.includes(key)) group!.window_labels.push(key);
 			});
 		}
+		for (const group of groups.values()) group.window_labels.sort();
 		return [...groups.values()].sort((a, b) => a.provider.localeCompare(b.provider));
 	}
 
@@ -316,9 +314,9 @@
 								</button>
 							</th>
 							{#each group.window_labels as label, index (`${group.provider}:${label}:${index}`)}
-								<th class="num" aria-sort={ariaSort(group.provider, windowSortKey(index))}>
-									<button type="button" class="link sort-link sort-link-num {isSortActive(group.provider, windowSortKey(index)) ? 'sort-active' : ''}" onclick={() => setSort(group.provider, windowSortKey(index))}>
-										{label} <span class="sort-indicator">{sortIndicator(group.provider, windowSortKey(index))}</span>
+								<th class="num" aria-sort={ariaSort(group.provider, windowSortKey(label))}>
+									<button type="button" class="link sort-link sort-link-num {isSortActive(group.provider, windowSortKey(label)) ? 'sort-active' : ''}" onclick={() => setSort(group.provider, windowSortKey(label))}>
+										{windowLabel(group, label)} <span class="sort-indicator">{sortIndicator(group.provider, windowSortKey(label))}</span>
 									</button>
 								</th>
 							{/each}
@@ -340,13 +338,12 @@
 								<Countdown until={account.cooldown_until} tag="td" variant="cooldown" />
 								<td>{timeAgo(account.last_used_at ?? '')}</td>
 								{#each group.window_labels as label, index (`${account.id}:${label}:${index}`)}
-									{@const window = windowAt(account, index)}
+									{@const window = windowAt(account, label)}
 									<td class="num">
 										{#if account.status === 'blocked' || account.status === 'disabled'}
 											<span class="muted">&ndash;</span>
 										{:else if window}
-											{@const remain = 100 - window.pct}
-											<span class={remainClass(remain)}>{remain}%</span>{#if window.sub_pct != null}{@const subRemain = 100 - window.sub_pct}/<span class={remainClass(subRemain)}>{subRemain}%</span>{/if} <span class="muted">{remainTime(window.reset ?? null)}</span>
+											<QuotaWindow {window} compact />
 										{:else}
 											<span class="muted">&ndash;</span>
 										{/if}

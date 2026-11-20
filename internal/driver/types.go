@@ -47,7 +47,11 @@ type Effect struct {
 	UpstreamStatus       int
 	UpstreamErrorType    string
 	UpstreamErrorMessage string
-	UpdatedState         json.RawMessage // opaque provider state blob
+	UpdatedState         json.RawMessage // opaque observation, reduced by the driver
+	RequestID            string
+	QuotaKey             string
+	QuotaScope           string // account or model; independent of credential/bucket ownership
+	RetryAt              time.Time
 }
 
 // RelayInput carries the parsed client request.
@@ -139,6 +143,14 @@ type OAuthSession struct {
 
 // UtilWindow represents a rate-limit utilization window.
 type UtilWindow struct {
+	Key        string
+	Scope      string
+	Status     string
+	Reason     string
+	ObservedAt int64 // Unix seconds
+	Unknown    bool
+	RawPct     *float64
+
 	Label    string // provider-defined display label
 	Pct      int    // 0-100
 	Reset    int64  // unix seconds

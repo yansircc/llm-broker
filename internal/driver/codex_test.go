@@ -339,7 +339,7 @@ func TestCodexProbeRequiresSubject(t *testing.T) {
 		}),
 	}
 
-	_, err := d.Probe(context.Background(), acct, "tok", client)
+	_, err := d.Probe(context.Background(), acct, "tok", client, "")
 	if err == nil {
 		t.Fatal("Probe() error = nil, want missing subject error")
 	}
@@ -831,7 +831,7 @@ func TestCodexProbeUsesObservedModelInBody(t *testing.T) {
 		}),
 	}
 	acct := &domain.Account{Provider: domain.ProviderCodex, Subject: "subj-1"}
-	if _, err := d.Probe(context.Background(), acct, "tok", client); err != nil {
+	if _, err := d.Probe(context.Background(), acct, "tok", client, ""); err != nil {
 		t.Fatalf("Probe() error = %v", err)
 	}
 	if !strings.Contains(sentBody, `"model":"gpt-5.6"`) {

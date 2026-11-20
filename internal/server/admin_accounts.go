@@ -2,12 +2,15 @@ package server
 
 import (
 	"encoding/json"
+	"errors"
+	"io"
 	"log/slog"
 	"net/http"
 	"strings"
 	"time"
 
 	"github.com/yansircc/llm-broker/internal/domain"
+	"github.com/yansircc/llm-broker/internal/driver"
 )
 
 // handleListAccounts returns all accounts (without tokens).
@@ -297,11 +300,46 @@ func (s *Server) handleTestAccount(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	var input struct {
+		Model string `json:"model"`
+	}
+	if r.Body != nil {
+		dec := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4096))
+		dec.DisallowUnknownFields()
+		if err := dec.Decode(&input); err != nil && err != io.EOF {
+			writeAdminError(w, 400, "invalid_request", "invalid probe options")
+			return
+		}
+		if err := dec.Decode(new(any)); err != io.EOF {
+			writeAdminError(w, 400, "invalid_request", "invalid probe options")
+			return
+		}
+	}
+	if input.Model != "" {
+		valid := false
+		if descriptor, ok := s.catalogDrivers[acct.Provider]; ok {
+			for _, m := range descriptor.Models() {
+				if m.ID == input.Model {
+					valid = true
+					break
+				}
+			}
+		}
+		if !valid {
+			writeAdminError(w, 400, "invalid_request", "unknown probe model")
+			return
+		}
+	}
 	wasBlocked := acct.Status == domain.StatusBlocked
 
 	start := time.Now()
-	_, err := s.probeAccount(r.Context(), acct)
+	_, err := s.probeAccount(r.Context(), acct, input.Model)
 	latencyMs := time.Since(start).Milliseconds()
+	var validation *driver.RequestValidationError
+	if errors.As(err, &validation) {
+		writeAdminError(w, validation.StatusCode, "invalid_request", validation.Message)
+		return
+	}
 	if err != nil {
 		writeJSON(w, http.StatusOK, TestAccountResult{LatencyMs: latencyMs, Error: err.Error()})
 		return

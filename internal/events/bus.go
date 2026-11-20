@@ -22,6 +22,11 @@ const (
 )
 
 type Event struct {
+	RequestID  string     `json:"request_id,omitempty"`
+	QuotaKey   string     `json:"quota_key,omitempty"`
+	QuotaScope string     `json:"quota_scope,omitempty"`
+	RetryAt    *time.Time `json:"retry_at,omitempty"`
+
 	Type                 EventType  `json:"type"`
 	AccountID            string     `json:"account_id,omitempty"`
 	UserID               string     `json:"user_id,omitempty"`
@@ -76,6 +81,12 @@ func (b *Bus) Publish(e Event) {
 	}
 	if e.CellID != "" {
 		attrs = append(attrs, "cellId", e.CellID)
+	}
+	if e.RequestID != "" {
+		attrs = append(attrs, "requestId", e.RequestID)
+	}
+	if e.QuotaKey != "" {
+		attrs = append(attrs, "quotaKey", e.QuotaKey, "quotaScope", e.QuotaScope, "retryAt", e.RetryAt)
 	}
 	if e.CooldownUntil != nil {
 		attrs = append(attrs, "cooldownUntil", e.CooldownUntil.Format(time.RFC3339))

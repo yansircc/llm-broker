@@ -1,0 +1,17 @@
+{
+  "description": "Allowlisted response headers from production request 3394826; no account or request identity",
+  "headers": {
+    "Anthropic-Ratelimit-Unified-7d-Reset": "1795482000",
+    "Anthropic-Ratelimit-Unified-7d-Status": "allowed",
+    "Anthropic-Ratelimit-Unified-7d-Utilization": "0.66",
+    "Anthropic-Ratelimit-Unified-7d_oi-Reset": "1795482000",
+    "Anthropic-Ratelimit-Unified-7d_oi-Status": "rejected",
+    "Anthropic-Ratelimit-Unified-7d_oi-Utilization": "1.01",
+    "Anthropic-Ratelimit-Unified-Overage-Disabled-Reason": "out_of_credits",
+    "Anthropic-Ratelimit-Unified-Overage-Status": "rejected",
+    "Anthropic-Ratelimit-Unified-Representative-Claim": "seven_day_overage_included",
+    "Anthropic-Ratelimit-Unified-Reset": "1795482000",
+    "Anthropic-Ratelimit-Unified-Status": "rejected",
+    "Retry-After": "483566"
+  }
+}

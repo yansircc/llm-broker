@@ -10,8 +10,15 @@ export interface UsagePeriod {
 }
 
 export interface UtilWindow {
+	key?: string;
+	scope?: string;
+	status?: string;
+	reason?: string;
+	observed_at?: number;
+	raw_pct?: number;
+
 	label: string;
-	pct: number;
+	pct: number | null;
 	reset?: number;
 	sub_label?: string;
 	sub_pct?: number;
@@ -39,6 +46,11 @@ export interface UserTotalCostsResponse {
 }
 
 export interface DashboardEvent {
+	request_id?: string;
+	quota_key?: string;
+	quota_scope?: string;
+	retry_at?: string;
+
 	type: string;
 	account_id?: string;
 	user_id?: string;

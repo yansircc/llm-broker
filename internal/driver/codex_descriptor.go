@@ -1,6 +1,7 @@
 package driver
 
 import (
+	"encoding/json"
 	"sync/atomic"
 
 	"github.com/yansircc/llm-broker/internal/domain"
@@ -76,4 +77,8 @@ func (d *CodexDriver) Info() ProviderInfo {
 
 func (d *CodexDriver) Models() []Model {
 	return codexSupportedModels()
+}
+
+func (d *CodexDriver) MergeState(current, observation json.RawMessage) json.RawMessage {
+	return observation
 }

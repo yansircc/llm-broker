@@ -1,10 +1,16 @@
 <script lang="ts">
 	import Countdown from '$lib/components/Countdown.svelte';
-	import { dotClass, remainClass, remainTime } from '$lib/format';
+	import QuotaWindow from '$lib/components/QuotaWindow.svelte';
+	import { dotClass } from '$lib/format';
 
 	interface PublicLimit {
 		name: string;
-		remaining_pct: number;
+		remaining_pct: number | null;
+		key?: string;
+		scope?: string;
+		status?: string;
+		reason?: string;
+		observed_at?: number;
 		reset_at?: number;
 	}
 
@@ -90,8 +96,16 @@
 									{#each account.limits as limit, index (`${limit.name}:${index}`)}
 										<span class="limit">
 											{limit.name}
-											<span class={remainClass(limit.remaining_pct)}>{limit.remaining_pct}%</span>
-											{#if limit.reset_at}<span class="muted">{remainTime(limit.reset_at)}</span>{/if}
+											<QuotaWindow window={{
+												key: limit.key,
+												label: limit.name,
+												pct: limit.remaining_pct == null ? null : 100 - limit.remaining_pct,
+												reset: limit.reset_at,
+												scope: limit.scope,
+												status: limit.status,
+												reason: limit.reason,
+												observed_at: limit.observed_at
+											}} />
 										</span>
 									{/each}
 								{/if}

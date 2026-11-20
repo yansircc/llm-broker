@@ -51,7 +51,7 @@ func (s *Server) refreshStaleAccounts(ctx context.Context) {
 			probeCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 			defer cancel()
 
-			result, err := s.probeAccount(probeCtx, a)
+			result, err := s.probeAccount(probeCtx, a, "")
 			if err != nil {
 				slog.Warn("probe failed", "account", a.Email, "error", err)
 				return

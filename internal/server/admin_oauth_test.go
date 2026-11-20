@@ -81,7 +81,7 @@ func (d *exchangeStubDriver) ExchangeCode(_ context.Context, client *http.Client
 func (d *exchangeStubDriver) RefreshToken(context.Context, *http.Client, string) (*driver.TokenResponse, error) {
 	return nil, nil
 }
-func (d *exchangeStubDriver) Probe(context.Context, *domain.Account, string, *http.Client) (driver.ProbeResult, error) {
+func (d *exchangeStubDriver) Probe(context.Context, *domain.Account, string, *http.Client, string) (driver.ProbeResult, error) {
 	return driver.ProbeResult{}, nil
 }
 func (d *exchangeStubDriver) DescribeAccount(*domain.Account) []driver.AccountField { return nil }
@@ -486,4 +486,8 @@ func TestHandleExchangeCodePreservesExistingRefreshTokenOnRebind(t *testing.T) {
 	if refreshToken != "old-refresh" {
 		t.Fatalf("refresh token = %q, want old-refresh", refreshToken)
 	}
+}
+
+func (d *exchangeStubDriver) MergeState(current, observation json.RawMessage) json.RawMessage {
+	return observation
 }

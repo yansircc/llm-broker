@@ -311,7 +311,7 @@ func (m *mockDriver) ExchangeCode(_ context.Context, _ *http.Client, _, _, _ str
 func (m *mockDriver) RefreshToken(_ context.Context, _ *http.Client, _ string) (*driver.TokenResponse, error) {
 	return nil, nil
 }
-func (m *mockDriver) Probe(_ context.Context, _ *domain.Account, _ string, _ *http.Client) (driver.ProbeResult, error) {
+func (m *mockDriver) Probe(_ context.Context, _ *domain.Account, _ string, _ *http.Client, _ string) (driver.ProbeResult, error) {
 	return driver.ProbeResult{}, nil
 }
 func (m *mockDriver) DescribeAccount(_ *domain.Account) []driver.AccountField { return nil }
@@ -1657,4 +1657,8 @@ func TestCleanup_SharedBucket_BlockedStaysBlocked(t *testing.T) {
 	if !hasExpiry {
 		t.Fatal("missing 'cooldown expired' event")
 	}
+}
+
+func (d *mockDriver) MergeState(current, observation json.RawMessage) json.RawMessage {
+	return observation
 }

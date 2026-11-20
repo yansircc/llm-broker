@@ -57,3 +57,7 @@ func (d *GeminiDriver) Models() []Model {
 		{ID: "gemini-2.5-pro", Object: "model", Created: 1709164800, OwnedBy: "google", ContextWindow: 1048576},
 	}
 }
+
+func (d *GeminiDriver) MergeState(current, observation json.RawMessage) json.RawMessage {
+	return observation
+}
