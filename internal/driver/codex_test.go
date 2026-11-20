@@ -642,7 +642,7 @@ func TestCodexModelsIncludesGPT6Family(t *testing.T) {
 	for _, model := range d.Models() {
 		models[model.ID] = model
 	}
-	for _, id := range []string{"gpt-6-astra", "gpt-6.1-sol", "gpt-6.1-terra", "gpt-6-sol", "gpt-6-luna"} {
+	for _, id := range []string{"gpt-6.2-astra", "gpt-6.2-sol", "gpt-6-astra", "gpt-6.1-sol", "gpt-6.1-terra", "gpt-6-sol", "gpt-6-luna"} {
 		model, ok := models[id]
 		if !ok {
 			t.Fatalf("%s missing from codex model catalog", id)
@@ -836,5 +836,57 @@ func TestCodexProbeUsesObservedModelInBody(t *testing.T) {
 	}
 	if !strings.Contains(sentBody, `"model":"gpt-5.6"`) {
 		t.Fatalf("probe body = %q, want it to use observed model gpt-5.6", sentBody)
+	}
+}
+
+func TestCodexGPT62RequestAndProbeDefault(t *testing.T) {
+	d := NewCodexDriver(CodexConfig{APIURL: "https://chatgpt.com/backend-api/codex/responses"})
+	if got := d.probeModel(); got != "gpt-5.6-sol" {
+		t.Fatalf("catalog addition changed default probe: %s", got)
+	}
+	for _, model := range []string{"gpt-6.2-astra", "gpt-6.2-sol"} {
+		t.Run(model, func(t *testing.T) {
+			raw := `{"model":"` + model + `","reasoning":{"effort":"max"},"service_tier":"fast","stream":true,"store":false,"input":[{"role":"user","content":[{"type":"input_image","image_url":"https://example.com/photo.png"}]}]}`
+			req, err := d.BuildRequest(context.Background(), &RelayInput{RawBody: []byte(raw), Headers: make(http.Header)}, &domain.Account{Subject: "acct-test"}, "test-token")
+			if err != nil {
+				t.Fatal(err)
+			}
+			got, err := io.ReadAll(req.Body)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if string(got) != raw {
+				t.Fatalf("model request changed at boundary: %s", got)
+			}
+		})
+	}
+}
+
+func TestCodexCalcCostGPT62StandardPricing(t *testing.T) {
+	// Standard API prices: Astra 8/.40/10/40, Sol 2/.10/2.50/10
+	// for uncached input / cached input / cache write / output, USD per MTok.
+	d := NewCodexDriver(CodexConfig{})
+	for _, tc := range []struct {
+		name       string
+		usage      *Usage
+		astra, sol float64
+	}{
+		{"cache accounting", &Usage{InputTokens: 1000, CacheReadTokens: 300, CacheCreateTokens: 200, OutputTokens: 10}, 0.00652, 0.00163},
+		{"threshold inclusive", &Usage{InputTokens: 272000, OutputTokens: 100}, 2.18, 0.545},
+		{"above threshold", &Usage{InputTokens: 272001, OutputTokens: 100}, 4.358016, 1.089504},
+		{"cached input at threshold", &Usage{InputTokens: 272000, CacheReadTokens: 100000, CacheCreateTokens: 100000, OutputTokens: 100}, 1.62, 0.405},
+		{"cached input above threshold", &Usage{InputTokens: 272001, CacheReadTokens: 100000, CacheCreateTokens: 100000, OutputTokens: 100}, 3.238016, 0.809504},
+		{"output does not select prompt tier", &Usage{InputTokens: 1, OutputTokens: 272001}, 10.880048, 2.720012},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			for _, m := range []struct {
+				id   string
+				want float64
+			}{{"gpt-6.2-astra", tc.astra}, {"gpt-6.2-sol", tc.sol}} {
+				if got := d.CalcCost(m.id, tc.usage); math.Abs(got-m.want) > 1e-12 {
+					t.Errorf("%s cost %.12f, want %.12f", m.id, got, m.want)
+				}
+			}
+		})
 	}
 }

@@ -26,6 +26,8 @@ type codexPromptPriceTier struct {
 
 var (
 	codexGPT6PromptTiers   = []codexPromptPriceTier{{AboveTokens: 272000, InputMultiplier: 2, OutputMultiplier: 1.5}}
+	codexGPT62AstraPricing = codexModelPricing{Input: 8, Output: 40, CacheRead: 0.40, CacheCreate: 10, PromptTiers: codexGPT6PromptTiers}
+	codexGPT62SolPricing   = codexModelPricing{Input: 2, Output: 10, CacheRead: 0.10, CacheCreate: 2.50, PromptTiers: codexGPT6PromptTiers}
 	codexGPT6AstraPricing  = codexModelPricing{Input: 10, Output: 50, CacheRead: 1, CacheCreate: 12.50, PromptTiers: codexGPT6PromptTiers}
 	codexGPT61SolPricing   = codexModelPricing{Input: 2, Output: 10, CacheRead: 0.10, CacheCreate: 2.50, PromptTiers: codexGPT6PromptTiers}
 	codexGPT61TerraPricing = codexModelPricing{Input: 1, Output: 5, CacheRead: 0.05, CacheCreate: 1.25, PromptTiers: codexGPT6PromptTiers}
@@ -42,6 +44,8 @@ var (
 
 var codexModelEntries = []codexModelEntry{
 	{PublicID: "gpt-5.6-sol", ContextWindow: 1050000, Advertise: true, Pricing: codexGPT56SolPricing},
+	{PublicID: "gpt-6.2-astra", ContextWindow: 1050000, Advertise: true, Pricing: codexGPT62AstraPricing},
+	{PublicID: "gpt-6.2-sol", ContextWindow: 1050000, Advertise: true, Pricing: codexGPT62SolPricing},
 	{PublicID: "gpt-6.1-sol", ContextWindow: 1050000, Advertise: true, Pricing: codexGPT61SolPricing},
 	{PublicID: "gpt-6.1-terra", ContextWindow: 1050000, Advertise: true, Pricing: codexGPT61TerraPricing},
 	{PublicID: "gpt-6-sol", ContextWindow: 1050000, Advertise: true, Pricing: codexGPT6SolPricing},
