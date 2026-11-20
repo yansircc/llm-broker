@@ -12,6 +12,7 @@ SNAPSHOT_ID=""
 RESTORING=0
 SWITCHED=0
 STARTED_INACTIVE=0
+DRAINED_ACTIVE=0
 ACTIVE_SLOT_NAME=""
 ACTIVE_SERVICE_NAME=""
 INACTIVE_SLOT_NAME=""
@@ -32,6 +33,10 @@ on_error() {
         echo ""
         echo "==> deploy failed before traffic switch; stopping inactive slot $INACTIVE_SLOT_NAME"
         ssh "$REMOTE" "systemctl stop $INACTIVE_SERVICE_NAME >/dev/null 2>&1 || true" || true
+    fi
+    if [[ "$DRAINED_ACTIVE" -eq 1 && -n "$ACTIVE_SERVICE_NAME" ]]; then
+        echo "==> restoring previous active service before traffic switch"
+        ssh "$REMOTE" "systemctl start $ACTIVE_SERVICE_NAME" || true
     fi
     if [[ -n "$SNAPSHOT_ID" ]]; then
         echo "==> rollback: bash $SCRIPT_DIR/restore.sh $SNAPSHOT_ID"
@@ -78,6 +83,7 @@ build_release_artifact
 echo "==> snapshotting current remote state..."
 SNAPSHOT_ID="$(create_snapshot bluegreen-deploy)"
 echo "    snapshot: $SNAPSHOT_ID"
+echo "    rollback: bash $SCRIPT_DIR/restore.sh $SNAPSHOT_ID"
 
 upload_candidate_binary
 
@@ -99,10 +105,26 @@ STARTED_INACTIVE=1
 wait_for_remote_local_health "$INACTIVE_PORT_VALUE"
 echo "    inactive slot healthy"
 
+# The core state reducer is process-local. Candidate health is safe while the
+# old slot owns the background lease, but public traffic must have one writer.
+echo "==> draining previous active slot before traffic switch..."
+DRAINED_ACTIVE=1
+ssh "$REMOTE" env ACTIVE_SERVICE_NAME="$ACTIVE_SERVICE_NAME" bash -s <<'EOF'
+set -euo pipefail
+systemctl stop "$ACTIVE_SERVICE_NAME"
+if systemctl is-active --quiet "$ACTIVE_SERVICE_NAME"; then
+    echo "previous active slot is still running" >&2
+    exit 1
+fi
+EOF
+echo "    previous active slot stopped"
+
 echo "==> switching caddy upstream to $INACTIVE_SLOT_NAME..."
+# Configuration writes may succeed even if reload subsequently fails. Mark the
+# rollback boundary before the first write, rather than after a successful reload.
+SWITCHED=1
 set_bluegreen_active_slot "$INACTIVE_SLOT_NAME" "$INACTIVE_PORT_VALUE"
 remote_reload_caddy
-SWITCHED=1
 
 echo "==> waiting for public /health..."
 wait_for_site_health
@@ -111,13 +133,6 @@ echo "    healthy"
 verify_db_invariants
 
 show_recent_restart_events "$ACTIVE_SERVICE_NAME" "$INACTIVE_SERVICE_NAME"
-
-echo "==> stopping previous active slot..."
-if ssh "$REMOTE" "systemctl stop $ACTIVE_SERVICE_NAME >/dev/null 2>&1 || true"; then
-    echo "    previous active slot stopped"
-else
-    echo "    warning: failed to stop previous active slot; continuing with new slot live"
-fi
 
 run_nonfatal_smoke_suite "$SNAPSHOT_ID"
 
