@@ -1,0 +1,157 @@
+{
+  "release_commit": "82e37be83d420aa962ef8c119296f4f54e10a4ae",
+  "environment": "https://ccc.210k.cc",
+  "verified_at_utc": "2026-11-20T07:28:52Z",
+  "added_models": [
+    "gpt-6.2-astra",
+    "gpt-6.2-sol"
+  ],
+  "sources": [
+    "https://openai.com/index/introducing-gpt-6-2-astra-sol/",
+    "https://developers.openai.com/api/docs/models/gpt-6.2-astra",
+    "https://developers.openai.com/api/docs/models/gpt-6.2-sol",
+    "https://developers.openai.com/api/docs/pricing"
+  ],
+  "catalog": [
+    {
+      "id": "gpt-6.2-astra",
+      "object": "model",
+      "created": 1709164800,
+      "owned_by": "openai",
+      "context_window": 1050000
+    },
+    {
+      "id": "gpt-6.2-sol",
+      "object": "model",
+      "created": 1709164800,
+      "owned_by": "openai",
+      "context_window": 1050000
+    }
+  ],
+  "estimated_standard_api_rates_usd_per_million_tokens": {
+    "gpt-6.2-astra": {
+      "input": 8,
+      "cached_input": 0.4,
+      "cache_write_30m": 10,
+      "output": 40
+    },
+    "gpt-6.2-sol": {
+      "input": 2,
+      "cached_input": 0.1,
+      "cache_write_30m": 2.5,
+      "output": 10
+    }
+  },
+  "long_context_tier": {
+    "above_input_tokens": 272000,
+    "input_and_cache_multiplier": 2,
+    "output_multiplier": 1.5
+  },
+  "probe_default_preserved": "gpt-5.6-sol",
+  "verification": [
+    {
+      "model": "gpt-6.2-astra",
+      "path": "/openai/v1/responses",
+      "request_id": "gpt62-release-gpt-6.2-astra",
+      "http_status": 200,
+      "completed": true,
+      "response_id": "resp_0048b8e9495a7eb3016afff6b0813087d2bd4db1c319d7a315",
+      "returned_model": "gpt-6.2-astra",
+      "answer": "OK",
+      "errors": [],
+      "duration_ms": 3172,
+      "usage": {
+        "input_tokens": 18,
+        "output_tokens": 5,
+        "cached_tokens": 0,
+        "cache_write_tokens": 0
+      },
+      "estimated_standard_api_cost_usd": 0.000344,
+      "request_log": [
+        {
+          "id": 3396110,
+          "provider": "codex",
+          "model": "gpt-6.2-astra",
+          "status": "ok",
+          "cost_usd": 0.000344
+        }
+      ]
+    },
+    {
+      "model": "gpt-6.2-sol",
+      "path": "/openai/responses",
+      "request_id": "gpt62-release-gpt-6.2-sol",
+      "http_status": 200,
+      "completed": true,
+      "response_id": "resp_0d44a16bcb977a22016afff6b371e887d284ef2f2524214bea",
+      "returned_model": "gpt-6.2-sol",
+      "answer": "OK",
+      "errors": [],
+      "duration_ms": 1685,
+      "usage": {
+        "input_tokens": 18,
+        "output_tokens": 5,
+        "cached_tokens": 0,
+        "cache_write_tokens": 0
+      },
+      "estimated_standard_api_cost_usd": 8.6e-05,
+      "request_log": [
+        {
+          "id": 3396111,
+          "provider": "codex",
+          "model": "gpt-6.2-sol",
+          "status": "ok",
+          "cost_usd": 8.6e-05
+        }
+      ]
+    }
+  ],
+  "claude_regression": {
+    "public_cooldown_until": null,
+    "fable_limit_retained": true
+  },
+  "service": {
+    "active": "llm-broker-blue",
+    "active_slot": "blue",
+    "pid": 862634,
+    "previous": "llm-broker-green",
+    "previous_state": "inactive"
+  },
+  "artifact": {
+    "sha256": "d78b6b151013b2f878a430f5d017f727b1ce04a0058369e0978c7ae0b83e5bbd",
+    "go_version": "go1.26.2",
+    "os": "linux",
+    "arch": "amd64",
+    "cgo_enabled": false,
+    "embedded_vcs_revision": "82e37be83d420aa962ef8c119296f4f54e10a4ae",
+    "embedded_vcs_modified": false,
+    "frontend_tree": "1977c4dd869cd749bc0b7dc32d0a2cc10aae0fad",
+    "remote_binary": "/usr/local/bin/llm-broker-blue",
+    "remote_file_sha256_matches": true,
+    "remote_process_exe_sha256_matches": true
+  },
+  "deploy_command": "SKIP_FRONTEND=1 SKIP_BROWSER_SMOKE=1 TMPDIR=\"$PWD/web/node_modules/.cache/gpt62-release\" TMP_LOCAL=\"$PWD/web/node_modules/.cache/gpt62-release/llm-broker\" TMP_REMOTE=/var/lib/llm-broker/llm-broker-new bash .agents/skills/deploy/scripts/deploy.sh",
+  "rollback_snapshot": "20261120T072554Z-bluegreen-deploy",
+  "rollback_command": "bash .agents/skills/deploy/scripts/restore.sh 20261120T072554Z-bluegreen-deploy",
+  "validation": {
+    "go_test": "pass: go test ./...",
+    "go_vet": "pass: go vet ./...",
+    "catalog_contract": "pass: both IDs and 1050000 context; existing models preserved",
+    "request_boundary": "pass: model, reasoning, image input, speed and streaming fields preserved",
+    "pricing_boundaries": "pass: short/long context, cached input, cache writes, and output-only threshold cases",
+    "live_pricing": "pass: both SQL cost estimates match returned usage and verified Standard prices",
+    "http_smoke": "pass: all 13 endpoint checks",
+    "database_invariants": {
+      "accounts": 6,
+      "quota_buckets": 6,
+      "distinct_bucket_keys": 6,
+      "empty_subjects": 0
+    },
+    "frontend": "unchanged committed artifact, no UI source changes; browser smoke not rerun",
+    "github_ci": {
+      "outcome": "pass",
+      "commit": "82e37be83d420aa962ef8c119296f4f54e10a4ae",
+      "url": "https://github.com/yansircc/llm-broker/actions/runs/44694970152"
+    }
+  }
+}
