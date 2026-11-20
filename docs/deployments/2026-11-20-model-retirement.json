@@ -1,0 +1,261 @@
+{
+  "release_commit": "727800a6f9e7be4c824af6132146a22472b80683",
+  "environment": "https://ccc.210k.cc",
+  "verified_at_utc": "2026-11-20T08:21:52.039861+00:00",
+  "retired_models": [
+    "gpt-5.5",
+    "gpt-5.4",
+    "gpt-5.4-mini",
+    "gpt-5.3-codex",
+    "gpt-5.3-codex-spark",
+    "gpt-5.2",
+    "claude-opus-4",
+    "claude-opus-4-1",
+    "claude-sonnet-4"
+  ],
+  "sources": [
+    "https://learn.chatgpt.com/docs/models#deprecated-codex-models",
+    "https://platform.claude.com/docs/en/about-claude/model-deprecations"
+  ],
+  "initial_readback": {
+    "verified_at_utc": "2026-11-20T08:20:10.794939+00:00",
+    "environment": "https://ccc.210k.cc",
+    "catalog_checks": [
+      {
+        "path": "/v1/models",
+        "http_status": 200,
+        "absent": [
+          "gpt-5.5",
+          "gpt-5.4",
+          "gpt-5.4-mini",
+          "gpt-5.3-codex",
+          "gpt-5.3-codex-spark",
+          "gpt-5.2",
+          "claude-opus-4",
+          "claude-opus-4-1",
+          "claude-sonnet-4"
+        ],
+        "preserved": [
+          "gpt-6.2-astra",
+          "gpt-6.2-sol",
+          "gpt-6.1-terra",
+          "gpt-6-luna",
+          "gpt-5.6-sol",
+          "claude-fable-5-2",
+          "claude-opus-5-5",
+          "claude-sonnet-5-5",
+          "claude-haiku-5-5",
+          "claude-sonnet-4-5"
+        ],
+        "pass": true
+      },
+      {
+        "path": "/compat/v1/models",
+        "http_status": 200,
+        "absent": [
+          "claude/claude-opus-4",
+          "claude/claude-opus-4-1",
+          "claude/claude-sonnet-4"
+        ],
+        "preserved": [
+          "claude/claude-sonnet-5-5",
+          "claude/claude-haiku-5-5",
+          "claude/claude-sonnet-4-5"
+        ],
+        "pass": true
+      }
+    ],
+    "retired_request_checks": [
+      {
+        "path": "/openai/v1/responses",
+        "model": "gpt-5.5",
+        "http_status": 400,
+        "message": "model \"gpt-5.5\" is retired on this ChatGPT-authenticated Codex relay; use \"gpt-6.1-sol\"",
+        "pass": true
+      },
+      {
+        "path": "/openai/v1/responses",
+        "model": "gpt-5.4",
+        "http_status": 400,
+        "message": "model \"gpt-5.4\" is retired on this ChatGPT-authenticated Codex relay; use \"gpt-6-sol\"",
+        "pass": true
+      },
+      {
+        "path": "/openai/v1/responses",
+        "model": "gpt-5.4-mini",
+        "http_status": 400,
+        "message": "model \"gpt-5.4-mini\" is retired on this ChatGPT-authenticated Codex relay; use \"gpt-6-luna\"",
+        "pass": true
+      },
+      {
+        "path": "/openai/v1/responses",
+        "model": "gpt-5.3-codex",
+        "http_status": 400,
+        "message": "model \"gpt-5.3-codex\" is retired on this ChatGPT-authenticated Codex relay; use \"gpt-6.1-sol\"",
+        "pass": true
+      },
+      {
+        "path": "/openai/v1/responses",
+        "model": "gpt-5.3-codex-spark",
+        "http_status": 400,
+        "message": "model \"gpt-5.3-codex-spark\" is retired on this ChatGPT-authenticated Codex relay; use \"gpt-6-luna\"",
+        "pass": true
+      },
+      {
+        "path": "/openai/v1/responses",
+        "model": "gpt-5.2",
+        "http_status": 400,
+        "message": "model \"gpt-5.2\" is retired on this ChatGPT-authenticated Codex relay; use \"gpt-6.1-sol\"",
+        "pass": true
+      },
+      {
+        "path": "/v1/messages",
+        "model": "claude-opus-4",
+        "http_status": 400,
+        "message": "model \"claude-opus-4\" is retired on this Claude relay; use \"claude-opus-4-8\"",
+        "pass": true
+      },
+      {
+        "path": "/v1/messages",
+        "model": "claude-opus-4-1",
+        "http_status": 400,
+        "message": "model \"claude-opus-4-1\" is retired on this Claude relay; use \"claude-opus-4-8\"",
+        "pass": true
+      },
+      {
+        "path": "/v1/messages",
+        "model": "claude-sonnet-4",
+        "http_status": 400,
+        "message": "model \"claude-sonnet-4\" is retired on this Claude relay; use \"claude-sonnet-5-5\"",
+        "pass": true
+      },
+      {
+        "path": "/openai/responses",
+        "model": "gpt-5.5-2026-04-23",
+        "http_status": 400,
+        "message": "model \"gpt-5.5-2026-04-23\" is retired on this ChatGPT-authenticated Codex relay; use \"gpt-6.1-sol\"",
+        "pass": true
+      },
+      {
+        "path": "/openai/responses",
+        "model": "gpt-5.4-mini-2026-03-17",
+        "http_status": 400,
+        "message": "model \"gpt-5.4-mini-2026-03-17\" is retired on this ChatGPT-authenticated Codex relay; use \"gpt-6-luna\"",
+        "pass": true
+      },
+      {
+        "path": "/v1/messages/count_tokens",
+        "model": "claude-sonnet-4-20250514",
+        "http_status": 400,
+        "message": "model \"claude-sonnet-4-20250514\" is retired on this Claude relay; use \"claude-sonnet-5-5\"",
+        "pass": true
+      },
+      {
+        "path": "/compat/v1/chat/completions",
+        "model": "claude/claude-sonnet-4-20250514",
+        "http_status": 400,
+        "message": "model \"claude-sonnet-4\" is retired on this Claude relay; use \"claude-sonnet-5-5\"",
+        "pass": true
+      },
+      {
+        "path": "/compat/v1/chat/completions",
+        "model": "anthropic/claude-opus-4.1",
+        "http_status": 400,
+        "message": "model \"claude-opus-4-1\" is retired on this Claude relay; use \"claude-opus-4-8\"",
+        "pass": true
+      },
+      {
+        "path": "/compat/v1/chat/completions",
+        "model": "claude-opus-4-20250514",
+        "http_status": 400,
+        "message": "model \"claude-opus-4\" is retired on this Claude relay; use \"claude-opus-4-8\"",
+        "pass": true
+      }
+    ],
+    "active_inference": [
+      {
+        "model": "gpt-6.2-sol",
+        "http_status": 200,
+        "answer": "OK",
+        "completed": true,
+        "pass": true
+      },
+      {
+        "model": "claude-opus-5-5",
+        "http_status": 200,
+        "answer": "OK",
+        "stop_reason": "end_turn",
+        "pass": true
+      }
+    ],
+    "service": {
+      "active_slot": "green",
+      "service": "llm-broker-green",
+      "pid": 864182,
+      "status": "active",
+      "previous_status": "failed"
+    },
+    "artifact": {
+      "remote_binary": "/usr/local/bin/llm-broker-green",
+      "file_sha256": "fdeb822fefd8ca7a8418f98d3ee2bd5de5f6fa8d10dab42df3f562a17de13bf3",
+      "process_sha256": "fdeb822fefd8ca7a8418f98d3ee2bd5de5f6fa8d10dab42df3f562a17de13bf3"
+    },
+    "database_invariants": {
+      "accounts": 6,
+      "empty_subjects": 0,
+      "quota_buckets": 6
+    },
+    "pass": false
+  },
+  "service_reconciliation": {
+    "reason": "Blue received SIGTERM at 08:19:00Z. One in-flight Claude request remained at the 30-second graceful shutdown deadline. The old process exited with status 1 at 08:19:30Z; no blue PID or listener remained.",
+    "action": "Recorded the shutdown failure, then ran systemctl reset-failed llm-broker-blue. No old service restart or additional source change.",
+    "final_readback": {
+      "verified_at_utc": "2026-11-20T08:21:52.039861+00:00",
+      "active_slot": "green",
+      "health_http_status": 200,
+      "units": {
+        "llm-broker-blue": {
+          "MainPID": "0",
+          "ControlPID": "0",
+          "Result": "success",
+          "ActiveState": "inactive",
+          "SubState": "dead"
+        },
+        "llm-broker-green": {
+          "MainPID": "864182",
+          "ControlPID": "0",
+          "Result": "success",
+          "ActiveState": "active",
+          "SubState": "running"
+        }
+      },
+      "pass": true
+    }
+  },
+  "artifact": {
+    "remote_binary": "/usr/local/bin/llm-broker-green",
+    "file_sha256": "fdeb822fefd8ca7a8418f98d3ee2bd5de5f6fa8d10dab42df3f562a17de13bf3",
+    "process_sha256": "fdeb822fefd8ca7a8418f98d3ee2bd5de5f6fa8d10dab42df3f562a17de13bf3",
+    "embedded_vcs_revision": "727800a6f9e7be4c824af6132146a22472b80683",
+    "embedded_vcs_modified": false,
+    "frontend_tree": "1977c4dd869cd749bc0b7dc32d0a2cc10aae0fad",
+    "go_version": "go1.26.2",
+    "os": "linux",
+    "arch": "amd64",
+    "cgo_enabled": false
+  },
+  "validation": {
+    "go_test": "pass: go test ./...",
+    "go_vet": "pass: go vet ./...",
+    "http_smoke": "pass: all 13 endpoint checks",
+    "catalogs": "pass: native and compat omit retired models and preserve active selections",
+    "retired_requests": "pass: 15 production requests returned HTTP 400 and replacement guidance",
+    "active_inference": "pass: GPT-6.2 Sol and Claude Opus 5.5 each returned OK with HTTP 200",
+    "frontend": "unchanged committed artifact; no browser smoke rerun"
+  },
+  "deploy_command": "SKIP_FRONTEND=1 SKIP_BROWSER_SMOKE=1 TMPDIR=\"$PWD/web/node_modules/.cache/model-retirement-release\" TMP_LOCAL=\"$PWD/web/node_modules/.cache/model-retirement-release/llm-broker\" TMP_REMOTE=/var/lib/llm-broker/llm-broker-new bash .agents/skills/deploy/scripts/deploy.sh",
+  "rollback_snapshot": "20261120T081655Z-bluegreen-deploy",
+  "rollback_command": "bash .agents/skills/deploy/scripts/restore.sh 20261120T081655Z-bluegreen-deploy",
+  "pass": true
+}
